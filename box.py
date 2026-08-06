@@ -22,6 +22,9 @@ TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 # Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
 READ_WRITE_SUFFIX = ":rw"
 
+KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
+Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
+
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
@@ -352,8 +355,15 @@ def token_file_from_environment() -> str:
     return os.environ.get(TOKEN_FILE_ENV, "")
 
 
+def require_settings(config: Config) -> None:
+    """Reject settings whose default would be a silent risk rather than a convenience."""
+    if not config.kit:
+        raise ConfigError(KIT_HELP)
+
+
 def prepare_launch(config: Config, token_file: str) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
+    require_settings(config)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))

@@ -223,9 +223,18 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
 
 
 def test_prepare_launch_requires_the_token_environment_variable() -> None:
-    config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(config, "")
+        box.prepare_launch(make_config(), "")
+
+
+def test_prepare_launch_requires_a_kit() -> None:
+    config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
+    with pytest.raises(box.ConfigError, match="kit is not set"):
+        box.prepare_launch(config, "/secrets/token")
+
+
+def test_require_settings_accepts_a_complete_config() -> None:
+    box.require_settings(make_config())
 
 
 def test_token_file_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
