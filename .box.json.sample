@@ -2,10 +2,10 @@
   "name": "my-project",
   "memory": "4g",
   "cpus": "4",
-  "rootSize": "10g",
-  "dockerSize": "10g",
+  "root_size": "10g",
+  "docker_size": "10g",
   "model": "",
-  "promptFile": "docs/agent.md",
+  "prompt_file": "docs/agent.md",
   "kit": ".sbx/kit",
   "mounts": []
 }

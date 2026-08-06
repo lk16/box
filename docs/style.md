@@ -19,8 +19,13 @@ does. Every function has a one-line docstring.
 
 ## Naming
 
-Full words, no abbreviations: `sandbox_name`, not `sbx_nm`. Config keys are camelCase in JSON
-(`rootSize`) and snake_case in Python (`root_size`); `Config` is where the two meet.
+Full words, no abbreviations: `sandbox_name`, not `sbx_nm`.
+
+Config settings carry one name in three places, and it is snake_case everywhere: the `.box.json`
+key (`root_size`), the `Config` field (`root_size`) and the flag, which is the same name with
+hyphens (`--root-size`). No translation layer, and argparse derives every `dest` on its own. When
+you add a setting, pick a snake_case name and use it verbatim in `DEFAULTS`, `Config` and the
+flag.
 
 ## Checks
 

@@ -206,7 +206,22 @@ def test_token_file_is_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_token_file_is_not_a_config_key() -> None:
-    assert "tokenFile" not in box.DEFAULTS
+    assert "token_file" not in box.DEFAULTS
+
+
+def test_every_config_key_is_snake_case() -> None:
+    assert all(key == key.lower() for key in box.DEFAULTS)
+
+
+def test_config_keys_match_the_config_fields() -> None:
+    config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
+    assert set(box.DEFAULTS) == set(vars(config))
+
+
+def test_flags_use_the_config_keys_with_hyphens() -> None:
+    arguments = box.build_parser().parse_args(["--root-size", "20g", "--prompt-file", "p.md"])
+    assert vars(arguments)["root_size"] == "20g"
+    assert vars(arguments)["prompt_file"] == "p.md"
 
 
 def test_format_value_joins_mounts() -> None:

@@ -29,10 +29,10 @@ DEFAULTS: dict[str, object] = {
     "name": "",
     "memory": "4g",
     "cpus": "4",
-    "rootSize": "10g",
-    "dockerSize": "10g",
+    "root_size": "10g",
+    "docker_size": "10g",
     "model": "",
-    "promptFile": "",
+    "prompt_file": "",
     "kit": "",
     "mounts": [],
 }
@@ -122,10 +122,10 @@ def build_config(values: dict[str, object], working_directory: Path) -> Config:
         name=name,
         memory=str(values["memory"]),
         cpus=str(values["cpus"]),
-        root_size=str(values["rootSize"]),
-        docker_size=str(values["dockerSize"]),
+        root_size=str(values["root_size"]),
+        docker_size=str(values["docker_size"]),
         model=str(values["model"]),
-        prompt_file=str(values["promptFile"]),
+        prompt_file=str(values["prompt_file"]),
         kit=str(values["kit"]),
         mounts=as_mount_list(values["mounts"]),
     )
@@ -137,14 +137,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="box",
         description="Run Claude Code inside a disposable Docker sandbox.",
     )
-    parser.add_argument("--name", dest="name", metavar="NAME", help="sandbox base name")
-    parser.add_argument("--memory", dest="memory", metavar="SIZE", help="memory limit, e.g. 4g")
-    parser.add_argument("--cpus", dest="cpus", metavar="N", help="number of CPUs")
-    parser.add_argument("--root-size", dest="rootSize", metavar="SIZE", help="sandbox root filesystem size")
-    parser.add_argument("--docker-size", dest="dockerSize", metavar="SIZE", help="sandbox docker size")
-    parser.add_argument("--model", dest="model", metavar="MODEL", help="Claude model to run")
-    parser.add_argument("--prompt-file", dest="promptFile", metavar="PATH", help="file added to the prompt")
-    parser.add_argument("--kit", dest="kit", metavar="REF", help="sbx kit reference")
+    # Flag names match the config keys, so argparse derives every dest but the repeatable one.
+    parser.add_argument("--name", metavar="NAME", help="sandbox base name")
+    parser.add_argument("--memory", metavar="SIZE", help="memory limit, e.g. 4g")
+    parser.add_argument("--cpus", metavar="N", help="number of CPUs")
+    parser.add_argument("--root-size", metavar="SIZE", help="sandbox root filesystem size")
+    parser.add_argument("--docker-size", metavar="SIZE", help="sandbox docker size")
+    parser.add_argument("--model", metavar="MODEL", help="Claude model to run")
+    parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
+    parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
     parser.add_argument("--mount", dest="mounts", metavar="SPEC", action="append", help="extra workspace")
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     return parser

@@ -58,7 +58,7 @@ Settings that you use every time belong in a `.box.json` in that repository:
 
 ```json
 {
-  "promptFile": "docs/agent.md",
+  "prompt_file": "docs/agent.md",
   "kit": ".sbx/kit",
   "memory": "8g"
 }
@@ -91,10 +91,10 @@ only ever sees a placeholder that the proxy swaps for the real value.
 | `--name NAME` | `name` | current directory name | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
 | `--memory SIZE` | `memory` | `4g` | Memory limit for the sandbox. |
 | `--cpus N` | `cpus` | `4` | CPUs allocated to the sandbox. |
-| `--root-size SIZE` | `rootSize` | `10g` | Sandbox root filesystem size. |
-| `--docker-size SIZE` | `dockerSize` | `10g` | Sandbox Docker storage size. |
+| `--root-size SIZE` | `root_size` | `10g` | Sandbox root filesystem size. |
+| `--docker-size SIZE` | `docker_size` | `10g` | Sandbox Docker storage size. |
 | `--model MODEL` | `model` | unset | Model passed to the Claude CLI. |
-| `--prompt-file PATH` | `promptFile` | unset | File appended to the agent's system prompt. |
+| `--prompt-file PATH` | `prompt_file` | unset | File appended to the agent's system prompt. |
 | `--kit REF` | `kit` | unset | `sbx` kit reference, e.g. a network policy directory. |
 | `--mount SPEC` | `mounts` | `[]` | Extra workspace, repeatable. Append `:ro` for read-only. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
