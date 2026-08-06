@@ -84,6 +84,18 @@ the alias in your shell profile, or per project with `direnv`.
 token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
 only ever sees a placeholder that the proxy swaps for the real value.
 
+## The system prompt
+
+`box.py` always sends a built-in prompt describing what is true of every sandbox: that the agent
+runs unattended with nobody to answer follow-ups, that only committed work survives removal, that
+pre-commit's hook is not installed, that the sandbox runs as a different user so `PATH` and caches
+do not point at the host's, and that a 403 on a dependency download is the network allowlist
+rather than a bug. It lives in `box.py`, as `BASE_PROMPT`, so every project gets it without
+copying it around.
+
+`prompt_file` adds what is true of one project — its test command, its quirks — and is appended
+after the built-in prompt, so it can qualify anything above it.
+
 ## Settings
 
 | Flag | `.box.json` key | Default | Meaning |
@@ -94,7 +106,7 @@ only ever sees a placeholder that the proxy swaps for the real value.
 | `--root-size SIZE` | `root_size` | `10g` | Sandbox root filesystem size. |
 | `--docker-size SIZE` | `docker_size` | `10g` | Sandbox Docker storage size. |
 | `--model MODEL` | `model` | unset | Model passed to the Claude CLI. |
-| `--prompt-file PATH` | `prompt_file` | unset | File appended to the agent's system prompt. |
+| `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | unset | `sbx` kit reference, e.g. a network policy directory. |
 | `--mount SPEC` | `mounts` | `[]` | Extra workspace, repeatable. Append `:ro` for read-only. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |

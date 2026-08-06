@@ -24,6 +24,34 @@ TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
   3. Export {TOKEN_FILE_ENV} to point at that file, e.g. via direnv."""
 
+# Sandbox facts that hold for every project, always sent ahead of the project's own prompt file.
+BASE_PROMPT = """You are running unattended in a network-restricted sandbox. Treat the next
+message as your only input from the user -- nobody is available to answer
+follow-ups, so make reasonable assumptions and keep going rather than
+asking a question and waiting.
+
+Commit as you go, one feature or fix per commit, rather than saving it all
+for the end. Only committed work survives sandbox removal -- if the session
+is cut off mid-task, uncommitted changes are gone for good.
+
+pre-commit is not installed here, so its git hook will not run. Run the
+project's own checks by hand before committing.
+
+The sandbox runs as a different user than the host, so PATH and any tool or
+package caches do not point at the host's copies. Host home directories are
+mounted under /home/*/ and more than one exists, so join the glob matches
+rather than assuming a single path:
+
+    export PATH="$PATH:$(echo /home/*/.local/bin | tr ' ' ':')"
+
+Network access is limited to an allowlist, so fetching a dependency that is
+not already cached fails with 403. That is a sandbox limit, not a bug in the
+code: verify what you can without it, and ask for a specific host to be
+allowed rather than working around it.
+
+If you cannot reasonably finish the task, stop, state concisely what is
+blocking you, and suggest a solution -- do not keep flailing."""
+
 # Config keys and their fallbacks, used for both the JSON file and the CLI.
 DEFAULTS: dict[str, object] = {
     "name": "",
@@ -222,6 +250,13 @@ def read_system_prompt(prompt_file: str) -> str:
     return path.read_text()
 
 
+def build_system_prompt(project_prompt: str) -> str:
+    """Put the built-in sandbox instructions in front of the project's own prompt."""
+    if not project_prompt:
+        return BASE_PROMPT
+    return f"{BASE_PROMPT}\n\n{project_prompt}"
+
+
 def build_environment(config: Config) -> dict[str, str]:
     """Copy the current environment and add the sbx disk limits."""
     environment = dict(os.environ)
@@ -308,7 +343,8 @@ def prepare_launch(config: Config, token_file: str) -> Launch:
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))
-    agent_args = build_agent_args(read_system_prompt(config.prompt_file), config.model)
+    system_prompt = build_system_prompt(read_system_prompt(config.prompt_file))
+    agent_args = build_agent_args(system_prompt, config.model)
     return Launch(sandbox_name=pick_name(config.name, taken_names()), token=token, agent_args=agent_args)
 
 

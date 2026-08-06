@@ -153,6 +153,16 @@ def test_build_environment_sets_disk_limits() -> None:
     assert environment["DOCKER_SANDBOXES_DOCKER_SIZE"] == "30g"
 
 
+def test_build_system_prompt_is_the_base_prompt_without_a_project_prompt() -> None:
+    assert box.build_system_prompt("") == box.BASE_PROMPT
+
+
+def test_build_system_prompt_puts_the_project_prompt_last() -> None:
+    combined = box.build_system_prompt("project rules")
+    assert combined.startswith(box.BASE_PROMPT)
+    assert combined.endswith("project rules")
+
+
 def test_read_system_prompt_returns_empty_without_file() -> None:
     assert box.read_system_prompt("") == ""
 

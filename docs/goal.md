@@ -10,7 +10,8 @@ One run does this:
    `refs/sandboxes/*` git refs.
 3. Create the sandbox with `--clone`, so the agent commits into an in-container clone.
 4. Store the Claude OAuth token as an `sbx` secret scoped to that sandbox name.
-5. Run the agent, passing through the system prompt file and model when configured.
+5. Run the agent with `BASE_PROMPT` as its system prompt, followed by the project's own
+   `prompt_file` when one is configured, plus the model when one is set.
 6. On exit, fetch committed work back to the host and remove the sandbox — unless the sandbox
    still has uncommitted changes, in which case it is kept and recovery steps are printed.
 
@@ -24,6 +25,8 @@ One run does this:
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box.json` are an error, so typos surface immediately.
+- `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
+  one project belongs in that project's `prompt_file`.
 - Never remove a sandbox that holds uncommitted work.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
 - This is a small project. Add a setting or an abstraction only when something needs it.
