@@ -4,7 +4,7 @@
   "cpus": "4",
   "root_size": "10g",
   "docker_size": "10g",
-  "model": "",
+  "model": "claude-opus-5",
   "prompt_file": "docs/agent.md",
   "kit": ".sbx/kit",
   "mounts": []

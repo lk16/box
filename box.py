@@ -25,6 +25,9 @@ READ_WRITE_SUFFIX = ":rw"
 KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
 Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
 
+MODEL_HELP = f"""model is not set, so the sandbox's own Claude version would pick the model.
+That version need not match the one on this host. Name the model in {CONFIG_FILE} or with --model."""
+
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
@@ -359,6 +362,8 @@ def require_settings(config: Config) -> None:
     """Reject settings whose default would be a silent risk rather than a convenience."""
     if not config.kit:
         raise ConfigError(KIT_HELP)
+    if not config.model:
+        raise ConfigError(MODEL_HELP)
 
 
 def prepare_launch(config: Config, token_file: str) -> Launch:

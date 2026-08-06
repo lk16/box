@@ -30,5 +30,8 @@ One run does this:
 - Never remove a sandbox that holds uncommitted work.
 - Extra mounts are read-only unless the user appends `:rw`, so write access to the host is
   always something that was asked for.
+- `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
+  unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
+  install, which is not this host's.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
 - This is a small project. Add a setting or an abstraction only when something needs it.

@@ -233,6 +233,12 @@ def test_prepare_launch_requires_a_kit() -> None:
         box.prepare_launch(config, "/secrets/token")
 
 
+def test_prepare_launch_requires_a_model() -> None:
+    config = box.build_config(box.merge_values({"kit": ".sbx/kit"}, {}), Path("/tmp/demo"))
+    with pytest.raises(box.ConfigError, match="model is not set"):
+        box.prepare_launch(config, "/secrets/token")
+
+
 def test_require_settings_accepts_a_complete_config() -> None:
     box.require_settings(make_config())
 

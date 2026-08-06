@@ -58,8 +58,9 @@ Settings that you use every time belong in a `.box.json` in that repository:
 
 ```json
 {
-  "prompt_file": "docs/agent.md",
   "kit": ".sbx/kit",
+  "model": "claude-opus-5",
+  "prompt_file": "docs/agent.md",
   "memory": "8g"
 }
 ```
@@ -105,7 +106,7 @@ after the built-in prompt, so it can qualify anything above it.
 | `--cpus N` | `cpus` | `4` | CPUs allocated to the sandbox. |
 | `--root-size SIZE` | `root_size` | `10g` | Sandbox root filesystem size. |
 | `--docker-size SIZE` | `docker_size` | `10g` | Sandbox Docker storage size. |
-| `--model MODEL` | `model` | unset | Model passed to the Claude CLI. |
+| `--model MODEL` | `model` | — (required) | Model passed to the Claude CLI. |
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | `--mount PATH` | `mounts` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
@@ -113,10 +114,17 @@ after the built-in prompt, so it can qualify anything above it.
 
 Anything unknown in `.box.json` is an error, so typos surface immediately.
 
-`kit` has no default and `box.py` refuses to start without it. The kit carries the sandbox's
-network allowlist, so running without one would quietly give the agent whatever network access
-`sbx` grants by default — too risky to be the fallback for a forgotten setting. Point it at a
-directory with a `spec.yaml`, by convention `.sbx/kit` in the project.
+`kit` and `model` have no defaults: `box.py` refuses to start without them, rather than falling
+back to something you did not choose.
+
+The kit carries the sandbox's network allowlist, so running without one would quietly give the
+agent whatever network access `sbx` grants by default. Point it at a directory with a
+`spec.yaml`, by convention `.sbx/kit` in the project.
+
+The model must be named because the Claude CLI inside the sandbox is a different install from the
+one on your machine, possibly a different version, and an unset model means *its* default decides
+what runs — which can differ from what you expect and from run to run. Naming it makes the
+sandbox's choice yours.
 
 Extra mounts are read-only unless you say otherwise, since the point of a sandbox is that the
 agent cannot write to your machine. `--mount ~/.cache/go-build` mounts read-only, and
