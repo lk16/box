@@ -1,5 +1,4 @@
 {
-  "tokenFile": "~/.secrets/claude-oauth.token",
   "name": "my-project",
   "memory": "4g",
   "cpus": "4",

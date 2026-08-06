@@ -18,7 +18,9 @@ One run does this:
 
 - All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
-- Settings come from flags or `.box.json` in the current directory. Never from the environment.
+- Settings come from flags or `.box.json` in the current directory, flags first.
+- The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
+  nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box.json` are an error, so typos surface immediately.
 - Never remove a sandbox that holds uncommitted work.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.

@@ -15,7 +15,8 @@ What it gives you:
 
 - Python 3.11+ (standard library only)
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) and `git` on `PATH`
-- a Claude OAuth token in a file — run `claude setup-token` and save the printed token
+- a Claude OAuth token in a file — run `claude setup-token`, save the printed token, and point
+  `CLAUDE_OAUTH_TOKEN_FILE` at it (see [The OAuth token](#the-oauth-token))
 
 Works on Linux and macOS.
 
@@ -24,7 +25,7 @@ Works on Linux and macOS.
 Copy `box.py` into your repository, then run it from the repository root:
 
 ```sh
-./box.py --token-file ~/.secrets/claude-oauth.token
+./box.py
 ./box.py -v --memory 8g --cpus 8
 ```
 
@@ -32,7 +33,6 @@ Settings that you use every time belong in `.box.json` next to the script:
 
 ```json
 {
-  "tokenFile": "~/.secrets/claude-oauth.token",
   "promptFile": "docs/agent.md",
   "kit": ".sbx/kit",
   "memory": "8g"
@@ -42,11 +42,27 @@ Settings that you use every time belong in `.box.json` next to the script:
 A command line flag always wins over the JSON file, which wins over the built-in default.
 `-v` prints the settings in effect before the sandbox starts.
 
+## The OAuth token
+
+The token path is the one setting that comes from the environment, and only from there:
+
+```sh
+export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
+```
+
+There is no flag and no `.box.json` key for it. `.box.json` is committed with the project and
+shared, while the token is yours and machine-specific — keeping it out of both means a project
+config can never carry a path to someone else's credentials. Set it once per machine, e.g. via
+`direnv` or your shell profile.
+
+`box.py` refuses to start when the variable is unset or points at a missing or empty file. The
+token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
+only ever sees a placeholder that the proxy swaps for the real value.
+
 ## Settings
 
 | Flag | `.box.json` key | Default | Meaning |
 | --- | --- | --- | --- |
-| `--token-file PATH` | `tokenFile` | — (required) | File holding the Claude OAuth token. `~` is expanded. |
 | `--name NAME` | `name` | current directory name | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
 | `--memory SIZE` | `memory` | `4g` | Memory limit for the sandbox. |
 | `--cpus N` | `cpus` | `4` | CPUs allocated to the sandbox. |

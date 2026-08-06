@@ -13,7 +13,6 @@ import box
 def make_config() -> box.Config:
     """Build a config with every field set to a recognisable value."""
     return box.Config(
-        token_file="/secrets/token",
         name="demo",
         memory="8g",
         cpus="2",
@@ -190,17 +189,32 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
     assert config.cpus == "8"
 
 
-def test_prepare_launch_requires_a_token_file() -> None:
+def test_prepare_launch_requires_the_token_environment_variable() -> None:
     config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
-    with pytest.raises(box.ConfigError, match="tokenFile is not set"):
-        box.prepare_launch(config)
+    with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
+        box.prepare_launch(config, "")
+
+
+def test_token_file_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(box.TOKEN_FILE_ENV, "/secrets/token")
+    assert box.token_file_from_environment() == "/secrets/token"
+
+
+def test_token_file_is_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(box.TOKEN_FILE_ENV, raising=False)
+    assert box.token_file_from_environment() == ""
+
+
+def test_token_file_is_not_a_config_key() -> None:
+    assert "tokenFile" not in box.DEFAULTS
 
 
 def test_format_value_joins_mounts() -> None:
     assert box.format_value(("/a:ro", "/b")) == "/a:ro /b"
 
 
-def test_format_config_lists_every_field() -> None:
-    rendered = box.format_config(make_config())
-    assert "token_file" in rendered
+def test_format_config_shows_the_token_path_with_the_settings() -> None:
+    rendered = box.format_config(make_config(), "/secrets/token")
+    assert box.TOKEN_FILE_ENV in rendered
+    assert "/secrets/token" in rendered
     assert "8g" in rendered

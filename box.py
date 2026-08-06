@@ -16,9 +16,16 @@ CONFIG_FILE = ".box.json"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
+# The token path is deliberately the one setting that is not a flag or a config file key.
+TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
+
+TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
+  1. Run: claude setup-token
+  2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
+  3. Export {TOKEN_FILE_ENV} to point at that file, e.g. via direnv."""
+
 # Config keys and their fallbacks, used for both the JSON file and the CLI.
 DEFAULTS: dict[str, object] = {
-    "tokenFile": "",
     "name": "",
     "memory": "4g",
     "cpus": "4",
@@ -39,7 +46,6 @@ class ConfigError(Exception):
 class Config:
     """Effective settings for one box run."""
 
-    token_file: str
     name: str
     memory: str
     cpus: str
@@ -113,7 +119,6 @@ def build_config(values: dict[str, object], working_directory: Path) -> Config:
     if not name:
         name = default_base_name(working_directory)
     return Config(
-        token_file=str(values["tokenFile"]),
         name=name,
         memory=str(values["memory"]),
         cpus=str(values["cpus"]),
@@ -132,7 +137,6 @@ def build_parser() -> argparse.ArgumentParser:
         prog="box",
         description="Run Claude Code inside a disposable Docker sandbox.",
     )
-    parser.add_argument("--token-file", dest="tokenFile", metavar="PATH", help="file holding the OAuth token")
     parser.add_argument("--name", dest="name", metavar="NAME", help="sandbox base name")
     parser.add_argument("--memory", dest="memory", metavar="SIZE", help="memory limit, e.g. 4g")
     parser.add_argument("--cpus", dest="cpus", metavar="N", help="number of CPUs")
@@ -153,9 +157,9 @@ def format_value(value: object) -> str:
     return str(value)
 
 
-def format_config(config: Config) -> str:
-    """Render the effective config as aligned key/value lines."""
-    items = asdict(config)
+def format_config(config: Config, token_file: str) -> str:
+    """Render the settings in effect, token path included, as aligned key/value lines."""
+    items: dict[str, object] = {TOKEN_FILE_ENV: token_file, **asdict(config)}
     width = max(len(key) for key in items)
     lines = [f"  {key.ljust(width)}  {format_value(value)}" for key, value in items.items()]
     return "\n".join(["config in effect:", *lines])
@@ -293,11 +297,16 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
     return build_config(merge_values(file_values, cli_values), working_directory)
 
 
-def prepare_launch(config: Config) -> Launch:
+def token_file_from_environment() -> str:
+    """Read the token path from the environment, which is the only place it comes from."""
+    return os.environ.get(TOKEN_FILE_ENV, "")
+
+
+def prepare_launch(config: Config, token_file: str) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
-    if not config.token_file:
-        raise ConfigError(f"tokenFile is not set; pass --token-file or set it in {CONFIG_FILE}")
-    token = read_token(resolve_path(config.token_file))
+    if not token_file:
+        raise ConfigError(TOKEN_FILE_HELP)
+    token = read_token(resolve_path(token_file))
     agent_args = build_agent_args(read_system_prompt(config.prompt_file), config.model)
     return Launch(sandbox_name=pick_name(config.name, taken_names()), token=token, agent_args=agent_args)
 
@@ -321,9 +330,10 @@ def main() -> int:
     arguments = build_parser().parse_args()
     try:
         config = load_config(arguments, Path.cwd())
+        token_file = token_file_from_environment()
         if arguments.verbose:
-            print(format_config(config))
-        launch = prepare_launch(config)
+            print(format_config(config, token_file))
+        launch = prepare_launch(config, token_file)
     except ConfigError as error:
         print(f"box: {error}", file=sys.stderr)
         return 1
