@@ -1,0 +1,12 @@
+{
+  "tokenFile": "~/.secrets/claude-oauth.token",
+  "name": "my-project",
+  "memory": "4g",
+  "cpus": "4",
+  "rootSize": "10g",
+  "dockerSize": "10g",
+  "model": "",
+  "promptFile": "docs/agent.md",
+  "kit": ".sbx/kit",
+  "mounts": []
+}
