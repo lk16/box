@@ -24,5 +24,13 @@ Full words, no abbreviations: `sandbox_name`, not `sbx_nm`. Config keys are came
 
 ## Checks
 
-`uv run ruff check`, `uv run ruff format`, `uv run mypy --strict` and `uv run pytest` must all
-pass. `pre-commit` runs the first three on commit; CI runs everything on Linux and macOS.
+Run the checks locally **before starting any new change**, not only before committing. A clean
+run first tells you that anything that breaks afterwards is yours:
+
+```sh
+uv run pre-commit run -a
+uv run pytest -q
+```
+
+Both must pass, and both run again once the change is finished. `pre-commit` covers ruff and
+`mypy --strict`; CI runs the same checks on Linux and macOS.

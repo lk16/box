@@ -74,7 +74,11 @@ remove it yourself with `sbx rm --force <name>`.
 ```sh
 uv sync
 uv run pre-commit install
-uv run ruff check
-uv run mypy --strict
-uv run pytest
+```
+
+Run the checks before starting any change, and again once it is finished:
+
+```sh
+uv run pre-commit run -a
+uv run pytest -q
 ```

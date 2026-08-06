@@ -2,6 +2,9 @@
 
 Index of the documentation in `docs/`. Read the relevant file before changing code.
 
+Run the checks in [docs/style.md](docs/style.md) locally before starting any change, and again
+once it is finished.
+
 - [docs/goal.md](docs/goal.md) — what box is for and the constraints it must keep
 - [docs/style.md](docs/style.md) — code style rules for `box.py` and its tests
 
