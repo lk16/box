@@ -20,16 +20,41 @@ What it gives you:
 
 Works on Linux and macOS.
 
-## Usage
+## Install
 
-Copy `box.py` into your repository, then run it from the repository root:
+Download the script once, to a single place on your machine:
 
 ```sh
-./box.py
-./box.py -v --memory 8g --cpus 8
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/box.py https://raw.githubusercontent.com/lk16/box/main/box.py
+chmod +x ~/.local/bin/box.py
 ```
 
-Settings that you use every time belong in `.box.json` next to the script:
+Then alias it, in `~/.bashrc` or `~/.zshrc`:
+
+```sh
+alias box='~/.local/bin/box.py'
+```
+
+The alias points at an absolute path, so `~/.local/bin` does not have to be on your `PATH`.
+
+That one copy serves every project — do not put `box.py` in your repositories. It resolves
+everything relative to the directory you run it in, never relative to itself: the `.box.json` it
+reads, the workspace it hands to `sbx`, and the git remote it fetches committed work from.
+
+To update, run the same `curl` again.
+
+## Usage
+
+Run it from the root of the repository the agent should work on:
+
+```sh
+cd ~/projects/my-project
+box
+box -v --memory 8g --cpus 8
+```
+
+Settings that you use every time belong in a `.box.json` in that repository:
 
 ```json
 {
@@ -52,8 +77,8 @@ export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
 
 There is no flag and no `.box.json` key for it. `.box.json` is committed with the project and
 shared, while the token is yours and machine-specific — keeping it out of both means a project
-config can never carry a path to someone else's credentials. Set it once per machine, e.g. via
-`direnv` or your shell profile.
+config can never carry a path to someone else's credentials. Set it once per machine, next to
+the alias in your shell profile, or per project with `direnv`.
 
 `box.py` refuses to start when the variable is unset or points at a missing or empty file. The
 token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
@@ -85,7 +110,8 @@ remove it yourself with `sbx rm --force <name>`.
 
 ## Development
 
-`box.py` is standalone and depends on nothing, but the repository is set up for linting and tests:
+Only needed to work on `box.py` itself — clone this repository rather than installing the script.
+`box.py` depends on nothing at runtime, but the repository is set up for linting and tests:
 
 ```sh
 uv sync

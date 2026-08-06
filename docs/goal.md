@@ -17,6 +17,8 @@ One run does this:
 ## Constraints
 
 - All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS.
+- One installed copy serves every project, so everything resolves relative to the current
+  working directory and nothing relative to the script's own location.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
 - Settings come from flags or `.box.json` in the current directory, flags first.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
