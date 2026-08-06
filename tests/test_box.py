@@ -83,6 +83,29 @@ def test_build_config_rejects_non_list_mounts() -> None:
         box.build_config(box.merge_values({"mounts": "/cache"}, {}), Path("/tmp/demo"))
 
 
+def test_a_bare_mount_is_read_only() -> None:
+    assert box.to_workspace("/cache") == "/cache:ro"
+
+
+def test_a_rw_mount_drops_the_suffix() -> None:
+    assert box.to_workspace("/cache:rw") == "/cache"
+
+
+def test_an_explicit_ro_suffix_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="read-only unless you add :rw"):
+        box.to_workspace("/cache:ro")
+
+
+def test_an_unknown_mount_suffix_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="unknown suffix"):
+        box.to_workspace("/cache:rx")
+
+
+def test_build_config_applies_the_mount_default() -> None:
+    config = box.build_config(box.merge_values({"mounts": ["/a", "/b:rw"]}, {}), Path("/tmp/demo"))
+    assert config.mounts == ("/a:ro", "/b")
+
+
 def test_parse_ref_names_extracts_sandbox_names() -> None:
     refs = "refs/sandboxes/demo-1/main\nrefs/sandboxes/demo-2/wip\nrefs/heads/main\n"
     assert box.parse_ref_names(refs) == {"demo-1", "demo-2"}

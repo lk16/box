@@ -28,5 +28,7 @@ One run does this:
 - `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
   one project belongs in that project's `prompt_file`.
 - Never remove a sandbox that holds uncommitted work.
+- Extra mounts are read-only unless the user appends `:rw`, so write access to the host is
+  always something that was asked for.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
 - This is a small project. Add a setting or an abstraction only when something needs it.

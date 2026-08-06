@@ -108,10 +108,16 @@ after the built-in prompt, so it can qualify anything above it.
 | `--model MODEL` | `model` | unset | Model passed to the Claude CLI. |
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | unset | `sbx` kit reference, e.g. a network policy directory. |
-| `--mount SPEC` | `mounts` | `[]` | Extra workspace, repeatable. Append `:ro` for read-only. |
+| `--mount PATH` | `mounts` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
 
 Anything unknown in `.box.json` is an error, so typos surface immediately.
+
+Extra mounts are read-only unless you say otherwise, since the point of a sandbox is that the
+agent cannot write to your machine. `--mount ~/.cache/go-build` mounts read-only, and
+`--mount ~/scratch:rw` opts that one path out. Writing `:ro` is an error rather than a synonym
+for the default, so nothing looks like it grants access it does not. `-v` shows the resulting
+`sbx` specs.
 
 ## When the agent leaves work behind
 

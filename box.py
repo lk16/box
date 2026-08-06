@@ -19,6 +19,9 @@ SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 # The token path is deliberately the one setting that is not a flag or a config file key.
 TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 
+# Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
+READ_WRITE_SUFFIX = ":rw"
+
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
@@ -134,11 +137,20 @@ def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) 
     return merged
 
 
+def to_workspace(mount: str) -> str:
+    """Turn a configured mount into an sbx workspace spec, read-only unless :rw was asked for."""
+    if mount.endswith(READ_WRITE_SUFFIX):
+        return mount[: -len(READ_WRITE_SUFFIX)]
+    if ":" in mount:
+        raise ConfigError(f"mount {mount} has an unknown suffix; mounts are read-only unless you add :rw")
+    return f"{mount}:ro"
+
+
 def as_mount_list(value: object) -> tuple[str, ...]:
-    """Normalise the mounts value into a tuple of workspace specs."""
+    """Normalise the mounts value into a tuple of sbx workspace specs."""
     if not isinstance(value, list):
         raise ConfigError("mounts must be a list of paths")
-    return tuple(str(item) for item in value)
+    return tuple(to_workspace(str(item)) for item in value)
 
 
 def build_config(values: dict[str, object], working_directory: Path) -> Config:
@@ -174,7 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", metavar="MODEL", help="Claude model to run")
     parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
     parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
-    parser.add_argument("--mount", dest="mounts", metavar="SPEC", action="append", help="extra workspace")
+    parser.add_argument(
+        "--mount", dest="mounts", metavar="PATH", action="append", help="read-only workspace, :rw to write"
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     return parser
 
