@@ -380,10 +380,11 @@ def prepare_launch(config: Config, token_file: str) -> Launch:
 def run_session(config: Config, launch: Launch) -> int:
     """Create the sandbox, run Claude in it, and clean up afterwards."""
     environment = build_environment(config)
-    subprocess.run(build_create_command(config, launch.sandbox_name), env=environment, check=True)
+    # sbx injects the placeholder env var when the sandbox is created, so the secret must exist by then.
+    drop_secret(launch.sandbox_name)
+    store_secret(launch.sandbox_name, launch.token)
     try:
-        drop_secret(launch.sandbox_name)
-        store_secret(launch.sandbox_name, launch.token)
+        subprocess.run(build_create_command(config, launch.sandbox_name), env=environment, check=True)
         command = build_run_command(launch.sandbox_name, launch.agent_args)
         result = subprocess.run(command, env=environment, check=False)
         return result.returncode

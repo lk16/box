@@ -34,4 +34,7 @@ One run does this:
   unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
   install, which is not this host's.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
+- Store the secret *before* `sbx create`. `sbx` injects the placeholder env var into the sandbox
+  at creation time, so a secret stored afterwards leaves `CLAUDE_CODE_OAUTH_TOKEN` unset and the
+  agent starts logged out.
 - This is a small project. Add a setting or an abstraction only when something needs it.
