@@ -27,14 +27,23 @@ One run does this:
 - Settings come from flags or `.box/config.json` in the current directory, flags first.
 - Everything box reads from a project lives under `.box/`, so a project has one box footprint
   rather than a scatter of dotfiles at its root.
-- Mounts live in `.box/mounts.json`, apart from every other setting. They name paths on the
-  machine box runs on, which differ per user and per OS, while `.box/config.json` holds only what
-  every checkout of the project shares.
+- Mounts are declared and supplied separately. `required_mounts` in `.box/config.json` names what
+  the project needs and describes what belongs there; `.box/mounts.json` gives each of those names
+  a path on this machine. The two must match exactly: a declared name with no path, or a path
+  still holding `MOUNT_PLACEHOLDER`, is an error naming the mount and its description, and a name
+  the project does not declare is an error the way an unknown config key is.
+- Mounts reach `sbx` in declaration order, so the arguments do not depend on how one machine
+  ordered its file.
+- `:rw` belongs on the path in `.box/mounts.json` and never in the declaration. Whoever owns the
+  machine decides what the agent may write to; a description may ask for write access, but
+  nothing enforces it.
 - Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored.
   A committed mounts file carries one machine's paths into every clone of the project.
-- `box gen` never overwrites an existing file, so re-running it cannot lose a config, and it
-  takes no flags, since it writes defaults to edit rather than settings that were chosen. It
-  appends the mounts file to `.gitignore`, so what it writes is a project box will run in.
+- `box gen` never changes a value that is already there, so re-running it cannot lose a config or
+  a path someone filled in. It adds declared mount names the file is missing, as placeholders it
+  warns about, which is how a machine picks up a mount declared after it was set up. It takes no
+  flags, since it writes defaults to edit rather than settings that were chosen, and it appends
+  the mounts file to `.gitignore`, so what it writes is a project box will run in.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

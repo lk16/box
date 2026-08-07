@@ -56,9 +56,10 @@ box -v --memory 8g --cpus 8
 ```
 
 To set a repository up, run `box gen` in it. It creates `.box/`, writes a `config.json` holding
-every setting at its default and an empty `mounts.json`, and adds the mounts file to
-`.gitignore` unless git already ignores it. It never overwrites a file that already exists, so
-it is safe to re-run — and it takes no flags, since it writes defaults for you to edit rather
+every setting at its default, writes a `mounts.json` answering every mount the project declares,
+and adds the mounts file to `.gitignore` unless git already ignores it. It never changes a value
+that is already there, so it is safe to re-run — that is how you pick up a mount a colleague
+declared after you set up. It takes no flags, since it writes defaults for you to edit rather
 than settings you chose.
 
 Settings that you use every time belong in a `.box/config.json` in that repository:
@@ -116,7 +117,8 @@ after the built-in prompt, so it can qualify anything above it.
 | `--model MODEL` | `model` | — (required) | Model passed to the Claude CLI. |
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
-| `--mount PATH` | `.box/mounts.json` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
+| — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
+| `--mount PATH` | `.box/mounts.json` | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately.
@@ -133,29 +135,54 @@ one on your machine, possibly a different version, and an unset model means *its
 what runs — which can differ from what you expect and from run to run. Naming it makes the
 sandbox's choice yours.
 
-Extra mounts are read-only unless you say otherwise, since the point of a sandbox is that the
-agent cannot write to your machine. `--mount ~/.cache/go-build` mounts read-only, and
-`--mount ~/scratch:rw` opts that one path out. Writing `:ro` is an error rather than a synonym
-for the default, so nothing looks like it grants access it does not. `-v` shows the resulting
-`sbx` specs.
+## Mounts
+
+Mounts are the one part of a project's box setup that names paths on the machine box runs on: a
+toolchain sits somewhere else on a colleague's laptop, and somewhere else again on macOS. They
+are split in two, so each half is stated where it is true.
+
+The project declares *what* it needs, in `required_mounts` in the committed `.box/config.json` —
+a name and a description of what belongs there:
+
+```json
+{
+  "required_mounts": {
+    "go_toolchain": "the Go install, what `go env GOROOT` prints",
+    "go_mod_cache": "the Go module cache, what `go env GOMODCACHE` prints"
+  }
+}
+```
+
+Each machine says *where*, under the same names, in the gitignored `.box/mounts.json`:
+
+```json
+{
+  "go_toolchain": "/usr/local/go",
+  "go_mod_cache": "~/.local/go/pkg/mod"
+}
+```
+
+`box` refuses to start unless the two match exactly. A declared name with no path — or still
+holding the `/placeholder/for/real/path` that `box gen` writes — is an error listing the name
+and its description, so a forgotten module cache surfaces before the sandbox starts rather than
+as a 403 halfway through. A name in `.box/mounts.json` that the project does not declare is an
+error too, the same way an unknown config key is: it is almost always a typo.
+
+Mounts are passed to `sbx` in declaration order, so the arguments do not depend on how one
+machine happened to order its file. `--mount` adds an unnamed workspace for one run, on top of
+the declared ones — the escape hatch for something genuinely one-off.
+
+Whether a mount is writable is the machine's call, not the project's: `:rw` goes on the path in
+`.box/mounts.json`, never in the declaration. A description may ask for it, but nothing enforces
+it, so a shared file can never widen access to your disk.
+
+Every mount is read-only unless you say otherwise, since the point of a sandbox is that the agent
+cannot write to your machine. `~/.cache/go-build` mounts read-only, and `~/scratch:rw` opts that
+one path out. Writing `:ro` is an error rather than a synonym for the default, so nothing looks
+like it grants access it does not. `-v` shows the resulting `sbx` specs.
 
 A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
 preferred over spelling out `/home/you/.cargo`.
-
-Mounts live in their own file, `.box/mounts.json`, holding a JSON array of paths:
-
-```json
-[
-  "~/.cargo",
-  "/usr/local/go",
-  "~/projects/some-dependency"
-]
-```
-
-They are the one part of a project's box setup that names paths on the machine box runs on: a
-toolchain sits somewhere else on a colleague's laptop, and somewhere else again on macOS. So
-they are kept out of `.box/config.json`, which holds only what every checkout of the project
-shares. `--mount` adds to the file's list for one run rather than replacing it.
 
 Because of that, `box` refuses to start while `.box/mounts.json` exists and is not ignored by
 git. Committing it would put paths that exist only on your machine into everyone else's clone.

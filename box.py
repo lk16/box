@@ -19,6 +19,9 @@ CONFIG_FILE = f"{BOX_DIR}/config.json"
 # Mounts name paths on one machine, so they live apart from the settings a project shares.
 MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
 GITIGNORE_FILE = ".gitignore"
+
+# What box gen writes where it cannot know the path, so an unfilled mount fails loudly.
+MOUNT_PLACEHOLDER = "/placeholder/for/real/path"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -81,6 +84,7 @@ DEFAULTS: dict[str, object] = {
     "model": "",
     "prompt_file": "",
     "kit": "",
+    "required_mounts": {},
 }
 
 
@@ -153,14 +157,46 @@ def read_config_file(path: Path) -> dict[str, object]:
     return loaded
 
 
-def read_mounts_file(path: Path) -> list[str]:
-    """Read the mount list from its own JSON file, returning nothing when it is absent."""
+def read_mounts_file(path: Path) -> dict[str, str]:
+    """Read name to path from the mounts file, returning nothing when it is absent."""
     loaded = load_json(path)
     if loaded is None:
-        return []
-    if not isinstance(loaded, list):
-        raise ConfigError(f"{path} must contain a JSON array of paths")
-    return [str(item) for item in loaded]
+        return {}
+    if not isinstance(loaded, dict):
+        raise ConfigError(f"{path} must contain a JSON object of name to path")
+    return {str(name): str(mount) for name, mount in loaded.items()}
+
+
+def as_descriptions(value: object) -> dict[str, str]:
+    """Normalise the required_mounts value into name to description."""
+    if not isinstance(value, dict):
+        raise ConfigError("required_mounts must be a JSON object of name to description")
+    return {str(name): str(description) for name, description in value.items()}
+
+
+def describe_mounts(required: dict[str, str], names: list[str]) -> str:
+    """List named mounts with what the project expects to find in each."""
+    return "\n".join(f"  {name}: {required[name]}" for name in names)
+
+
+def require_named_mounts(required: dict[str, str], provided: dict[str, str]) -> None:
+    """Reject a mounts file that does not answer the project's declaration exactly."""
+    unknown = sorted(set(provided) - set(required))
+    if unknown:
+        raise ConfigError(f"{MOUNTS_FILE} names mounts {CONFIG_FILE} does not declare: {', '.join(unknown)}")
+    unfilled = [name for name in required if provided.get(name, "") in ("", MOUNT_PLACEHOLDER)]
+    if not unfilled:
+        return
+    raise ConfigError(
+        f"{MOUNTS_FILE} has no path on this machine for:\n{describe_mounts(required, unfilled)}\n"
+        f"Run box gen to add every declared name, then replace {MOUNT_PLACEHOLDER}."
+    )
+
+
+def order_mounts(required: dict[str, str], provided: dict[str, str]) -> list[str]:
+    """Return the declared mounts' paths in declaration order, so the sbx args never shuffle."""
+    require_named_mounts(required, provided)
+    return [provided[name] for name in required]
 
 
 def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) -> dict[str, object]:
@@ -373,9 +409,12 @@ def cleanup(sandbox_name: str) -> None:
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
 
-def resolve_mounts(arguments: argparse.Namespace, working_directory: Path) -> list[str]:
-    """Add the mounts given as flags to the ones in the mounts file."""
-    mounts = read_mounts_file(working_directory / MOUNTS_FILE)
+def resolve_mounts(
+    arguments: argparse.Namespace, working_directory: Path, required: dict[str, str]
+) -> list[str]:
+    """Add the mounts given as flags to the named ones in the mounts file."""
+    provided = read_mounts_file(working_directory / MOUNTS_FILE)
+    mounts = order_mounts(required, provided)
     if not arguments.mounts:
         return mounts
     return mounts + list(arguments.mounts)
@@ -385,8 +424,9 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
     """Combine the JSON files and the CLI arguments into the effective config."""
     cli_values = {key: value for key, value in vars(arguments).items() if key in DEFAULTS}
     file_values = read_config_file(working_directory / CONFIG_FILE)
-    mounts = resolve_mounts(arguments, working_directory)
-    return build_config(merge_values(file_values, cli_values), mounts, working_directory)
+    values = merge_values(file_values, cli_values)
+    mounts = resolve_mounts(arguments, working_directory, as_descriptions(values["required_mounts"]))
+    return build_config(values, mounts, working_directory)
 
 
 def token_file_from_environment() -> str:
@@ -460,12 +500,9 @@ def require_no_flags(arguments: argparse.Namespace) -> None:
     raise ConfigError(f"gen takes no flags, but got {', '.join(given)}; edit {CONFIG_FILE} instead")
 
 
-def starter_files() -> dict[str, str]:
-    """Render the contents box gen writes: every setting at its default, and no mounts."""
-    return {
-        CONFIG_FILE: json.dumps(DEFAULTS, indent=2) + "\n",
-        MOUNTS_FILE: "[]\n",
-    }
+def to_json(contents: object) -> str:
+    """Render what box gen writes, indented and newline-terminated like a hand-edited file."""
+    return json.dumps(contents, indent=2) + "\n"
 
 
 def append_line(path: Path, line: str) -> None:
@@ -486,16 +523,54 @@ def ignore_mounts_file(working_directory: Path) -> None:
     print(f"ignored {MOUNTS_FILE} in {GITIGNORE_FILE}")
 
 
-def generate(working_directory: Path) -> int:
-    """Write a starter .box directory, leaving anything that already exists untouched."""
-    (working_directory / BOX_DIR).mkdir(exist_ok=True)
-    for name, contents in starter_files().items():
-        path = working_directory / name
-        if path.exists():
-            print(f"kept    {name}")
+def write_starter_config(path: Path) -> None:
+    """Write every setting at its default, unless the project already has a config."""
+    if path.exists():
+        print(f"kept    {CONFIG_FILE}")
+        return
+    path.write_text(to_json(DEFAULTS))
+    print(f"written {CONFIG_FILE}")
+
+
+def fill_mounts(required: dict[str, str], provided: dict[str, str]) -> dict[str, str]:
+    """Answer every declared mount, keeping the paths already filled in."""
+    filled = dict(provided)
+    for name in required:
+        if name in filled:
             continue
-        path.write_text(contents)
-        print(f"written {name}")
+        filled[name] = MOUNT_PLACEHOLDER
+    return filled
+
+
+def warn_placeholders(required: dict[str, str], filled: dict[str, str]) -> None:
+    """Name the mounts whose path only this machine's owner knows."""
+    names = [name for name in required if filled[name] == MOUNT_PLACEHOLDER]
+    if not names:
+        return
+    print(f"WARNING: replace {MOUNT_PLACEHOLDER} in {MOUNTS_FILE} for:", file=sys.stderr)
+    print(describe_mounts(required, names), file=sys.stderr)
+
+
+def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
+    """Add a placeholder for every declared mount the file leaves unanswered."""
+    path = working_directory / MOUNTS_FILE
+    provided = read_mounts_file(path)
+    filled = fill_mounts(required, provided)
+    if path.is_file() and filled == provided:
+        print(f"kept    {MOUNTS_FILE}")
+        return
+    path.write_text(to_json(filled))
+    print(f"written {MOUNTS_FILE}")
+    warn_placeholders(required, filled)
+
+
+def generate(working_directory: Path) -> int:
+    """Write a starter .box directory, adding what is missing and keeping what is filled in."""
+    (working_directory / BOX_DIR).mkdir(exist_ok=True)
+    config_path = working_directory / CONFIG_FILE
+    write_starter_config(config_path)
+    values = merge_values(read_config_file(config_path), {})
+    write_mounts(working_directory, as_descriptions(values["required_mounts"]))
     ignore_mounts_file(working_directory)
     return 0
 

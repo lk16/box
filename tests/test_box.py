@@ -135,25 +135,68 @@ def test_mounts_is_not_a_config_key() -> None:
 
 
 def test_read_mounts_file_returns_nothing_when_absent(tmp_path: Path) -> None:
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == []
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {}
 
 
-def test_read_mounts_file_reads_the_list(tmp_path: Path) -> None:
-    path = write_box_file(tmp_path, box.MOUNTS_FILE, ["~/.cargo", "/usr/local/go"])
-    assert box.read_mounts_file(path) == ["~/.cargo", "/usr/local/go"]
+def test_read_mounts_file_reads_the_named_paths(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, {"cargo": "~/.cargo", "go": "/usr/local/go"})
+    assert box.read_mounts_file(path) == {"cargo": "~/.cargo", "go": "/usr/local/go"}
 
 
-def test_read_mounts_file_rejects_a_json_object(tmp_path: Path) -> None:
-    path = write_box_file(tmp_path, box.MOUNTS_FILE, {"mounts": []})
-    with pytest.raises(box.ConfigError, match="must contain a JSON array"):
+def test_read_mounts_file_rejects_a_json_array(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    with pytest.raises(box.ConfigError, match="must contain a JSON object"):
         box.read_mounts_file(path)
 
 
 def test_read_mounts_file_rejects_broken_json(tmp_path: Path) -> None:
-    path = write_box_file(tmp_path, box.MOUNTS_FILE, [])
-    path.write_text("[")
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, {})
+    path.write_text("{")
     with pytest.raises(box.ConfigError, match="not valid JSON"):
         box.read_mounts_file(path)
+
+
+def test_as_descriptions_rejects_a_json_array() -> None:
+    with pytest.raises(box.ConfigError, match="required_mounts must be a JSON object"):
+        box.as_descriptions(["go_mod_cache"])
+
+
+def test_order_mounts_follows_the_declaration_not_the_mounts_file() -> None:
+    required = {"go": "the Go toolchain", "cargo": "the cargo home"}
+    provided = {"cargo": "~/.cargo", "go": "/usr/local/go"}
+    assert box.order_mounts(required, provided) == ["/usr/local/go", "~/.cargo"]
+
+
+def test_a_declared_mount_with_no_path_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="go_mod_cache: the Go module cache"):
+        box.order_mounts({"go_mod_cache": "the Go module cache"}, {})
+
+
+def test_a_placeholder_path_is_rejected() -> None:
+    required = {"go_mod_cache": "the Go module cache"}
+    with pytest.raises(box.ConfigError, match="has no path on this machine"):
+        box.order_mounts(required, {"go_mod_cache": box.MOUNT_PLACEHOLDER})
+
+
+def test_an_empty_path_is_rejected() -> None:
+    required = {"go_mod_cache": "the Go module cache"}
+    with pytest.raises(box.ConfigError, match="has no path on this machine"):
+        box.order_mounts(required, {"go_mod_cache": ""})
+
+
+def test_an_undeclared_mount_name_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="does not declare: typo"):
+        box.order_mounts({"cargo": "the cargo home"}, {"cargo": "~/.cargo", "typo": "/cache"})
+
+
+def test_the_error_names_every_unfilled_mount() -> None:
+    required = {"go": "the Go toolchain", "cargo": "the cargo home"}
+    with pytest.raises(box.ConfigError, match="go: the Go toolchain\n  cargo: the cargo home"):
+        box.order_mounts(required, {})
+
+
+def test_no_declared_mounts_needs_no_mounts_file() -> None:
+    assert box.order_mounts({}, {}) == []
 
 
 def test_build_config_applies_the_mount_default() -> None:
@@ -276,13 +319,15 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
 
 
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
-    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
     arguments = box.build_parser().parse_args([])
     assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro",)
 
 
 def test_load_config_adds_mount_flags_to_the_mounts_file(tmp_path: Path) -> None:
-    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
     arguments = box.build_parser().parse_args(["--mount", "/other", "--mount", "/third:rw"])
     assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro", "/other:ro", "/third")
 
@@ -369,7 +414,7 @@ def test_gen_names_every_flag_it_was_given() -> None:
 def test_gen_writes_both_files(tmp_path: Path) -> None:
     box.generate(tmp_path)
     assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.DEFAULTS
-    assert json.loads((tmp_path / box.MOUNTS_FILE).read_text()) == []
+    assert json.loads((tmp_path / box.MOUNTS_FILE).read_text()) == {}
 
 
 def test_gen_writes_a_config_box_can_read_back(tmp_path: Path) -> None:
@@ -384,9 +429,49 @@ def test_gen_keeps_an_existing_config(tmp_path: Path) -> None:
 
 
 def test_gen_keeps_an_existing_mounts_file(tmp_path: Path) -> None:
-    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
+    write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     box.generate(tmp_path)
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == ["/cache"]
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"cache": "/cache"}
+
+
+def test_gen_scaffolds_a_placeholder_for_every_declared_mount(tmp_path: Path) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    box.generate(tmp_path)
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"go": box.MOUNT_PLACEHOLDER}
+
+
+def test_gen_adds_declared_names_the_mounts_file_is_missing(tmp_path: Path) -> None:
+    declared = {"go": "the Go toolchain", "cargo": "the cargo home"}
+    write_config(tmp_path, {"required_mounts": declared})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    box.generate(tmp_path)
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {
+        "go": "/usr/local/go",
+        "cargo": box.MOUNT_PLACEHOLDER,
+    }
+
+
+def test_gen_leaves_an_undeclared_name_for_box_to_reject(tmp_path: Path) -> None:
+    write_config(tmp_path, {"required_mounts": {}})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"typo": "/cache"})
+    box.generate(tmp_path)
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"typo": "/cache"}
+
+
+def test_gen_warns_about_every_placeholder_it_wrote(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    box.generate(tmp_path)
+    assert "go: the Go toolchain" in capsys.readouterr().err
+
+
+def test_gen_is_silent_when_nothing_needs_filling_in(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    box.generate(tmp_path)
+    assert capsys.readouterr().err == ""
 
 
 def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
@@ -474,7 +559,8 @@ def test_every_config_key_is_snake_case() -> None:
 
 def test_config_keys_match_the_config_fields() -> None:
     config = build_config({}, Path("/tmp/demo"))
-    assert set(vars(config)) == set(box.DEFAULTS) | {"mounts"}
+    settings = set(box.DEFAULTS) - {"required_mounts"}
+    assert set(vars(config)) == settings | {"mounts"}
 
 
 def test_flags_use_the_config_keys_with_hyphens() -> None:
