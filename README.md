@@ -151,6 +151,17 @@ toolchain sits somewhere else on a colleague's laptop, and somewhere else again 
 they are kept out of `.box/config.json`, which holds only what every checkout of the project
 shares. `--mount` replaces the file's list for that run rather than adding to it.
 
+Because of that, `box` refuses to start while `.box/mounts.json` exists and is not ignored by
+git. Committing it would put paths that exist only on your machine into everyone else's clone.
+Add a line to `.gitignore`:
+
+```gitignore
+.box/mounts.json
+```
+
+Ignore the file rather than the whole `.box/` directory, so `config.json` stays committed. A
+project with no mounts file needs no entry.
+
 ## When the agent leaves work behind
 
 Only committed work survives. On exit `box.py` fetches from the `sandbox-<name>` git remote,

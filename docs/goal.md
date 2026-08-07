@@ -28,6 +28,8 @@ One run does this:
 - Mounts live in `.box/mounts.json`, apart from every other setting. They name paths on the
   machine box runs on, which differ per user and per OS, while `.box/config.json` holds only what
   every checkout of the project shares.
+- Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored.
+  A committed mounts file carries one machine's paths into every clone of the project.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

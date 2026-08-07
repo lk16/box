@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -291,21 +292,54 @@ def test_load_config_has_no_mounts_without_a_mounts_file(tmp_path: Path) -> None
     assert box.load_config(arguments, tmp_path).mounts == ()
 
 
+def make_repository(directory: Path, gitignore: str) -> Path:
+    """Create a git repository holding a mounts file and the given .gitignore."""
+    subprocess.run(["git", "init", "-q", str(directory)], check=True)
+    (directory / ".gitignore").write_text(gitignore)
+    write_box_file(directory, box.MOUNTS_FILE, ["/cache"])
+    return directory
+
+
+def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
+    box.require_ignored_mounts(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"))
+
+
+def test_an_ignored_box_directory_covers_the_mounts_file(tmp_path: Path) -> None:
+    box.require_ignored_mounts(make_repository(tmp_path, f"{box.BOX_DIR}/\n"))
+
+
+def test_a_committable_mounts_file_is_rejected(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, "*.log\n")
+    with pytest.raises(box.ConfigError, match="not ignored by git"):
+        box.require_ignored_mounts(repository)
+
+
+def test_no_mounts_file_needs_no_gitignore_entry(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    box.require_ignored_mounts(tmp_path)
+
+
+def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, "")
+    with pytest.raises(box.ConfigError, match="not ignored by git"):
+        box.prepare_launch(make_config(), "/secrets/token", repository)
+
+
 def test_prepare_launch_requires_the_token_environment_variable() -> None:
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(make_config(), "")
+        box.prepare_launch(make_config(), "", Path("/tmp/demo"))
 
 
 def test_prepare_launch_requires_a_kit() -> None:
     config = build_config({}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.prepare_launch(config, "/secrets/token")
+        box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
 
 
 def test_prepare_launch_requires_a_model() -> None:
     config = build_config({"kit": ".sbx/kit"}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="model is not set"):
-        box.prepare_launch(config, "/secrets/token")
+        box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
 
 
 def test_require_settings_accepts_a_complete_config() -> None:

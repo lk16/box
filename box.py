@@ -33,6 +33,10 @@ Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE}
 MODEL_HELP = f"""model is not set, so the sandbox's own Claude version would pick the model.
 That version need not match the one on this host. Name the model in {CONFIG_FILE} or with --model."""
 
+MOUNTS_IGNORED_HELP = f"""{MOUNTS_FILE} is not ignored by git.
+It names folders on this machine, so committing it would put paths that exist only here into
+everyone else's clone. Add a {MOUNTS_FILE} line to .gitignore."""
+
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
@@ -393,9 +397,25 @@ def require_settings(config: Config) -> None:
         raise ConfigError(MODEL_HELP)
 
 
-def prepare_launch(config: Config, token_file: str) -> Launch:
+def is_git_ignored(working_directory: Path, relative_path: str) -> bool:
+    """Ask git whether a path is ignored; check-ignore exits 0 only when it is."""
+    command = ["git", "-C", str(working_directory), "check-ignore", "-q", relative_path]
+    return subprocess.run(command, capture_output=True, check=False).returncode == 0
+
+
+def require_ignored_mounts(working_directory: Path) -> None:
+    """Refuse to run while a mounts file that names this machine's paths could be committed."""
+    if not (working_directory / MOUNTS_FILE).is_file():
+        return
+    if is_git_ignored(working_directory, MOUNTS_FILE):
+        return
+    raise ConfigError(MOUNTS_IGNORED_HELP)
+
+
+def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
     require_settings(config)
+    require_ignored_mounts(working_directory)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))
@@ -422,12 +442,13 @@ def run_session(config: Config, launch: Launch) -> int:
 def main() -> int:
     """Entry point: load config, then hand off to a sandbox session."""
     arguments = build_parser().parse_args()
+    working_directory = Path.cwd()
     try:
-        config = load_config(arguments, Path.cwd())
+        config = load_config(arguments, working_directory)
         token_file = token_file_from_environment()
         if arguments.verbose:
             print(format_config(config, token_file))
-        launch = prepare_launch(config, token_file)
+        launch = prepare_launch(config, token_file, working_directory)
     except ConfigError as error:
         print(f"box: {error}", file=sys.stderr)
         return 1
