@@ -54,10 +54,11 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   of box. `mount-prompt` writes for an agent with a shell on this host: it may run commands to
   find a path and must check it exists, never guess one, and never add `:rw` unless a description
   asked for it.
-- `mount-prompt` prints to stdout for a human to paste into an interactive agent session, not to
-  be piped into a headless one. The agent runs commands on the host and edits a file that points
-  at the user's own directories, so the tool calls and the diff belong in front of them. Printing
-  nothing when every mount has a path keeps a second run from asking for work already done.
+- `mount-prompt` prints to stdout to feed an interactive agent session. The agent runs commands
+  on the host and edits a file that points at the user's own directories, so the tool calls and
+  the diff belong in front of them to approve. It asks about every declared mount without a path,
+  whether the key is absent or holds the placeholder, so it follows a declaration directly.
+  Printing nothing when every mount has a path keeps a second run from asking for done work.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

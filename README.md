@@ -11,75 +11,38 @@ What it gives you:
 - committed work fetched back to the host, and the sandbox removed, when the agent exits
 - a refusal to remove a sandbox that still holds uncommitted changes
 
-## Requirements
-
-- Python 3.11+ (standard library only)
-- `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) and `git` on `PATH`
-- a Claude OAuth token in a file — run `claude setup-token`, save the printed token, and point
-  `CLAUDE_OAUTH_TOKEN_FILE` at it (see [The OAuth token](#the-oauth-token))
-
-Works on Linux and macOS.
+Needs Python 3.11+, plus `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) and
+`git` on `PATH`. Works on Linux and macOS.
 
 ## Install
-
-Download the script once, to a single place on your machine:
 
 ```sh
 mkdir -p ~/.local/bin
 curl -fsSL -o ~/.local/bin/box.py https://raw.githubusercontent.com/lk16/box/main/box.py
 chmod +x ~/.local/bin/box.py
+echo "alias box='~/.local/bin/box.py'" >> ~/.bashrc      # or ~/.zshrc
 ```
 
-Then alias it, in `~/.bashrc` or `~/.zshrc`:
+Then point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token` — see
+[The OAuth token](#the-oauth-token). Re-run the same `curl` to update.
 
-```sh
-alias box='~/.local/bin/box.py'
-```
+One copy serves every project, so do not commit `box.py` into your repositories.
 
-The alias points at an absolute path, so `~/.local/bin` does not have to be on your `PATH`.
+## Use
 
-That one copy serves every project — do not put `box.py` in your repositories. It resolves
-everything relative to the directory you run it in, never relative to itself: the
-`.box/config.json` it reads, the workspace it hands to `sbx`, and the git remote it fetches
-committed work from.
+Four commands, all run from the root of the repository you want an agent to work on:
 
-To update, run the same `curl` again.
+- **`box gen`** — set the repository up. Writes `.box/config.json`, `.box/mounts.json`, and a
+  `.gitignore` entry. Then fill in `kit`, `model` and any [`required_mounts`](#mounts) by hand.
+- **`box mount-prompt | claude`** — have an agent find this machine's paths for the mounts the
+  project declares. See [Filling them in with an agent](#filling-them-in-with-an-agent).
+- **`box config`** — print the settings in effect and stop, which also checks the project is set
+  up. Takes the same flags as `box run`.
+- **`box run`** — start the sandbox. `box run --memory 8g --cpus 8` overrides settings for one
+  run; `-v` prints them first.
 
-## Usage
-
-Run it from the root of the repository the agent should work on:
-
-```sh
-cd ~/projects/my-project
-box run
-box run -v --memory 8g --cpus 8
-```
-
-To set a repository up, run `box gen` in it. It creates `.box/`, writes a `config.json` holding
-every setting at its default, writes a `mounts.json` answering every mount the project declares,
-and adds the mounts file to `.gitignore` unless git already ignores it. It never changes a value
-that is already there, so it is safe to re-run — that is how you pick up a mount a colleague
-declared after you set up. It takes no flags, since it writes defaults for you to edit rather
-than settings you chose.
-
-Settings that you use every time belong in a `.box/config.json` in that repository:
-
-```json
-{
-  "kit": ".sbx/kit",
-  "model": "claude-opus-5",
-  "prompt_file": "docs/agent.md",
-  "memory": "8g"
-}
-```
-
-A command line flag always wins over the JSON file, which wins over the built-in default.
-
-`box config` prints the settings in effect and stops there, so it doubles as a check that the
-project is set up: it reads both JSON files and resolves the mounts, so a bad key, broken JSON or
-an unfilled mount is an error without a sandbox being created. It takes the same flags as
-`box run`, so `box config --memory 8g` shows what that run would use. `box run -v` prints the
-same block and then goes ahead.
+A new machine on an existing project needs only the first two. Everything else lives in
+[Settings](#settings) below.
 
 ## The OAuth token
 
@@ -111,6 +74,20 @@ copying it around.
 after the built-in prompt, so it can qualify anything above it.
 
 ## Settings
+
+Settings you use every run belong in `.box/config.json`, which is committed with the project:
+
+```json
+{
+  "kit": ".sbx/kit",
+  "model": "claude-opus-5",
+  "prompt_file": "docs/agent.md",
+  "memory": "8g"
+}
+```
+
+A command line flag wins over that file, which wins over the built-in default. `box config`
+prints what a run would end up with, `box run -v` prints it and then goes ahead.
 
 | Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |
@@ -179,29 +156,26 @@ the declared ones — the escape hatch for something genuinely one-off.
 
 ### Filling them in with an agent
 
-`box mount-prompt` prints a prompt asking an agent to fill in the paths this machine still owes.
-Run `box gen` first, then paste the output into an **interactive** agent session on this host:
+`box mount-prompt` prints a prompt asking an agent to fill in the paths this machine still owes:
 
 ```sh
-box gen
-box mount-prompt
+box mount-prompt | claude
 ```
 
-Paste it into a running `claude`, rather than piping it to `claude -p`. The agent is going to
-run commands on your machine and edit a file, and an interactive session is where you see each
-tool call it wants to make and the diff it produces. Piped into headless mode, all of that
-happens where you cannot watch it — for a file whose whole job is to point at directories on
-your disk.
+Pipe it into an **interactive** session. The agent runs commands on your machine and edits a
+file that points at directories on your disk, so you want to see each tool call it asks for and
+the diff it produces before approving them.
 
-The prompt names each unfilled mount with its description, says which platform it is running on,
-and tells the agent to edit `.box/mounts.json` in place, replacing only the placeholders. It
-assumes a shell on this host — the agent can run `go env GOMODCACHE` or `brew --prefix` and
-check a path exists before writing it, which a plain chat window could only guess at. The agent
-is told to leave a placeholder alone and say so rather than invent a path, and to add `:rw` only
+The prompt names each unfilled mount with its description and says which platform it is running
+on. It assumes a shell on this host — the agent can run `go env GOMODCACHE` or `brew --prefix`
+and check a path exists before writing it, which a plain chat window could only guess at. The
+agent is told to say which it could not find rather than invent a path, and to add `:rw` only
 where a description asks for write access.
 
-When every mount already has a path it prints nothing and exits 0, so running it again after a
-partial fill asks only about what is left.
+It asks about any declared mount without a path, whether the key is missing from
+`.box/mounts.json` or still holds the placeholder, so it works straight after someone declares a
+new mount. When every mount already has a path it prints nothing and exits 0, so running it
+again after a partial fill asks only about what is left.
 
 Its output is only as good as your descriptions. `"go cache"` gives an agent nothing to work
 with; `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run, and
