@@ -101,6 +101,16 @@ def test_an_unknown_mount_suffix_is_rejected() -> None:
         box.to_workspace("/cache:rx")
 
 
+def test_a_mount_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", "/home/someone")
+    assert box.to_workspace("~/.cargo") == "/home/someone/.cargo:ro"
+
+
+def test_a_rw_mount_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", "/home/someone")
+    assert box.to_workspace("~/scratch:rw") == "/home/someone/scratch"
+
+
 def test_build_config_applies_the_mount_default() -> None:
     config = box.build_config(box.merge_values({"mounts": ["/a", "/b:rw"]}, {}), Path("/tmp/demo"))
     assert config.mounts == ("/a:ro", "/b")

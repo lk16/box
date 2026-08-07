@@ -132,6 +132,9 @@ agent cannot write to your machine. `--mount ~/.cache/go-build` mounts read-only
 for the default, so nothing looks like it grants access it does not. `-v` shows the resulting
 `sbx` specs.
 
+A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
+preferred over spelling out `/home/you/.cargo`.
+
 ## When the agent leaves work behind
 
 Only committed work survives. On exit `box.py` fetches from the `sandbox-<name>` git remote,

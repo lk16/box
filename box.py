@@ -116,6 +116,11 @@ def default_base_name(directory: Path) -> str:
     return name
 
 
+def resolve_path(text: str) -> Path:
+    """Expand a configured path so a leading ~ works the same as in the shell."""
+    return Path(text).expanduser()
+
+
 def read_config_file(path: Path) -> dict[str, object]:
     """Read config values from the JSON file, returning empty values when it is absent."""
     if not path.is_file():
@@ -146,10 +151,10 @@ def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) 
 def to_workspace(mount: str) -> str:
     """Turn a configured mount into an sbx workspace spec, read-only unless :rw was asked for."""
     if mount.endswith(READ_WRITE_SUFFIX):
-        return mount[: -len(READ_WRITE_SUFFIX)]
+        return str(resolve_path(mount[: -len(READ_WRITE_SUFFIX)]))
     if ":" in mount:
         raise ConfigError(f"mount {mount} has an unknown suffix; mounts are read-only unless you add :rw")
-    return f"{mount}:ro"
+    return f"{resolve_path(mount)}:ro"
 
 
 def as_mount_list(value: object) -> tuple[str, ...]:
@@ -246,11 +251,6 @@ def pick_name(base_name: str, used: set[str]) -> str:
     while f"{base_name}-{number}" in used:
         number += 1
     return f"{base_name}-{number}"
-
-
-def resolve_path(text: str) -> Path:
-    """Expand a configured path so a leading ~ works the same as in the shell."""
-    return Path(text).expanduser()
 
 
 def read_token(path: Path) -> str:
