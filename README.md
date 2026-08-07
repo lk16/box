@@ -26,11 +26,6 @@ echo "alias box='~/.local/bin/box.py'" >> ~/.bashrc      # or ~/.zshrc
 Re-run the same `curl` to update. One copy serves every project, so do not commit `box.py` into
 your repositories.
 
-Every command hashes your copy against the published one and prints the `curl` to run if they
-differ. The result is cached in `~/.cache/box/` for a day, so at most one command a day makes a
-network call, and a failed check is silent — box never stops working because GitHub is
-unreachable. The notice goes to stderr, so `box mount-prompt | claude` still pipes cleanly.
-
 ## Use
 
 Every command runs from the root of the repository you want an agent to work on.
@@ -42,8 +37,9 @@ Every command runs from the root of the repository you want an agent to work on.
 
 ### Configuring box for this repo on this machine
 
-- point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token`. Set it in
-  your shell profile, or per project with `direnv`. See [The OAuth token](#the-oauth-token)
+- point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token`, e.g.
+  `export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token` in your shell profile, or per
+  project with `direnv`. box refuses to start without it
 - **`box mount-prompt | claude`** — have an agent fill in the mounts this project needs on this
   machine. See [Filling them in with an agent](#filling-them-in-with-an-agent)
 - **`box config`** — confirm box's config files parse, and show the settings in effect without
@@ -51,24 +47,6 @@ Every command runs from the root of the repository you want an agent to work on.
 - **`box run`** — start the sandbox. See [Settings](#settings) for flags
 
 A new machine on an existing project needs only the second group.
-
-## The OAuth token
-
-Run `claude setup-token`, save the printed token to a file, and point the environment variable
-at it:
-
-```sh
-export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
-```
-
-The token is yours and machine-specific, so it is the one setting that comes from the
-environment and only from there — a project's committed config can never carry a path to
-someone else's credentials. Set it once per machine in your shell profile, or per project with
-`direnv`.
-
-`box.py` refuses to start when the variable is unset or points at a missing or empty file. The
-token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
-only ever sees a placeholder that the proxy swaps for the real value.
 
 ## The system prompt
 
