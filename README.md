@@ -39,7 +39,7 @@ Four commands, all run from the root of the repository you want an agent to work
 - **`box config`** — print the settings in effect and stop, which also checks the project is set
   up. Takes the same flags as `box run`.
 - **`box run`** — start the sandbox. `box run --memory 8g --cpus 8` overrides settings for one
-  run; `-v` prints them first.
+  run.
 
 A new machine on an existing project needs only the first two. Everything else lives in
 [Settings](#settings) below.
@@ -87,7 +87,7 @@ Settings you use every run belong in `.box/config.json`, which is committed with
 ```
 
 A command line flag wins over that file, which wins over the built-in default. `box config`
-prints what a run would end up with, `box run -v` prints it and then goes ahead.
+prints what a run would end up with.
 
 | Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |
@@ -101,7 +101,6 @@ prints what a run would end up with, `box run -v` prints it and then goes ahead.
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | `--mount PATH` | `.box/mounts.json` | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
-| `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately.
 
@@ -189,7 +188,7 @@ it, so a shared file can never widen access to your disk.
 Every mount is read-only unless you say otherwise, since the point of a sandbox is that the agent
 cannot write to your machine. `~/.cache/go-build` mounts read-only, and `~/scratch:rw` opts that
 one path out. Writing `:ro` is an error rather than a synonym for the default, so nothing looks
-like it grants access it does not. `-v` shows the resulting `sbx` specs.
+like it grants access it does not. `box config` shows the resulting `sbx` specs.
 
 A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
 preferred over spelling out `/home/you/.cargo`.

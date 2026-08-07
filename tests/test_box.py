@@ -425,12 +425,6 @@ def test_gen_rejects_a_setting_flag() -> None:
         box.require_no_flags(arguments)
 
 
-def test_gen_rejects_verbose() -> None:
-    arguments = box.build_parser().parse_args(["-v", "gen"])
-    with pytest.raises(box.ConfigError, match="--verbose"):
-        box.require_no_flags(arguments)
-
-
 def test_gen_rejects_a_mount_flag() -> None:
     arguments = box.build_parser().parse_args(["--mount", "/cache", "gen"])
     with pytest.raises(box.ConfigError, match="--mounts"):

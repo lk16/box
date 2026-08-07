@@ -268,7 +268,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mount", dest="mounts", metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     parser.add_argument(
         "command",
         choices=["run", "config", "gen", "mount-prompt"],
@@ -646,8 +645,6 @@ def main() -> int:
         token_file = token_file_from_environment()
         if arguments.command == "config":
             return show_config(config, token_file)
-        if arguments.verbose:
-            print(format_config(config, token_file))
         launch = prepare_launch(config, token_file, working_directory)
     except ConfigError as error:
         print(f"box: {error}", file=sys.stderr)
