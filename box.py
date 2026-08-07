@@ -179,12 +179,17 @@ def describe_mounts(required: dict[str, str], names: list[str]) -> str:
     return "\n".join(f"  {name}: {required[name]}" for name in names)
 
 
+def unfilled_mounts(required: dict[str, str], provided: dict[str, str]) -> list[str]:
+    """Name the declared mounts that have no path on this machine yet."""
+    return [name for name in required if provided.get(name, "") in ("", MOUNT_PLACEHOLDER)]
+
+
 def require_named_mounts(required: dict[str, str], provided: dict[str, str]) -> None:
     """Reject a mounts file that does not answer the project's declaration exactly."""
     unknown = sorted(set(provided) - set(required))
     if unknown:
         raise ConfigError(f"{MOUNTS_FILE} names mounts {CONFIG_FILE} does not declare: {', '.join(unknown)}")
-    unfilled = [name for name in required if provided.get(name, "") in ("", MOUNT_PLACEHOLDER)]
+    unfilled = unfilled_mounts(required, provided)
     if not unfilled:
         return
     raise ConfigError(
@@ -262,7 +267,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     parser.add_argument(
-        "command", nargs="?", choices=["gen"], help=f"gen writes a starter {BOX_DIR} directory"
+        "command",
+        nargs="?",
+        choices=["gen", "mount-prompt"],
+        help=f"gen writes a starter {BOX_DIR} directory, mount-prompt asks an agent to fill it in",
     )
     return parser
 
@@ -490,14 +498,16 @@ def to_flag(key: str) -> str:
 
 
 def require_no_flags(arguments: argparse.Namespace) -> None:
-    """Reject flags passed to gen, which writes defaults rather than settings you chose."""
+    """Reject flags passed to a command, which reads the config rather than taking settings."""
     defaults = vars(build_parser().parse_args([]))
     given = sorted(
         to_flag(key) for key, value in vars(arguments).items() if key != "command" and value != defaults[key]
     )
     if not given:
         return
-    raise ConfigError(f"gen takes no flags, but got {', '.join(given)}; edit {CONFIG_FILE} instead")
+    raise ConfigError(
+        f"{arguments.command} takes no flags, but got {', '.join(given)}; edit {CONFIG_FILE} instead"
+    )
 
 
 def to_json(contents: object) -> str:
@@ -544,7 +554,7 @@ def fill_mounts(required: dict[str, str], provided: dict[str, str]) -> dict[str,
 
 def warn_placeholders(required: dict[str, str], filled: dict[str, str]) -> None:
     """Name the mounts whose path only this machine's owner knows."""
-    names = [name for name in required if filled[name] == MOUNT_PLACEHOLDER]
+    names = unfilled_mounts(required, filled)
     if not names:
         return
     print(f"WARNING: replace {MOUNT_PLACEHOLDER} in {MOUNTS_FILE} for:", file=sys.stderr)
@@ -567,22 +577,58 @@ def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
 def generate(working_directory: Path) -> int:
     """Write a starter .box directory, adding what is missing and keeping what is filled in."""
     (working_directory / BOX_DIR).mkdir(exist_ok=True)
-    config_path = working_directory / CONFIG_FILE
-    write_starter_config(config_path)
-    values = merge_values(read_config_file(config_path), {})
-    write_mounts(working_directory, as_descriptions(values["required_mounts"]))
+    write_starter_config(working_directory / CONFIG_FILE)
+    write_mounts(working_directory, read_required_mounts(working_directory))
     ignore_mounts_file(working_directory)
     return 0
 
 
+def read_required_mounts(working_directory: Path) -> dict[str, str]:
+    """Read what the project declares it needs mounted."""
+    values = merge_values(read_config_file(working_directory / CONFIG_FILE), {})
+    return as_descriptions(values["required_mounts"])
+
+
+def build_mount_prompt(required: dict[str, str], names: list[str], platform: str) -> str:
+    """Render the prompt that has an agent on this host fill in the mounts file."""
+    return f"""Fill in {MOUNTS_FILE} for this machine, which runs {platform}.
+
+Replace only the {MOUNT_PLACEHOLDER} values, for these mounts:
+
+{describe_mounts(required, names)}
+
+Run commands to find each path, and check it exists before writing it. Never guess:
+leave a placeholder as it is and say which, if you cannot find one. Add :rw only
+where the description asks for write access. Change nothing else."""
+
+
+def mount_prompt(working_directory: Path) -> int:
+    """Print the prompt for filling in this machine's mounts, or nothing when none are missing."""
+    required = read_required_mounts(working_directory)
+    provided = read_mounts_file(working_directory / MOUNTS_FILE)
+    names = unfilled_mounts(required, provided)
+    if not names:
+        print(f"every mount in {MOUNTS_FILE} already has a path", file=sys.stderr)
+        return 0
+    print(build_mount_prompt(required, names, sys.platform))
+    return 0
+
+
+def run_command(command: str, working_directory: Path) -> int:
+    """Run the named command instead of creating a sandbox."""
+    if command == "gen":
+        return generate(working_directory)
+    return mount_prompt(working_directory)
+
+
 def main() -> int:
-    """Entry point: run gen, or load config and hand off to a sandbox session."""
+    """Entry point: run a command, or load config and hand off to a sandbox session."""
     arguments = build_parser().parse_args()
     working_directory = Path.cwd()
     try:
-        if arguments.command == "gen":
+        if arguments.command:
             require_no_flags(arguments)
-            return generate(working_directory)
+            return run_command(arguments.command, working_directory)
         config = load_config(arguments, working_directory)
         token_file = token_file_from_environment()
         if arguments.verbose:

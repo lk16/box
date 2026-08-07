@@ -435,6 +435,72 @@ def test_gen_keeps_an_existing_mounts_file(tmp_path: Path) -> None:
     assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"cache": "/cache"}
 
 
+def test_mount_prompt_is_a_command() -> None:
+    assert box.build_parser().parse_args(["mount-prompt"]).command == "mount-prompt"
+
+
+def test_mount_prompt_takes_no_flags() -> None:
+    arguments = box.build_parser().parse_args(["--memory", "8g", "mount-prompt"])
+    with pytest.raises(box.ConfigError, match="mount-prompt takes no flags"):
+        box.require_no_flags(arguments)
+
+
+def test_the_prompt_carries_the_names_and_descriptions() -> None:
+    required = {"go": "the Go toolchain", "cargo": "the cargo home"}
+    prompt = box.build_mount_prompt(required, ["go", "cargo"], "darwin")
+    assert "go: the Go toolchain" in prompt
+    assert "cargo: the cargo home" in prompt
+
+
+def test_the_prompt_names_the_file_the_placeholder_and_the_platform() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
+    assert box.MOUNTS_FILE in prompt
+    assert box.MOUNT_PLACEHOLDER in prompt
+    assert "darwin" in prompt
+
+
+def test_the_prompt_holds_the_rules_box_enforces() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux")
+    assert ":rw" in prompt
+    assert "Never guess" in prompt
+
+
+def test_mount_prompt_asks_only_about_unfilled_mounts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    declared = {"go": "the Go toolchain", "cargo": "the cargo home"}
+    write_config(tmp_path, {"required_mounts": declared})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"go": "/usr/local/go", "cargo": box.MOUNT_PLACEHOLDER})
+    assert box.mount_prompt(tmp_path) == 0
+    printed = capsys.readouterr().out
+    assert "cargo: the cargo home" in printed
+    assert "go: the Go toolchain" not in printed
+
+
+def test_mount_prompt_prints_nothing_when_every_mount_has_a_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    assert box.mount_prompt(tmp_path) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_mount_prompt_prints_nothing_without_declared_mounts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert box.mount_prompt(tmp_path) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_mount_prompt_asks_about_a_name_the_mounts_file_lacks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    box.mount_prompt(tmp_path)
+    assert "go: the Go toolchain" in capsys.readouterr().out
+
+
 def test_gen_scaffolds_a_placeholder_for_every_declared_mount(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
     box.generate(tmp_path)

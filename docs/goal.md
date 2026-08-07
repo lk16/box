@@ -17,6 +17,8 @@ One run does this:
    still has uncommitted changes, in which case it is kept and recovery steps are printed.
 
 `box gen` instead writes a starter `.box/` directory and exits, without creating a sandbox.
+`box mount-prompt` prints the prompt that has an agent on this host fill in the mounts that
+`.box/mounts.json` still leaves as placeholders, and exits too.
 
 ## Constraints
 
@@ -44,6 +46,14 @@ One run does this:
   warns about, which is how a machine picks up a mount declared after it was set up. It takes no
   flags, since it writes defaults to edit rather than settings that were chosen, and it appends
   the mounts file to `.gitignore`, so what it writes is a project box will run in.
+- Prompt text lives in `box.py`, next to `BASE_PROMPT`, so one installed script stays the whole
+  of box. `mount-prompt` writes for an agent with a shell on this host: it may run commands to
+  find a path and must check it exists, never guess one, and never add `:rw` unless a description
+  asked for it.
+- `mount-prompt` prints to stdout for a human to paste into an interactive agent session, not to
+  be piped into a headless one. The agent runs commands on the host and edits a file that points
+  at the user's own directories, so the tool calls and the diff belong in front of them. Printing
+  nothing when every mount has a path keeps a second run from asking for work already done.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

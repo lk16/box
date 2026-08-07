@@ -172,6 +172,37 @@ Mounts are passed to `sbx` in declaration order, so the arguments do not depend 
 machine happened to order its file. `--mount` adds an unnamed workspace for one run, on top of
 the declared ones — the escape hatch for something genuinely one-off.
 
+### Filling them in with an agent
+
+`box mount-prompt` prints a prompt asking an agent to fill in the paths this machine still owes.
+Run `box gen` first, then paste the output into an **interactive** agent session on this host:
+
+```sh
+box gen
+box mount-prompt
+```
+
+Paste it into a running `claude`, rather than piping it to `claude -p`. The agent is going to
+run commands on your machine and edit a file, and an interactive session is where you see each
+tool call it wants to make and the diff it produces. Piped into headless mode, all of that
+happens where you cannot watch it — for a file whose whole job is to point at directories on
+your disk.
+
+The prompt names each unfilled mount with its description, says which platform it is running on,
+and tells the agent to edit `.box/mounts.json` in place, replacing only the placeholders. It
+assumes a shell on this host — the agent can run `go env GOMODCACHE` or `brew --prefix` and
+check a path exists before writing it, which a plain chat window could only guess at. The agent
+is told to leave a placeholder alone and say so rather than invent a path, and to add `:rw` only
+where a description asks for write access.
+
+When every mount already has a path it prints nothing and exits 0, so running it again after a
+partial fill asks only about what is left.
+
+Its output is only as good as your descriptions. `"go cache"` gives an agent nothing to work
+with; `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run, and
+`"a checkout of github.com/abulmo/edax-reversi"` gives it something to search for. Write them for
+that reader as well as the human one.
+
 Whether a mount is writable is the machine's call, not the project's: `:rw` goes on the path in
 `.box/mounts.json`, never in the declaration. A description may ask for it, but nothing enforces
 it, so a shared file can never widen access to your disk.
