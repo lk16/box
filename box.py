@@ -564,6 +564,7 @@ def warn_placeholders(required: dict[str, str], filled: dict[str, str]) -> None:
         return
     print(f"WARNING: replace {MOUNT_PLACEHOLDER} in {MOUNTS_FILE} for:", file=sys.stderr)
     print(describe_mounts(required, names), file=sys.stderr)
+    print("or have an agent do it: box mount-prompt | claude", file=sys.stderr)
 
 
 def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
@@ -598,13 +599,14 @@ def build_mount_prompt(required: dict[str, str], names: list[str], platform: str
     """Render the prompt that has an agent on this host fill in the mounts file."""
     return f"""Fill in {MOUNTS_FILE} for this machine, which runs {platform}.
 
-Replace only the {MOUNT_PLACEHOLDER} values, for these mounts:
+Give each of these a path, adding the key where it is missing and replacing
+{MOUNT_PLACEHOLDER} where it is already there:
 
 {describe_mounts(required, names)}
 
 Run commands to find each path, and check it exists before writing it. Never guess:
-leave a placeholder as it is and say which, if you cannot find one. Add :rw only
-where the description asks for write access. Change nothing else."""
+say which you could not find and leave it as it was. Add :rw only where the
+description asks for write access. Change nothing else."""
 
 
 def mount_prompt(working_directory: Path) -> int:

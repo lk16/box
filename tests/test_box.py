@@ -497,6 +497,18 @@ def test_the_prompt_holds_the_rules_box_enforces() -> None:
     assert "Never guess" in prompt
 
 
+def test_the_prompt_covers_a_key_that_is_not_in_the_file_yet() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux")
+    assert "adding the key where it is missing" in prompt
+
+
+def test_mount_prompt_needs_no_mounts_file_at_all(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    assert not (tmp_path / box.MOUNTS_FILE).exists()
+    assert box.mount_prompt(tmp_path) == 0
+    assert "go: the Go toolchain" in capsys.readouterr().out
+
+
 def test_mount_prompt_asks_only_about_unfilled_mounts(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
