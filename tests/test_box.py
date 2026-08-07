@@ -325,6 +325,70 @@ def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> Non
         box.prepare_launch(make_config(), "/secrets/token", repository)
 
 
+def test_gen_is_the_only_command() -> None:
+    assert box.build_parser().parse_args(["gen"]).command == "gen"
+
+
+def test_no_command_runs_a_sandbox() -> None:
+    assert box.build_parser().parse_args([]).command is None
+
+
+def test_gen_alone_takes_no_flags() -> None:
+    box.require_no_flags(box.build_parser().parse_args(["gen"]))
+
+
+def test_gen_rejects_a_setting_flag() -> None:
+    arguments = box.build_parser().parse_args(["--memory", "8g", "gen"])
+    with pytest.raises(box.ConfigError, match="gen takes no flags, but got --memory"):
+        box.require_no_flags(arguments)
+
+
+def test_gen_rejects_verbose() -> None:
+    arguments = box.build_parser().parse_args(["-v", "gen"])
+    with pytest.raises(box.ConfigError, match="--verbose"):
+        box.require_no_flags(arguments)
+
+
+def test_gen_rejects_a_mount_flag() -> None:
+    arguments = box.build_parser().parse_args(["--mount", "/cache", "gen"])
+    with pytest.raises(box.ConfigError, match="--mounts"):
+        box.require_no_flags(arguments)
+
+
+def test_gen_names_every_flag_it_was_given() -> None:
+    arguments = box.build_parser().parse_args(["--memory", "8g", "--cpus", "8", "gen"])
+    with pytest.raises(box.ConfigError, match="--cpus, --memory"):
+        box.require_no_flags(arguments)
+
+
+def test_gen_writes_both_files(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.DEFAULTS
+    assert json.loads((tmp_path / box.MOUNTS_FILE).read_text()) == []
+
+
+def test_gen_writes_a_config_box_can_read_back(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == box.DEFAULTS
+
+
+def test_gen_keeps_an_existing_config(tmp_path: Path) -> None:
+    write_config(tmp_path, {"memory": "16g"})
+    box.generate(tmp_path)
+    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == {"memory": "16g"}
+
+
+def test_gen_keeps_an_existing_mounts_file(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    box.generate(tmp_path)
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == ["/cache"]
+
+
+def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
+    (tmp_path / box.BOX_DIR).mkdir()
+    assert box.generate(tmp_path) == 0
+
+
 def test_prepare_launch_requires_the_token_environment_variable() -> None:
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
         box.prepare_launch(make_config(), "", Path("/tmp/demo"))

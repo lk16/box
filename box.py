@@ -224,6 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--mount", dest="mounts", metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
+    parser.add_argument(
+        "command", nargs="?", choices=["gen"], help=f"gen writes a starter {BOX_DIR} directory"
+    )
     return parser
 
 
@@ -439,11 +442,59 @@ def run_session(config: Config, launch: Launch) -> int:
         cleanup(launch.sandbox_name)
 
 
+def to_flag(key: str) -> str:
+    """Render an argparse dest the way the user typed it on the command line."""
+    return "--" + key.replace("_", "-")
+
+
+def require_no_flags(arguments: argparse.Namespace) -> None:
+    """Reject flags passed to gen, which writes defaults rather than settings you chose."""
+    defaults = vars(build_parser().parse_args([]))
+    given = sorted(
+        to_flag(key) for key, value in vars(arguments).items() if key != "command" and value != defaults[key]
+    )
+    if not given:
+        return
+    raise ConfigError(f"gen takes no flags, but got {', '.join(given)}; edit {CONFIG_FILE} instead")
+
+
+def starter_files() -> dict[str, str]:
+    """Render the contents box gen writes: every setting at its default, and no mounts."""
+    return {
+        CONFIG_FILE: json.dumps(DEFAULTS, indent=2) + "\n",
+        MOUNTS_FILE: "[]\n",
+    }
+
+
+def report_mounts_ignored(working_directory: Path) -> None:
+    """Point at the .gitignore entry box insists on before it will run."""
+    if is_git_ignored(working_directory, MOUNTS_FILE):
+        return
+    print(f"add this line to .gitignore, or box will refuse to run:\n  {MOUNTS_FILE}")
+
+
+def generate(working_directory: Path) -> int:
+    """Write a starter .box directory, leaving anything that already exists untouched."""
+    (working_directory / BOX_DIR).mkdir(exist_ok=True)
+    for name, contents in starter_files().items():
+        path = working_directory / name
+        if path.exists():
+            print(f"kept    {name}")
+            continue
+        path.write_text(contents)
+        print(f"written {name}")
+    report_mounts_ignored(working_directory)
+    return 0
+
+
 def main() -> int:
-    """Entry point: load config, then hand off to a sandbox session."""
+    """Entry point: run gen, or load config and hand off to a sandbox session."""
     arguments = build_parser().parse_args()
     working_directory = Path.cwd()
     try:
+        if arguments.command == "gen":
+            require_no_flags(arguments)
+            return generate(working_directory)
         config = load_config(arguments, working_directory)
         token_file = token_file_from_environment()
         if arguments.verbose:

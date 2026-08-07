@@ -16,6 +16,8 @@ One run does this:
 6. On exit, fetch committed work back to the host and remove the sandbox — unless the sandbox
    still has uncommitted changes, in which case it is kept and recovery steps are printed.
 
+`box gen` instead writes a starter `.box/` directory and exits, without creating a sandbox.
+
 ## Constraints
 
 - All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS.
@@ -30,6 +32,8 @@ One run does this:
   every checkout of the project shares.
 - Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored.
   A committed mounts file carries one machine's paths into every clone of the project.
+- `box gen` never overwrites an existing file, so re-running it cannot lose a config, and it
+  takes no flags, since it writes defaults to edit rather than settings that were chosen.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

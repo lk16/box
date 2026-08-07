@@ -55,6 +55,11 @@ box
 box -v --memory 8g --cpus 8
 ```
 
+To set a repository up, run `box gen` in it. It creates `.box/`, writes a `config.json` holding
+every setting at its default and an empty `mounts.json`, and reminds you to gitignore the latter.
+It never overwrites a file that already exists, so it is safe to re-run — and it takes no flags,
+since it writes defaults for you to edit rather than settings you chose.
+
 Settings that you use every time belong in a `.box/config.json` in that repository:
 
 ```json
