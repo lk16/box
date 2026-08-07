@@ -21,6 +21,9 @@ CONFIG_FILE = f"{BOX_DIR}/config.json"
 
 # Mounts name paths on one machine, so they live apart from the settings a project shares.
 MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
+
+# Where a dependency lands that this machine cannot supply, such as a Linux toolchain on macOS.
+DEPS_DIR = f"{BOX_DIR}/deps"
 GITIGNORE_FILE = ".gitignore"
 
 # What box gen writes where it cannot know the path, so an unfilled mount fails loudly.
@@ -51,6 +54,14 @@ That version need not match the one on this host. Name the model in {CONFIG_FILE
 MOUNTS_IGNORED_HELP = f"""{MOUNTS_FILE} is not ignored by git.
 It names folders on this machine, so committing it would put paths that exist only here into
 everyone else's clone. Add a {MOUNTS_FILE} line to .gitignore."""
+
+DEPS_IGNORED_HELP = f"""{DEPS_DIR}/ is not ignored by git.
+It holds dependencies fetched for this machine, such as toolchains built for the sandbox's
+platform rather than this one, which belong in nobody's history. Add a {DEPS_DIR}/ line to
+.gitignore."""
+
+# What box writes that holds one machine's own files, and the reason each must stay uncommitted.
+LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP, f"{DEPS_DIR}/": DEPS_IGNORED_HELP}
 
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
@@ -467,19 +478,20 @@ def is_git_ignored(working_directory: Path, relative_path: str) -> bool:
     return subprocess.run(command, capture_output=True, check=False).returncode == 0
 
 
-def require_ignored_mounts(working_directory: Path) -> None:
-    """Refuse to run while a mounts file that names this machine's paths could be committed."""
-    if not (working_directory / MOUNTS_FILE).is_file():
-        return
-    if is_git_ignored(working_directory, MOUNTS_FILE):
-        return
-    raise ConfigError(MOUNTS_IGNORED_HELP)
+def require_ignored_local_paths(working_directory: Path) -> None:
+    """Refuse to run while anything holding this machine's own files could be committed."""
+    for relative_path, help_text in LOCAL_PATHS.items():
+        if not (working_directory / relative_path).exists():
+            continue
+        if is_git_ignored(working_directory, relative_path):
+            continue
+        raise ConfigError(help_text)
 
 
 def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
     require_settings(config)
-    require_ignored_mounts(working_directory)
+    require_ignored_local_paths(working_directory)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))
@@ -537,12 +549,13 @@ def append_line(path: Path, line: str) -> None:
     path.write_text(f"{existing}{line}\n")
 
 
-def ignore_mounts_file(working_directory: Path) -> None:
-    """Write the .gitignore entry box would otherwise refuse to run without."""
-    if is_git_ignored(working_directory, MOUNTS_FILE):
-        return
-    append_line(working_directory / GITIGNORE_FILE, MOUNTS_FILE)
-    print(f"ignored {MOUNTS_FILE} in {GITIGNORE_FILE}")
+def ignore_local_paths(working_directory: Path) -> None:
+    """Write the .gitignore entries box would otherwise refuse to run without."""
+    for relative_path in LOCAL_PATHS:
+        if is_git_ignored(working_directory, relative_path):
+            continue
+        append_line(working_directory / GITIGNORE_FILE, relative_path)
+        print(f"ignored {relative_path} in {GITIGNORE_FILE}")
 
 
 def write_starter_config(path: Path) -> None:
@@ -587,12 +600,22 @@ def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
     warn_placeholders(required, filled)
 
 
+def make_deps_dir(working_directory: Path) -> None:
+    """Create the directory an agent puts dependencies in that this machine cannot supply."""
+    path = working_directory / DEPS_DIR
+    if path.is_dir():
+        return
+    path.mkdir(parents=True)
+    print(f"created {DEPS_DIR}/")
+
+
 def generate(working_directory: Path) -> int:
     """Write a starter .box directory, adding what is missing and keeping what is filled in."""
     (working_directory / BOX_DIR).mkdir(exist_ok=True)
     write_starter_config(working_directory / CONFIG_FILE)
     write_mounts(working_directory, read_required_mounts(working_directory))
-    ignore_mounts_file(working_directory)
+    make_deps_dir(working_directory)
+    ignore_local_paths(working_directory)
     return 0
 
 
@@ -611,9 +634,14 @@ Give each of these a path, adding the key where it is missing and replacing
 
 {describe_mounts(required, names)}
 
-Run commands to find each path, and check it exists before writing it. Never guess:
-say which you could not find and leave it as it was. Add :rw only where the
-description asks for write access. Change nothing else."""
+Run commands to find each path, and check it exists before writing it. Never guess.
+
+The sandbox runs Linux, whatever this machine runs. Where nothing here fits -- a
+toolchain built for the wrong platform or architecture, or a dependency that is
+simply absent -- download a suitable one into {DEPS_DIR}/ and point the mount at
+it. Say which you could not find or fetch, and leave those as they were.
+
+Add :rw only where the description asks for write access. Change nothing else."""
 
 
 def mount_prompt(working_directory: Path) -> int:

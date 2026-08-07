@@ -346,27 +346,74 @@ def make_repository(directory: Path, gitignore: str) -> Path:
     """Create a git repository holding a mounts file and the given .gitignore."""
     subprocess.run(["git", "init", "-q", str(directory)], check=True)
     (directory / ".gitignore").write_text(gitignore)
-    write_box_file(directory, box.MOUNTS_FILE, ["/cache"])
+    write_box_file(directory, box.MOUNTS_FILE, {"cache": "/cache"})
     return directory
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
-    box.require_ignored_mounts(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"))
 
 
 def test_an_ignored_box_directory_covers_the_mounts_file(tmp_path: Path) -> None:
-    box.require_ignored_mounts(make_repository(tmp_path, f"{box.BOX_DIR}/\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.BOX_DIR}/\n"))
 
 
 def test_a_committable_mounts_file_is_rejected(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "*.log\n")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.require_ignored_mounts(repository)
+        box.require_ignored_local_paths(repository)
+
+
+def test_the_deps_dir_lives_in_the_box_directory() -> None:
+    assert Path(box.DEPS_DIR) == Path(box.BOX_DIR) / "deps"
+
+
+def test_a_committable_deps_dir_is_rejected(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    (repository / box.DEPS_DIR).mkdir(parents=True)
+    with pytest.raises(box.ConfigError, match="deps/ is not ignored by git"):
+        box.require_ignored_local_paths(repository)
+
+
+def test_an_ignored_deps_dir_is_accepted(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n")
+    (repository / box.DEPS_DIR).mkdir(parents=True)
+    box.require_ignored_local_paths(repository)
+
+
+def test_an_absent_deps_dir_needs_no_gitignore_entry(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    assert not (repository / box.DEPS_DIR).exists()
+    box.require_ignored_local_paths(repository)
+
+
+def test_gen_creates_the_deps_dir(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    assert (tmp_path / box.DEPS_DIR).is_dir()
+
+
+def test_gen_leaves_an_existing_deps_dir_alone(tmp_path: Path) -> None:
+    kept = tmp_path / box.DEPS_DIR / "go"
+    kept.mkdir(parents=True)
+    box.generate(tmp_path)
+    assert kept.is_dir()
+
+
+def test_gen_leaves_a_project_whose_deps_dir_box_accepts(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    box.generate(tmp_path)
+    box.require_ignored_local_paths(tmp_path)
+
+
+def test_the_prompt_offers_the_deps_dir_when_nothing_here_fits() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
+    assert f"{box.DEPS_DIR}/" in prompt
+    assert "The sandbox runs Linux" in prompt
 
 
 def test_no_mounts_file_needs_no_gitignore_entry(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    box.require_ignored_mounts(tmp_path)
+    box.require_ignored_local_paths(tmp_path)
 
 
 def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
@@ -676,20 +723,22 @@ def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
 def test_gen_leaves_a_project_box_will_run_in(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
-    box.require_ignored_mounts(tmp_path)
+    box.require_ignored_local_paths(tmp_path)
 
 
-def test_gen_creates_a_gitignore_holding_the_mounts_file(tmp_path: Path) -> None:
+def test_gen_creates_a_gitignore_holding_every_local_path(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
-    assert (tmp_path / box.GITIGNORE_FILE).read_text() == f"{box.MOUNTS_FILE}\n"
+    written = (tmp_path / box.GITIGNORE_FILE).read_text()
+    assert written == f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n"
 
 
 def test_gen_keeps_what_the_gitignore_already_held(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / box.GITIGNORE_FILE).write_text("*.log\n")
     box.generate(tmp_path)
-    assert (tmp_path / box.GITIGNORE_FILE).read_text() == f"*.log\n{box.MOUNTS_FILE}\n"
+    written = (tmp_path / box.GITIGNORE_FILE).read_text()
+    assert written == f"*.log\n{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n"
 
 
 def test_gen_leaves_an_already_ignored_gitignore_alone(tmp_path: Path) -> None:

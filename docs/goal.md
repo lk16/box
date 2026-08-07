@@ -48,8 +48,13 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
 - `:rw` belongs on the path in `.box/mounts.json` and never in the declaration. Whoever owns the
   machine decides what the agent may write to; a description may ask for write access, but
   nothing enforces it.
-- Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored.
-  A committed mounts file carries one machine's paths into every clone of the project.
+- `.box/deps/` holds what this machine cannot supply, such as a Linux toolchain on macOS, since
+  the sandbox runs Linux whatever the host runs and there is nowhere natural on the host for a
+  build that exists only to be mounted. box creates and ignores it; box never downloads into it.
+  A dependency reaches the sandbox by being mounted, not by sitting in the project, because the
+  container gets a clone and a clone has no ignored files.
+- Refuse to run while `.box/mounts.json` or `.box/deps/` exists and `git check-ignore` says it is
+  not ignored. One carries a machine's paths into every clone, the other its binaries.
 - `box gen` never changes a value that is already there, so re-running it cannot lose a config or
   a path someone filled in. It adds declared mount names the file is missing, as placeholders it
   warns about, which is how a machine picks up a mount declared after it was set up. It takes no
@@ -61,7 +66,8 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   asked for it.
 - `mount-prompt` prints to stdout to feed an interactive agent session. The agent runs commands
   on the host and edits a file that points at the user's own directories, so the tool calls and
-  the diff belong in front of them to approve. It asks about every declared mount without a path,
+  the diff belong in front of them to approve. It offers `.box/deps/` as the third outcome, after
+  finding a path and giving up. It asks about every declared mount without a path,
   whether the key is absent or holds the placeholder, so it follows a declaration directly.
   Printing nothing when every mount has a path keeps a second run from asking for done work.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from

@@ -37,8 +37,9 @@ unreachable. The notice goes to stderr, so `box mount-prompt | claude` still pip
 
 Four commands, all run from the root of the repository you want an agent to work on:
 
-- **`box gen`** — set the repository up. Writes `.box/config.json`, `.box/mounts.json`, and a
-  `.gitignore` entry. Then fill in `kit`, `model` and any [`required_mounts`](#mounts) by hand.
+- **`box gen`** — set the repository up. Writes `.box/config.json`, `.box/mounts.json`,
+  `.box/deps/` and the `.gitignore` entries. Then fill in `kit`, `model` and any
+  [`required_mounts`](#mounts) by hand.
 - **`box mount-prompt | claude`** — have an agent find this machine's paths for the mounts the
   project declares. See [Filling them in with an agent](#filling-them-in-with-an-agent).
 - **`box config`** — print the settings in effect and stop, which also checks the project is set
@@ -176,6 +177,12 @@ and check a path exists before writing it, which a plain chat window could only 
 agent is told to say which it could not find rather than invent a path, and to add `:rw` only
 where a description asks for write access.
 
+Sometimes nothing on the machine fits. The sandbox runs Linux whatever you run, so a macOS Go
+toolchain cannot be mounted into it — and there is nowhere natural on the host to keep a Linux
+one that exists purely to be handed to a sandbox. That is what `.box/deps/` is for: the agent
+downloads a suitable build into it and points the mount there. `box gen` creates the directory
+and gitignores it, so it is ready before anything needs it.
+
 It asks about any declared mount without a path, whether the key is missing from
 `.box/mounts.json` or still holds the placeholder, so it works straight after someone declares a
 new mount. When every mount already has a path it prints nothing and exits 0, so running it
@@ -198,16 +205,17 @@ like it grants access it does not. `box config` shows the resulting `sbx` specs.
 A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
 preferred over spelling out `/home/you/.cargo`.
 
-Because of that, `box run` refuses to start while `.box/mounts.json` exists and is not ignored by
-git. Committing it would put paths that exist only on your machine into everyone else's clone.
-`box gen` writes that entry for you; by hand it is one line in `.gitignore`:
+Because of that, `box run` refuses to start while `.box/mounts.json` or `.box/deps/` exists and
+is not ignored by git — one carries paths that exist only on your machine, the other binaries
+that belong in nobody's history. `box gen` writes both entries for you; by hand they are two
+lines in `.gitignore`:
 
 ```gitignore
 .box/mounts.json
+.box/deps/
 ```
 
-Ignore the file rather than the whole `.box/` directory, so `config.json` stays committed. A
-project with no mounts file needs no entry.
+Ignore those two rather than the whole `.box/` directory, so `config.json` stays committed.
 
 ## When the agent leaves work behind
 
