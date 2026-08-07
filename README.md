@@ -154,7 +154,7 @@ Mounts live in their own file, `.box/mounts.json`, holding a JSON array of paths
 They are the one part of a project's box setup that names paths on the machine box runs on: a
 toolchain sits somewhere else on a colleague's laptop, and somewhere else again on macOS. So
 they are kept out of `.box/config.json`, which holds only what every checkout of the project
-shares. `--mount` replaces the file's list for that run rather than adding to it.
+shares. `--mount` adds to the file's list for one run rather than replacing it.
 
 Because of that, `box` refuses to start while `.box/mounts.json` exists and is not ignored by
 git. Committing it would put paths that exist only on your machine into everyone else's clone.

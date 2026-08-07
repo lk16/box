@@ -281,8 +281,13 @@ def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
     assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro",)
 
 
-def test_load_config_lets_mount_flags_replace_the_mounts_file(tmp_path: Path) -> None:
+def test_load_config_adds_mount_flags_to_the_mounts_file(tmp_path: Path) -> None:
     write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    arguments = box.build_parser().parse_args(["--mount", "/other", "--mount", "/third:rw"])
+    assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro", "/other:ro", "/third")
+
+
+def test_load_config_takes_mount_flags_without_a_mounts_file(tmp_path: Path) -> None:
     arguments = box.build_parser().parse_args(["--mount", "/other"])
     assert box.load_config(arguments, tmp_path).mounts == ("/other:ro",)
 

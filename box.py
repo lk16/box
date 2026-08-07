@@ -373,10 +373,11 @@ def cleanup(sandbox_name: str) -> None:
 
 
 def resolve_mounts(arguments: argparse.Namespace, working_directory: Path) -> list[str]:
-    """Take the mounts from the flags when any were given, otherwise from the mounts file."""
-    if arguments.mounts:
-        return list(arguments.mounts)
-    return read_mounts_file(working_directory / MOUNTS_FILE)
+    """Add the mounts given as flags to the ones in the mounts file."""
+    mounts = read_mounts_file(working_directory / MOUNTS_FILE)
+    if not arguments.mounts:
+        return mounts
+    return mounts + list(arguments.mounts)
 
 
 def load_config(arguments: argparse.Namespace, working_directory: Path) -> Config:
