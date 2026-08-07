@@ -23,10 +23,8 @@ chmod +x ~/.local/bin/box.py
 echo "alias box='~/.local/bin/box.py'" >> ~/.bashrc      # or ~/.zshrc
 ```
 
-Then point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token` — see
-[The OAuth token](#the-oauth-token). Re-run the same `curl` to update.
-
-One copy serves every project, so do not commit `box.py` into your repositories.
+Re-run the same `curl` to update. One copy serves every project, so do not commit `box.py` into
+your repositories.
 
 Every command hashes your copy against the published one and prints the `curl` to run if they
 differ. The result is cached in `~/.cache/box/` for a day, so at most one command a day makes a
@@ -35,33 +33,38 @@ unreachable. The notice goes to stderr, so `box mount-prompt | claude` still pip
 
 ## Use
 
-Four commands, all run from the root of the repository you want an agent to work on:
+Every command runs from the root of the repository you want an agent to work on.
 
-- **`box gen`** — set the repository up. Writes `.box/config.json`, `.box/mounts.json`,
-  `.box/deps/` and the `.gitignore` entries. Then fill in `kit`, `model` and any
-  [`required_mounts`](#mounts) by hand.
-- **`box mount-prompt | claude`** — have an agent find this machine's paths for the mounts the
-  project declares. See [Filling them in with an agent](#filling-them-in-with-an-agent).
-- **`box config`** — print the settings in effect and stop, which also checks the project is set
-  up. Takes the same flags as `box run`.
-- **`box run`** — start the sandbox. `box run --memory 8g --cpus 8` overrides settings for one
-  run.
+### Adding box to a project
 
-A new machine on an existing project needs only the first two. Everything else lives in
-[Settings](#settings) below.
+- **`box gen`** — adds files in the `.box` folder and updates `.gitignore`
+- edit `.box/config.json` — fill in `kit`, `model` and any [`required_mounts`](#mounts) by hand
+
+### Configuring box for this repo on this machine
+
+- point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token`. Set it in
+  your shell profile, or per project with `direnv`. See [The OAuth token](#the-oauth-token)
+- **`box mount-prompt | claude`** — have an agent fill in the mounts this project needs on this
+  machine. See [Filling them in with an agent](#filling-them-in-with-an-agent)
+- **`box config`** — confirm box's config files parse, and show the settings in effect without
+  running
+- **`box run`** — start the sandbox. See [Settings](#settings) for flags
+
+A new machine on an existing project needs only the second group.
 
 ## The OAuth token
 
-The token path is the one setting that comes from the environment, and only from there:
+Run `claude setup-token`, save the printed token to a file, and point the environment variable
+at it:
 
 ```sh
 export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
 ```
 
-There is no flag and no `.box/config.json` key for it. `.box/config.json` is committed with the
-project and shared, while the token is yours and machine-specific — keeping it out of both means
-a project config can never carry a path to someone else's credentials. Set it once per machine,
-next to the alias in your shell profile, or per project with `direnv`.
+The token is yours and machine-specific, so it is the one setting that comes from the
+environment and only from there — a project's committed config can never carry a path to
+someone else's credentials. Set it once per machine in your shell profile, or per project with
+`direnv`.
 
 `box.py` refuses to start when the variable is unset or points at a missing or empty file. The
 token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
