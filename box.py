@@ -22,6 +22,9 @@ GITIGNORE_FILE = ".gitignore"
 
 # What box gen writes where it cannot know the path, so an unfilled mount fails loudly.
 MOUNT_PLACEHOLDER = "/placeholder/for/real/path"
+
+# Commands that work on the project's files, so settings and their flags mean nothing to them.
+SETUP_COMMANDS = ("gen", "mount-prompt")
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -268,8 +271,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     parser.add_argument(
         "command",
-        choices=["run", "gen", "mount-prompt"],
-        help=f"run starts a sandbox, gen writes a starter {BOX_DIR} directory, "
+        choices=["run", "config", "gen", "mount-prompt"],
+        help=f"run starts a sandbox, config prints the settings in effect, "
+        f"gen writes a starter {BOX_DIR} directory, "
         "mount-prompt asks an agent to fill in this machine's paths",
     )
     return parser
@@ -616,10 +620,16 @@ def mount_prompt(working_directory: Path) -> int:
 
 
 def setup_command(command: str, working_directory: Path) -> int:
-    """Run a command that reads the project's files instead of creating a sandbox."""
+    """Run a command that writes or reads the project's files instead of loading settings."""
     if command == "gen":
         return generate(working_directory)
     return mount_prompt(working_directory)
+
+
+def show_config(config: Config, token_file: str) -> int:
+    """Print the settings in effect without creating a sandbox."""
+    print(format_config(config, token_file))
+    return 0
 
 
 def main() -> int:
@@ -627,11 +637,13 @@ def main() -> int:
     arguments = build_parser().parse_args()
     working_directory = Path.cwd()
     try:
-        if arguments.command != "run":
+        if arguments.command in SETUP_COMMANDS:
             require_no_flags(arguments)
             return setup_command(arguments.command, working_directory)
         config = load_config(arguments, working_directory)
         token_file = token_file_from_environment()
+        if arguments.command == "config":
+            return show_config(config, token_file)
         if arguments.verbose:
             print(format_config(config, token_file))
         launch = prepare_launch(config, token_file, working_directory)

@@ -383,6 +383,28 @@ def test_run_is_a_command() -> None:
     assert box.build_parser().parse_args(["run"]).command == "run"
 
 
+def test_config_is_a_command() -> None:
+    assert box.build_parser().parse_args(["config"]).command == "config"
+
+
+def test_config_takes_the_same_flags_as_run() -> None:
+    arguments = box.build_parser().parse_args(["config", "--memory", "8g"])
+    assert arguments.memory == "8g"
+
+
+def test_config_is_not_a_setup_command() -> None:
+    assert "config" not in box.SETUP_COMMANDS
+
+
+def test_show_config_prints_the_settings_and_returns_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert box.show_config(make_config(), "/secrets/token") == 0
+    printed = capsys.readouterr().out
+    assert "claude-opus-5" in printed
+    assert "/secrets/token" in printed
+
+
 def test_a_command_is_required() -> None:
     with pytest.raises(SystemExit):
         box.build_parser().parse_args([])

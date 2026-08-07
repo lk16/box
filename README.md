@@ -74,7 +74,12 @@ Settings that you use every time belong in a `.box/config.json` in that reposito
 ```
 
 A command line flag always wins over the JSON file, which wins over the built-in default.
-`-v` prints the settings in effect before the sandbox starts.
+
+`box config` prints the settings in effect and stops there, so it doubles as a check that the
+project is set up: it reads both JSON files and resolves the mounts, so a bad key, broken JSON or
+an unfilled mount is an error without a sandbox being created. It takes the same flags as
+`box run`, so `box config --memory 8g` shows what that run would use. `box run -v` prints the
+same block and then goes ahead.
 
 ## The OAuth token
 

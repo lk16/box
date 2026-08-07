@@ -16,10 +16,10 @@ One run does this:
 6. On exit, fetch committed work back to the host and remove the sandbox — unless the sandbox
    still has uncommitted changes, in which case it is kept and recovery steps are printed.
 
-`box run` does that. Every command starts with a word, so nothing happens by accident when a
-flag is mistyped: `box gen` writes a starter `.box/` directory, and `box mount-prompt` prints the
-prompt that has an agent on this host fill in the mounts `.box/mounts.json` still leaves as
-placeholders. Both exit without creating a sandbox.
+`box run` does that. Every command starts with a word, so nothing happens by accident when a flag
+is mistyped. The others all exit without creating a sandbox: `box config` prints the settings in
+effect, `box gen` writes a starter `.box/` directory, and `box mount-prompt` prints the prompt
+that has an agent on this host fill in the mounts `.box/mounts.json` still leaves as placeholders.
 
 ## Constraints
 
@@ -28,6 +28,9 @@ placeholders. Both exit without creating a sandbox.
   working directory and nothing relative to the script's own location.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
 - Settings come from flags or `.box/config.json` in the current directory, flags first.
+- `config` takes the same flags as `run` and resolves the same settings, so it answers "what
+  would run do" and validates the project's files without creating anything. `gen` and
+  `mount-prompt` work on those files instead of reading settings, so they reject every flag.
 - Everything box reads from a project lives under `.box/`, so a project has one box footprint
   rather than a scatter of dotfiles at its root.
 - Mounts are declared and supplied separately. `required_mounts` in `.box/config.json` names what
