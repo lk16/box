@@ -114,8 +114,10 @@ Anything unknown in `.box/config.json` is an error, so typos surface immediately
 back to something you did not choose.
 
 The kit carries the sandbox's network allowlist, so running without one would quietly give the
-agent whatever network access `sbx` grants by default. Point it at a directory with a
-`spec.yaml`, by convention `.sbx/kit` in the project.
+agent whatever network access `sbx` grants by default. Point it at the directory holding a
+`spec.yaml`, by convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`, since `sbx`
+reads anything that is not a directory as a zip artifact. `box run` rejects a `kit` that names a
+file on disk; anything not on disk is left alone, since `sbx` resolves those itself.
 
 The model must be named because the Claude CLI inside the sandbox is a different install from the
 one on your machine, possibly a different version, and an unset model means *its* default decides

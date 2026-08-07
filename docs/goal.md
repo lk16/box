@@ -81,6 +81,12 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
   unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
   install, which is not this host's.
+- A failed `sbx create` is reported, not raised. `sbx` has already said why, there is no sandbox
+  to clean up or keep, and the stored secret is dropped again, so a failure leaves nothing
+  behind and no traceback in front of the reason.
+- `kit` must name a directory when it names anything on disk, since `sbx` reads a non-directory
+  as a zip artifact and fails with a message about zip files. A `kit` that is not on disk is a
+  reference `sbx` resolves itself and is left alone.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
 - Store the secret *before* `sbx create`. `sbx` injects the placeholder env var into the sandbox
   at creation time, so a secret stored afterwards leaves `CLAUDE_CODE_OAUTH_TOKEN` unset and the

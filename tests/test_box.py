@@ -778,6 +778,27 @@ def test_prepare_launch_requires_a_model() -> None:
         box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
 
 
+def test_a_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("kit: {}\n")
+    config = build_config({"kit": str(spec), "model": "claude-opus-5"}, tmp_path)
+    with pytest.raises(box.ConfigError, match="kit names a file"):
+        box.require_settings(config)
+
+
+def test_a_kit_naming_a_directory_is_accepted(tmp_path: Path) -> None:
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "spec.yaml").write_text("kit: {}\n")
+    config = build_config({"kit": str(kit), "model": "claude-opus-5"}, tmp_path)
+    box.require_settings(config)
+
+
+def test_a_kit_that_is_not_on_disk_is_left_to_sbx(tmp_path: Path) -> None:
+    config = build_config({"kit": "some/registry/ref", "model": "claude-opus-5"}, tmp_path)
+    box.require_settings(config)
+
+
 def test_require_settings_accepts_a_complete_config() -> None:
     box.require_settings(make_config())
 

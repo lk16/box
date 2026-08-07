@@ -48,6 +48,10 @@ READ_WRITE_SUFFIX = ":rw"
 KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
 Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
 
+KIT_FILE_HELP = """kit names a file, and sbx reads anything that is not a directory as a zip
+artifact. Point it at the directory holding spec.yaml, e.g. .sbx/kit rather than
+.sbx/kit/spec.yaml."""
+
 MODEL_HELP = f"""model is not set, so the sandbox's own Claude version would pick the model.
 That version need not match the one on this host. Name the model in {CONFIG_FILE} or with --model."""
 
@@ -468,6 +472,9 @@ def require_settings(config: Config) -> None:
     """Reject settings whose default would be a silent risk rather than a convenience."""
     if not config.kit:
         raise ConfigError(KIT_HELP)
+    # A kit that is not on disk is a reference sbx resolves itself, so only a local file is wrong.
+    if resolve_path(config.kit).is_file():
+        raise ConfigError(KIT_FILE_HELP)
     if not config.model:
         raise ConfigError(MODEL_HELP)
 
@@ -506,8 +513,13 @@ def run_session(config: Config, launch: Launch) -> int:
     # sbx injects the placeholder env var when the sandbox is created, so the secret must exist by then.
     drop_secret(launch.sandbox_name)
     store_secret(launch.sandbox_name, launch.token)
+    create = build_create_command(config, launch.sandbox_name)
+    # sbx has already said why it failed, and there is no sandbox to run in, clean up or keep.
+    if subprocess.run(create, env=environment, check=False).returncode != 0:
+        drop_secret(launch.sandbox_name)
+        print(f"box: sbx create failed, so {launch.sandbox_name} was never started.", file=sys.stderr)
+        return 1
     try:
-        subprocess.run(build_create_command(config, launch.sandbox_name), env=environment, check=True)
         command = build_run_command(launch.sandbox_name, launch.agent_args)
         result = subprocess.run(command, env=environment, check=False)
         return result.returncode
