@@ -110,7 +110,7 @@ after the built-in prompt, so it can qualify anything above it.
 | `--model MODEL` | `model` | — (required) | Model passed to the Claude CLI. |
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
-| `--mount PATH` | `mounts` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
+| `--mount PATH` | `.box/mounts.json` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately.
@@ -135,6 +135,21 @@ for the default, so nothing looks like it grants access it does not. `-v` shows 
 
 A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
 preferred over spelling out `/home/you/.cargo`.
+
+Mounts live in their own file, `.box/mounts.json`, holding a JSON array of paths:
+
+```json
+[
+  "~/.cargo",
+  "/usr/local/go",
+  "~/projects/some-dependency"
+]
+```
+
+They are the one part of a project's box setup that names paths on the machine box runs on: a
+toolchain sits somewhere else on a colleague's laptop, and somewhere else again on macOS. So
+they are kept out of `.box/config.json`, which holds only what every checkout of the project
+shares. `--mount` replaces the file's list for that run rather than adding to it.
 
 ## When the agent leaves work behind
 

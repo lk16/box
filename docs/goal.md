@@ -5,8 +5,8 @@ repository under CPU, memory and disk limits, without touching the host working 
 
 One run does this:
 
-1. Load settings from the command line and `.box/config.json`, with the command line taking
-   priority.
+1. Load settings from the command line, `.box/config.json` and `.box/mounts.json`, with the
+   command line taking priority.
 2. Pick the first free `<base>-<n>` sandbox name, checking both running sandboxes and leftover
    `refs/sandboxes/*` git refs.
 3. Create the sandbox with `--clone`, so the agent commits into an in-container clone.
@@ -25,6 +25,9 @@ One run does this:
 - Settings come from flags or `.box/config.json` in the current directory, flags first.
 - Everything box reads from a project lives under `.box/`, so a project has one box footprint
   rather than a scatter of dotfiles at its root.
+- Mounts live in `.box/mounts.json`, apart from every other setting. They name paths on the
+  machine box runs on, which differ per user and per OS, while `.box/config.json` holds only what
+  every checkout of the project shares.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

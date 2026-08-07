@@ -25,12 +25,22 @@ def make_config() -> box.Config:
     )
 
 
+def write_box_file(directory: Path, name: str, contents: object) -> Path:
+    """Write one .box file, creating the directory it lives in."""
+    path = directory / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(contents))
+    return path
+
+
 def write_config(directory: Path, values: dict[str, object]) -> Path:
     """Write a config file, creating the .box directory it lives in."""
-    path = directory / box.CONFIG_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(values))
-    return path
+    return write_box_file(directory, box.CONFIG_FILE, values)
+
+
+def build_config(values: dict[str, object], directory: Path) -> box.Config:
+    """Build a config with no mounts, which come from their own file."""
+    return box.build_config(box.merge_values(values, {}), [], directory)
 
 
 def test_to_kebab_case_collapses_separators() -> None:
@@ -78,18 +88,13 @@ def test_merge_values_falls_back_to_defaults() -> None:
 
 
 def test_build_config_derives_name_from_directory() -> None:
-    config = box.build_config(box.merge_values({}, {}), Path("/home/luuk/My Repo"))
+    config = build_config({}, Path("/home/luuk/My Repo"))
     assert config.name == "my-repo"
 
 
 def test_build_config_coerces_numeric_cpus() -> None:
-    config = box.build_config(box.merge_values({"cpus": 6}, {}), Path("/tmp/demo"))
+    config = build_config({"cpus": 6}, Path("/tmp/demo"))
     assert config.cpus == "6"
-
-
-def test_build_config_rejects_non_list_mounts() -> None:
-    with pytest.raises(box.ConfigError, match="mounts must be a list"):
-        box.build_config(box.merge_values({"mounts": "/cache"}, {}), Path("/tmp/demo"))
 
 
 def test_a_bare_mount_is_read_only() -> None:
@@ -120,8 +125,38 @@ def test_a_rw_mount_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch) -> 
     assert box.to_workspace("~/scratch:rw") == "/home/someone/scratch"
 
 
+def test_the_mounts_file_lives_in_the_box_directory() -> None:
+    assert Path(box.MOUNTS_FILE) == Path(box.BOX_DIR) / "mounts.json"
+
+
+def test_mounts_is_not_a_config_key() -> None:
+    assert "mounts" not in box.DEFAULTS
+
+
+def test_read_mounts_file_returns_nothing_when_absent(tmp_path: Path) -> None:
+    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == []
+
+
+def test_read_mounts_file_reads_the_list(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, ["~/.cargo", "/usr/local/go"])
+    assert box.read_mounts_file(path) == ["~/.cargo", "/usr/local/go"]
+
+
+def test_read_mounts_file_rejects_a_json_object(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, {"mounts": []})
+    with pytest.raises(box.ConfigError, match="must contain a JSON array"):
+        box.read_mounts_file(path)
+
+
+def test_read_mounts_file_rejects_broken_json(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, [])
+    path.write_text("[")
+    with pytest.raises(box.ConfigError, match="not valid JSON"):
+        box.read_mounts_file(path)
+
+
 def test_build_config_applies_the_mount_default() -> None:
-    config = box.build_config(box.merge_values({"mounts": ["/a", "/b:rw"]}, {}), Path("/tmp/demo"))
+    config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], Path("/tmp/demo"))
     assert config.mounts == ("/a:ro", "/b")
 
 
@@ -161,9 +196,7 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
 def test_build_create_command_omits_empty_kit() -> None:
     command = box.build_create_command(make_config(), "demo-1")
     assert "--kit" in command
-    without_kit = box.build_create_command(
-        box.build_config(box.merge_values({}, {}), Path("/tmp/demo")), "demo-1"
-    )
+    without_kit = box.build_create_command(build_config({}, Path("/tmp/demo")), "demo-1")
     assert "--kit" not in without_kit
 
 
@@ -241,19 +274,36 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
     assert config.cpus == "8"
 
 
+def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    arguments = box.build_parser().parse_args([])
+    assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro",)
+
+
+def test_load_config_lets_mount_flags_replace_the_mounts_file(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
+    arguments = box.build_parser().parse_args(["--mount", "/other"])
+    assert box.load_config(arguments, tmp_path).mounts == ("/other:ro",)
+
+
+def test_load_config_has_no_mounts_without_a_mounts_file(tmp_path: Path) -> None:
+    arguments = box.build_parser().parse_args([])
+    assert box.load_config(arguments, tmp_path).mounts == ()
+
+
 def test_prepare_launch_requires_the_token_environment_variable() -> None:
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
         box.prepare_launch(make_config(), "")
 
 
 def test_prepare_launch_requires_a_kit() -> None:
-    config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
+    config = build_config({}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="kit is not set"):
         box.prepare_launch(config, "/secrets/token")
 
 
 def test_prepare_launch_requires_a_model() -> None:
-    config = box.build_config(box.merge_values({"kit": ".sbx/kit"}, {}), Path("/tmp/demo"))
+    config = build_config({"kit": ".sbx/kit"}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="model is not set"):
         box.prepare_launch(config, "/secrets/token")
 
@@ -281,8 +331,8 @@ def test_every_config_key_is_snake_case() -> None:
 
 
 def test_config_keys_match_the_config_fields() -> None:
-    config = box.build_config(box.merge_values({}, {}), Path("/tmp/demo"))
-    assert set(box.DEFAULTS) == set(vars(config))
+    config = build_config({}, Path("/tmp/demo"))
+    assert set(vars(config)) == set(box.DEFAULTS) | {"mounts"}
 
 
 def test_flags_use_the_config_keys_with_hyphens() -> None:

@@ -15,6 +15,9 @@ from pathlib import Path
 # Everything box reads from a project lives in one directory, so a project has one box footprint.
 BOX_DIR = ".box"
 CONFIG_FILE = f"{BOX_DIR}/config.json"
+
+# Mounts name paths on one machine, so they live apart from the settings a project shares.
+MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -73,7 +76,6 @@ DEFAULTS: dict[str, object] = {
     "model": "",
     "prompt_file": "",
     "kit": "",
-    "mounts": [],
 }
 
 
@@ -123,20 +125,37 @@ def resolve_path(text: str) -> Path:
     return Path(text).expanduser()
 
 
-def read_config_file(path: Path) -> dict[str, object]:
-    """Read config values from the JSON file, returning empty values when it is absent."""
+def load_json(path: Path) -> object:
+    """Parse a JSON file, returning nothing when it is absent."""
     if not path.is_file():
-        return {}
+        return None
     try:
-        loaded = json.loads(path.read_text())
+        return json.loads(path.read_text())
     except json.JSONDecodeError as error:
         raise ConfigError(f"{path} is not valid JSON: {error}") from error
+
+
+def read_config_file(path: Path) -> dict[str, object]:
+    """Read config values from the JSON file, returning empty values when it is absent."""
+    loaded = load_json(path)
+    if loaded is None:
+        return {}
     if not isinstance(loaded, dict):
         raise ConfigError(f"{path} must contain a JSON object")
     unknown = sorted(set(loaded) - set(DEFAULTS))
     if unknown:
         raise ConfigError(f"{path} has unknown keys: {', '.join(unknown)}")
     return loaded
+
+
+def read_mounts_file(path: Path) -> list[str]:
+    """Read the mount list from its own JSON file, returning nothing when it is absent."""
+    loaded = load_json(path)
+    if loaded is None:
+        return []
+    if not isinstance(loaded, list):
+        raise ConfigError(f"{path} must contain a JSON array of paths")
+    return [str(item) for item in loaded]
 
 
 def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) -> dict[str, object]:
@@ -159,14 +178,12 @@ def to_workspace(mount: str) -> str:
     return f"{resolve_path(mount)}:ro"
 
 
-def as_mount_list(value: object) -> tuple[str, ...]:
-    """Normalise the mounts value into a tuple of sbx workspace specs."""
-    if not isinstance(value, list):
-        raise ConfigError("mounts must be a list of paths")
-    return tuple(to_workspace(str(item)) for item in value)
+def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
+    """Turn the configured mounts into sbx workspace specs."""
+    return tuple(to_workspace(mount) for mount in mounts)
 
 
-def build_config(values: dict[str, object], working_directory: Path) -> Config:
+def build_config(values: dict[str, object], mounts: list[str], working_directory: Path) -> Config:
     """Turn merged config values into a Config, filling in the derived sandbox name."""
     name = str(values["name"])
     if not name:
@@ -180,7 +197,7 @@ def build_config(values: dict[str, object], working_directory: Path) -> Config:
         model=str(values["model"]),
         prompt_file=str(values["prompt_file"]),
         kit=str(values["kit"]),
-        mounts=as_mount_list(values["mounts"]),
+        mounts=to_workspaces(mounts),
     )
 
 
@@ -348,11 +365,19 @@ def cleanup(sandbox_name: str) -> None:
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
 
+def resolve_mounts(arguments: argparse.Namespace, working_directory: Path) -> list[str]:
+    """Take the mounts from the flags when any were given, otherwise from the mounts file."""
+    if arguments.mounts:
+        return list(arguments.mounts)
+    return read_mounts_file(working_directory / MOUNTS_FILE)
+
+
 def load_config(arguments: argparse.Namespace, working_directory: Path) -> Config:
-    """Combine the JSON file and the CLI arguments into the effective config."""
+    """Combine the JSON files and the CLI arguments into the effective config."""
     cli_values = {key: value for key, value in vars(arguments).items() if key in DEFAULTS}
     file_values = read_config_file(working_directory / CONFIG_FILE)
-    return build_config(merge_values(file_values, cli_values), working_directory)
+    mounts = resolve_mounts(arguments, working_directory)
+    return build_config(merge_values(file_values, cli_values), mounts, working_directory)
 
 
 def token_file_from_environment() -> str:
