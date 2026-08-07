@@ -142,56 +142,16 @@ Mounts are passed to `sbx` in declaration order, so the arguments do not depend 
 machine happened to order its file. `--mount` adds an unnamed workspace for one run, on top of
 the declared ones — the escape hatch for something genuinely one-off.
 
-### Filling them in with an agent
-
-`box mount-prompt` prints a prompt asking an agent to fill in the paths this machine still owes:
-
-```sh
-box mount-prompt | claude
-```
-
-Pipe it into an **interactive** session. The agent runs commands on your machine and edits a
-file that points at directories on your disk, so you want to see each tool call it asks for and
-the diff it produces before approving them.
-
-The prompt names each unfilled mount with its description and says which platform it is running
-on. It assumes a shell on this host — the agent can run `go env GOMODCACHE` or `brew --prefix`
-and check a path exists before writing it, which a plain chat window could only guess at. The
-agent is told to say which it could not find rather than invent a path, and to add `:rw` only
-where a description asks for write access.
-
-Sometimes nothing on the machine fits. The sandbox runs Linux whatever you run, so a macOS Go
-toolchain cannot be mounted into it — and there is nowhere natural on the host to keep a Linux
-one that exists purely to be handed to a sandbox. That is what `.box/deps/` is for: the agent
-downloads a suitable build into it and points the mount there. `box gen` creates the directory
-and gitignores it, so it is ready before anything needs it.
-
-It asks about any declared mount without a path, whether the key is missing from
-`.box/mounts.json` or still holds the placeholder, so it works straight after someone declares a
-new mount. When every mount already has a path it prints nothing and exits 0, so running it
-again after a partial fill asks only about what is left.
-
-Its output is only as good as your descriptions. `"go cache"` gives an agent nothing to work
-with; `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run, and
-`"a checkout of github.com/abulmo/edax-reversi"` gives it something to search for. Write them for
-that reader as well as the human one.
-
-Whether a mount is writable is the machine's call, not the project's: `:rw` goes on the path in
-`.box/mounts.json`, never in the declaration. A description may ask for it, but nothing enforces
-it, so a shared file can never widen access to your disk.
-
 Every mount is read-only unless you say otherwise, since the point of a sandbox is that the agent
-cannot write to your machine. `~/.cache/go-build` mounts read-only, and `~/scratch:rw` opts that
-one path out. Writing `:ro` is an error rather than a synonym for the default, so nothing looks
-like it grants access it does not. `box config` shows the resulting `sbx` specs.
+cannot write to your machine. `~/scratch:rw` opts one path out, and writing `:ro` is an error
+rather than a synonym for the default. The `:rw` goes on the path in `.box/mounts.json`, never in
+the declaration, so a shared file can never widen access to your disk. A leading `~` expands as
+it does in the shell. `box config` shows the resulting `sbx` specs.
 
-A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
-preferred over spelling out `/home/you/.cargo`.
-
-Because of that, `box run` refuses to start while `.box/mounts.json` or `.box/deps/` exists and
-is not ignored by git — one carries paths that exist only on your machine, the other binaries
-that belong in nobody's history. `box gen` writes both entries for you; by hand they are two
-lines in `.gitignore`:
+`box run` also refuses to start while `.box/mounts.json` or `.box/deps/` exists and is not
+ignored by git — one carries paths that exist only on your machine, the other binaries that
+belong in nobody's history. `box gen` writes both entries for you; by hand they are two lines in
+`.gitignore`:
 
 ```gitignore
 .box/mounts.json
@@ -199,6 +159,26 @@ lines in `.gitignore`:
 ```
 
 Ignore those two rather than the whole `.box/` directory, so `config.json` stays committed.
+
+### Filling them in with an agent
+
+```sh
+box mount-prompt | claude
+```
+
+This prints a prompt naming every declared mount that has no path yet, each with its description
+and the platform it is running on. Pipe it into an **interactive** session, so you approve each
+command the agent runs and the diff it writes. It assumes a shell here: the agent can run
+`go env GOMODCACHE` or `brew --prefix` and check a path exists rather than guess, and is told to
+say which it could not find instead of inventing one. Where nothing on the machine fits — the
+sandbox runs Linux whatever you run — it downloads a suitable build into `.box/deps/` and points
+the mount there.
+
+It works straight after someone declares a new mount, and prints nothing once they all have
+paths, so you can re-run it after a partial fill.
+
+Its output is only as good as your descriptions: `"go cache"` gives an agent nothing, while
+`"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run.
 
 ## When the agent leaves work behind
 
