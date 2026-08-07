@@ -39,8 +39,9 @@ alias box='~/.local/bin/box.py'
 The alias points at an absolute path, so `~/.local/bin` does not have to be on your `PATH`.
 
 That one copy serves every project — do not put `box.py` in your repositories. It resolves
-everything relative to the directory you run it in, never relative to itself: the `.box.json` it
-reads, the workspace it hands to `sbx`, and the git remote it fetches committed work from.
+everything relative to the directory you run it in, never relative to itself: the
+`.box/config.json` it reads, the workspace it hands to `sbx`, and the git remote it fetches
+committed work from.
 
 To update, run the same `curl` again.
 
@@ -54,7 +55,7 @@ box
 box -v --memory 8g --cpus 8
 ```
 
-Settings that you use every time belong in a `.box.json` in that repository:
+Settings that you use every time belong in a `.box/config.json` in that repository:
 
 ```json
 {
@@ -76,10 +77,10 @@ The token path is the one setting that comes from the environment, and only from
 export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
 ```
 
-There is no flag and no `.box.json` key for it. `.box.json` is committed with the project and
-shared, while the token is yours and machine-specific — keeping it out of both means a project
-config can never carry a path to someone else's credentials. Set it once per machine, next to
-the alias in your shell profile, or per project with `direnv`.
+There is no flag and no `.box/config.json` key for it. `.box/config.json` is committed with the
+project and shared, while the token is yours and machine-specific — keeping it out of both means
+a project config can never carry a path to someone else's credentials. Set it once per machine,
+next to the alias in your shell profile, or per project with `direnv`.
 
 `box.py` refuses to start when the variable is unset or points at a missing or empty file. The
 token itself is never passed on a command line: it goes to `sbx` over stdin, and the sandbox
@@ -99,7 +100,7 @@ after the built-in prompt, so it can qualify anything above it.
 
 ## Settings
 
-| Flag | `.box.json` key | Default | Meaning |
+| Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |
 | `--name NAME` | `name` | current directory name | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
 | `--memory SIZE` | `memory` | `4g` | Memory limit for the sandbox. |
@@ -112,7 +113,7 @@ after the built-in prompt, so it can qualify anything above it.
 | `--mount PATH` | `mounts` | `[]` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 | `-v`, `--verbose` | — | off | Print the settings in effect, then run. |
 
-Anything unknown in `.box.json` is an error, so typos surface immediately.
+Anything unknown in `.box/config.json` is an error, so typos surface immediately.
 
 `kit` and `model` have no defaults: `box.py` refuses to start without them, rather than falling
 back to something you did not choose.

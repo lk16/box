@@ -12,7 +12,9 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-CONFIG_FILE = ".box.json"
+# Everything box reads from a project lives in one directory, so a project has one box footprint.
+BOX_DIR = ".box"
+CONFIG_FILE = f"{BOX_DIR}/config.json"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 

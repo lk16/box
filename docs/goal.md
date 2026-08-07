@@ -5,7 +5,8 @@ repository under CPU, memory and disk limits, without touching the host working 
 
 One run does this:
 
-1. Load settings from the command line and `.box.json`, with the command line taking priority.
+1. Load settings from the command line and `.box/config.json`, with the command line taking
+   priority.
 2. Pick the first free `<base>-<n>` sandbox name, checking both running sandboxes and leftover
    `refs/sandboxes/*` git refs.
 3. Create the sandbox with `--clone`, so the agent commits into an in-container clone.
@@ -21,10 +22,12 @@ One run does this:
 - One installed copy serves every project, so everything resolves relative to the current
   working directory and nothing relative to the script's own location.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
-- Settings come from flags or `.box.json` in the current directory, flags first.
+- Settings come from flags or `.box/config.json` in the current directory, flags first.
+- Everything box reads from a project lives under `.box/`, so a project has one box footprint
+  rather than a scatter of dotfiles at its root.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
-- Unknown keys in `.box.json` are an error, so typos surface immediately.
+- Unknown keys in `.box/config.json` are an error, so typos surface immediately.
 - `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
   one project belongs in that project's `prompt_file`.
 - Never remove a sandbox that holds uncommitted work.

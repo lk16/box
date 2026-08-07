@@ -25,6 +25,14 @@ def make_config() -> box.Config:
     )
 
 
+def write_config(directory: Path, values: dict[str, object]) -> Path:
+    """Write a config file, creating the .box directory it lives in."""
+    path = directory / box.CONFIG_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(values))
+    return path
+
+
 def test_to_kebab_case_collapses_separators() -> None:
     assert box.to_kebab_case("My Project_v2") == "my-project-v2"
 
@@ -33,25 +41,26 @@ def test_default_base_name_falls_back_when_nothing_survives() -> None:
     assert box.default_base_name(Path("/tmp/___")) == "box"
 
 
+def test_the_config_file_lives_in_the_box_directory() -> None:
+    assert Path(box.CONFIG_FILE) == Path(box.BOX_DIR) / "config.json"
+
+
 def test_read_config_file_returns_empty_when_absent(tmp_path: Path) -> None:
     assert box.read_config_file(tmp_path / box.CONFIG_FILE) == {}
 
 
 def test_read_config_file_reads_known_keys(tmp_path: Path) -> None:
-    path = tmp_path / box.CONFIG_FILE
-    path.write_text(json.dumps({"memory": "16g"}))
-    assert box.read_config_file(path) == {"memory": "16g"}
+    assert box.read_config_file(write_config(tmp_path, {"memory": "16g"})) == {"memory": "16g"}
 
 
 def test_read_config_file_rejects_unknown_keys(tmp_path: Path) -> None:
-    path = tmp_path / box.CONFIG_FILE
-    path.write_text(json.dumps({"nope": 1}))
+    path = write_config(tmp_path, {"nope": 1})
     with pytest.raises(box.ConfigError, match="unknown keys: nope"):
         box.read_config_file(path)
 
 
 def test_read_config_file_rejects_broken_json(tmp_path: Path) -> None:
-    path = tmp_path / box.CONFIG_FILE
+    path = write_config(tmp_path, {})
     path.write_text("{")
     with pytest.raises(box.ConfigError, match="not valid JSON"):
         box.read_config_file(path)
@@ -225,7 +234,7 @@ def test_read_token_rejects_empty_file(tmp_path: Path) -> None:
 
 
 def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
-    (tmp_path / box.CONFIG_FILE).write_text(json.dumps({"memory": "16g", "cpus": "8"}))
+    write_config(tmp_path, {"memory": "16g", "cpus": "8"})
     arguments = box.build_parser().parse_args(["--memory", "1g"])
     config = box.load_config(arguments, tmp_path)
     assert config.memory == "1g"
