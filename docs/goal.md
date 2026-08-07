@@ -25,7 +25,12 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
 
 - All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS.
 - One installed copy serves every project, so everything resolves relative to the current
-  working directory and nothing relative to the script's own location.
+  working directory and nothing relative to the script's own location. The update check is the
+  one exception: it hashes the script's own file, which is the only thing it can compare.
+- box.py carries no version, so being current means hashing the same as the published copy. The
+  check runs before every command, caches for a day under `XDG_CACHE_HOME`, prints to stderr so
+  a piped stdout stays clean, and swallows every failure -- an unreachable GitHub, a broken
+  cache or a missing home directory must never stop a command that would otherwise work.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
 - Settings come from flags or `.box/config.json` in the current directory, flags first.
 - `config` takes the same flags as `run` and resolves the same settings, so it answers "what

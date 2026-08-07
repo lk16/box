@@ -405,6 +405,96 @@ def test_show_config_prints_the_settings_and_returns_zero(
     assert "/secrets/token" in printed
 
 
+def test_cache_path_follows_xdg_cache_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/xdg")
+    assert box.cache_path() == Path("/tmp/xdg/box/update-check.json")
+
+
+def test_cache_path_falls_back_to_dot_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setenv("HOME", "/home/someone")
+    assert box.cache_path() == Path("/home/someone/.cache/box/update-check.json")
+
+
+def test_file_hash_matches_the_same_bytes(tmp_path: Path) -> None:
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    first.write_text("same")
+    second.write_text("same")
+    assert box.file_hash(first) == box.file_hash(second)
+
+
+def test_file_hash_differs_on_different_bytes(tmp_path: Path) -> None:
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    first.write_text("one")
+    second.write_text("two")
+    assert box.file_hash(first) != box.file_hash(second)
+
+
+def test_a_stored_hash_is_read_back_while_fresh(tmp_path: Path) -> None:
+    path = tmp_path / "update-check.json"
+    box.store_remote_hash(path, "abc123", 1000.0)
+    assert box.cached_remote_hash(path, 1000.0) == "abc123"
+
+
+def test_a_stored_hash_expires(tmp_path: Path) -> None:
+    path = tmp_path / "update-check.json"
+    box.store_remote_hash(path, "abc123", 1000.0)
+    assert box.cached_remote_hash(path, 1000.0 + box.UPDATE_INTERVAL_SECONDS + 1) == ""
+
+
+def test_a_missing_cache_reads_as_nothing(tmp_path: Path) -> None:
+    assert box.cached_remote_hash(tmp_path / "absent.json", 1000.0) == ""
+
+
+def test_a_broken_cache_reads_as_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "update-check.json"
+    path.write_text("{not json")
+    assert box.cached_remote_hash(path, 1000.0) == ""
+
+
+def test_store_remote_hash_creates_the_cache_directory(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "update-check.json"
+    box.store_remote_hash(path, "abc123", 1000.0)
+    assert path.is_file()
+
+
+def test_no_update_message_when_the_hashes_match(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    assert box.update_message(script, box.file_hash(script)) == ""
+
+
+def test_no_update_message_without_a_remote_hash(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    assert box.update_message(script, "") == ""
+
+
+def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    message = box.update_message(script, "a-different-hash")
+    assert str(script) in message
+    assert box.UPDATE_URL in message
+    assert "curl" in message
+
+
+def test_warn_when_outdated_stays_silent_when_the_check_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def explode() -> str:
+        raise OSError("no network")
+
+    monkeypatch.setattr(box, "fetch_remote_hash", explode)
+    monkeypatch.setenv("XDG_CACHE_HOME", "/nonexistent/unwritable")
+    box.warn_when_outdated()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_a_command_is_required() -> None:
     with pytest.raises(SystemExit):
         box.build_parser().parse_args([])

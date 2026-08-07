@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -25,6 +28,11 @@ MOUNT_PLACEHOLDER = "/placeholder/for/real/path"
 
 # Commands that work on the project's files, so settings and their flags mean nothing to them.
 SETUP_COMMANDS = ("gen", "mount-prompt")
+
+# box.py has no version, so being current means hashing the same as the published copy.
+UPDATE_URL = "https://raw.githubusercontent.com/lk16/box/main/box.py"
+UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
+UPDATE_TIMEOUT_SECONDS = 2
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -633,10 +641,77 @@ def show_config(config: Config, token_file: str) -> int:
     return 0
 
 
+def cache_path() -> Path:
+    """Where the update check remembers what it last saw, following XDG_CACHE_HOME."""
+    base = os.environ.get("XDG_CACHE_HOME", "")
+    if base:
+        return Path(base) / "box" / "update-check.json"
+    return Path.home() / ".cache" / "box" / "update-check.json"
+
+
+def file_hash(path: Path) -> str:
+    """Hash a file's bytes, which is how one copy of box.py is compared to another."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def fetch_remote_hash() -> str:
+    """Hash the published box.py."""
+    with urllib.request.urlopen(UPDATE_URL, timeout=UPDATE_TIMEOUT_SECONDS) as response:
+        return hashlib.sha256(response.read()).hexdigest()
+
+
+def cached_remote_hash(path: Path, now: float) -> str:
+    """Return the remembered hash while it is still fresh, and nothing once it has expired."""
+    try:
+        cached = json.loads(path.read_text())
+        if now - float(cached["checked_at"]) > UPDATE_INTERVAL_SECONDS:
+            return ""
+        return str(cached["remote_hash"])
+    except Exception:
+        return ""
+
+
+def store_remote_hash(path: Path, remote_hash: str, now: float) -> None:
+    """Remember the hash, so the rest of the day's runs need no network."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"checked_at": now, "remote_hash": remote_hash}))
+
+
+def resolve_remote_hash(path: Path, now: float) -> str:
+    """Use the remembered hash while it is fresh, otherwise fetch one and remember it."""
+    remembered = cached_remote_hash(path, now)
+    if remembered:
+        return remembered
+    fetched = fetch_remote_hash()
+    store_remote_hash(path, fetched, now)
+    return fetched
+
+
+def update_message(script_path: Path, remote_hash: str) -> str:
+    """Say an update is available, and how to take it, when this copy is not the published one."""
+    if not remote_hash:
+        return ""
+    if remote_hash == file_hash(script_path):
+        return ""
+    return f"An update to box is available. Take it with:\n  curl -fsSL -o {script_path} {UPDATE_URL}"
+
+
+def warn_when_outdated() -> None:
+    """Mention a newer box on stderr, staying silent about anything that goes wrong."""
+    try:
+        script_path = Path(__file__).resolve()
+        message = update_message(script_path, resolve_remote_hash(cache_path(), time.time()))
+    except Exception:
+        return
+    if message:
+        print(message, file=sys.stderr)
+
+
 def main() -> int:
     """Entry point: run a setup command, or load config and hand off to a sandbox session."""
     arguments = build_parser().parse_args()
     working_directory = Path.cwd()
+    warn_when_outdated()
     try:
         if arguments.command in SETUP_COMMANDS:
             require_no_flags(arguments)

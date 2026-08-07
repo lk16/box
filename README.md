@@ -28,6 +28,11 @@ Then point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setu
 
 One copy serves every project, so do not commit `box.py` into your repositories.
 
+Every command hashes your copy against the published one and prints the `curl` to run if they
+differ. The result is cached in `~/.cache/box/` for a day, so at most one command a day makes a
+network call, and a failed check is silent — box never stops working because GitHub is
+unreachable. The notice goes to stderr, so `box mount-prompt | claude` still pipes cleanly.
+
 ## Use
 
 Four commands, all run from the root of the repository you want an agent to work on:
