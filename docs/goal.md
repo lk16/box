@@ -33,7 +33,8 @@ One run does this:
 - Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored.
   A committed mounts file carries one machine's paths into every clone of the project.
 - `box gen` never overwrites an existing file, so re-running it cannot lose a config, and it
-  takes no flags, since it writes defaults to edit rather than settings that were chosen.
+  takes no flags, since it writes defaults to edit rather than settings that were chosen. It
+  appends the mounts file to `.gitignore`, so what it writes is a project box will run in.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

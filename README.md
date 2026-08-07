@@ -56,9 +56,10 @@ box -v --memory 8g --cpus 8
 ```
 
 To set a repository up, run `box gen` in it. It creates `.box/`, writes a `config.json` holding
-every setting at its default and an empty `mounts.json`, and reminds you to gitignore the latter.
-It never overwrites a file that already exists, so it is safe to re-run — and it takes no flags,
-since it writes defaults for you to edit rather than settings you chose.
+every setting at its default and an empty `mounts.json`, and adds the mounts file to
+`.gitignore` unless git already ignores it. It never overwrites a file that already exists, so
+it is safe to re-run — and it takes no flags, since it writes defaults for you to edit rather
+than settings you chose.
 
 Settings that you use every time belong in a `.box/config.json` in that repository:
 
@@ -158,7 +159,7 @@ shares. `--mount` adds to the file's list for one run rather than replacing it.
 
 Because of that, `box` refuses to start while `.box/mounts.json` exists and is not ignored by
 git. Committing it would put paths that exist only on your machine into everyone else's clone.
-Add a line to `.gitignore`:
+`box gen` writes that entry for you; by hand it is one line in `.gitignore`:
 
 ```gitignore
 .box/mounts.json

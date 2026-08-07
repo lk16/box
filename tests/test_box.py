@@ -394,6 +394,45 @@ def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
     assert box.generate(tmp_path) == 0
 
 
+def test_gen_leaves_a_project_box_will_run_in(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    box.generate(tmp_path)
+    box.require_ignored_mounts(tmp_path)
+
+
+def test_gen_creates_a_gitignore_holding_the_mounts_file(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    box.generate(tmp_path)
+    assert (tmp_path / box.GITIGNORE_FILE).read_text() == f"{box.MOUNTS_FILE}\n"
+
+
+def test_gen_keeps_what_the_gitignore_already_held(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / box.GITIGNORE_FILE).write_text("*.log\n")
+    box.generate(tmp_path)
+    assert (tmp_path / box.GITIGNORE_FILE).read_text() == f"*.log\n{box.MOUNTS_FILE}\n"
+
+
+def test_gen_leaves_an_already_ignored_gitignore_alone(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / box.GITIGNORE_FILE).write_text(f"{box.BOX_DIR}/\n")
+    box.generate(tmp_path)
+    assert (tmp_path / box.GITIGNORE_FILE).read_text() == f"{box.BOX_DIR}/\n"
+
+
+def test_append_line_starts_a_new_line_when_one_is_missing(tmp_path: Path) -> None:
+    path = tmp_path / box.GITIGNORE_FILE
+    path.write_text("*.log")
+    box.append_line(path, "build")
+    assert path.read_text() == "*.log\nbuild\n"
+
+
+def test_append_line_creates_the_file_when_absent(tmp_path: Path) -> None:
+    path = tmp_path / box.GITIGNORE_FILE
+    box.append_line(path, "build")
+    assert path.read_text() == "build\n"
+
+
 def test_prepare_launch_requires_the_token_environment_variable() -> None:
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
         box.prepare_launch(make_config(), "", Path("/tmp/demo"))

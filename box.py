@@ -18,6 +18,7 @@ CONFIG_FILE = f"{BOX_DIR}/config.json"
 
 # Mounts name paths on one machine, so they live apart from the settings a project shares.
 MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
+GITIGNORE_FILE = ".gitignore"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -467,11 +468,22 @@ def starter_files() -> dict[str, str]:
     }
 
 
-def report_mounts_ignored(working_directory: Path) -> None:
-    """Point at the .gitignore entry box insists on before it will run."""
+def append_line(path: Path, line: str) -> None:
+    """Add a line to a file, starting a new one when the file does not end in a newline."""
+    existing = ""
+    if path.is_file():
+        existing = path.read_text()
+    if existing and not existing.endswith("\n"):
+        existing = f"{existing}\n"
+    path.write_text(f"{existing}{line}\n")
+
+
+def ignore_mounts_file(working_directory: Path) -> None:
+    """Write the .gitignore entry box would otherwise refuse to run without."""
     if is_git_ignored(working_directory, MOUNTS_FILE):
         return
-    print(f"add this line to .gitignore, or box will refuse to run:\n  {MOUNTS_FILE}")
+    append_line(working_directory / GITIGNORE_FILE, MOUNTS_FILE)
+    print(f"ignored {MOUNTS_FILE} in {GITIGNORE_FILE}")
 
 
 def generate(working_directory: Path) -> int:
@@ -484,7 +496,7 @@ def generate(working_directory: Path) -> int:
             continue
         path.write_text(contents)
         print(f"written {name}")
-    report_mounts_ignored(working_directory)
+    ignore_mounts_file(working_directory)
     return 0
 
 
