@@ -51,8 +51,8 @@ Run it from the root of the repository the agent should work on:
 
 ```sh
 cd ~/projects/my-project
-box
-box -v --memory 8g --cpus 8
+box run
+box run -v --memory 8g --cpus 8
 ```
 
 To set a repository up, run `box gen` in it. It creates `.box/`, writes a `config.json` holding
@@ -162,7 +162,7 @@ Each machine says *where*, under the same names, in the gitignored `.box/mounts.
 }
 ```
 
-`box` refuses to start unless the two match exactly. A declared name with no path — or still
+`box run` refuses to start unless the two match exactly. A declared name with no path — or still
 holding the `/placeholder/for/real/path` that `box gen` writes — is an error listing the name
 and its description, so a forgotten module cache surfaces before the sandbox starts rather than
 as a 403 halfway through. A name in `.box/mounts.json` that the project does not declare is an
@@ -215,7 +215,7 @@ like it grants access it does not. `-v` shows the resulting `sbx` specs.
 A leading `~` expands to your home directory, the same as in the shell, so `~/.cargo` is
 preferred over spelling out `/home/you/.cargo`.
 
-Because of that, `box` refuses to start while `.box/mounts.json` exists and is not ignored by
+Because of that, `box run` refuses to start while `.box/mounts.json` exists and is not ignored by
 git. Committing it would put paths that exist only on your machine into everyone else's clone.
 `box gen` writes that entry for you; by hand it is one line in `.gitignore`:
 

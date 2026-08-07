@@ -16,9 +16,10 @@ One run does this:
 6. On exit, fetch committed work back to the host and remove the sandbox — unless the sandbox
    still has uncommitted changes, in which case it is kept and recovery steps are printed.
 
-`box gen` instead writes a starter `.box/` directory and exits, without creating a sandbox.
-`box mount-prompt` prints the prompt that has an agent on this host fill in the mounts that
-`.box/mounts.json` still leaves as placeholders, and exits too.
+`box run` does that. Every command starts with a word, so nothing happens by accident when a
+flag is mistyped: `box gen` writes a starter `.box/` directory, and `box mount-prompt` prints the
+prompt that has an agent on this host fill in the mounts `.box/mounts.json` still leaves as
+placeholders. Both exit without creating a sandbox.
 
 ## Constraints
 

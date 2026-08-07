@@ -312,7 +312,7 @@ def test_read_token_rejects_empty_file(tmp_path: Path) -> None:
 
 def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
     write_config(tmp_path, {"memory": "16g", "cpus": "8"})
-    arguments = box.build_parser().parse_args(["--memory", "1g"])
+    arguments = box.build_parser().parse_args(["run", "--memory", "1g"])
     config = box.load_config(arguments, tmp_path)
     assert config.memory == "1g"
     assert config.cpus == "8"
@@ -321,24 +321,24 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
-    arguments = box.build_parser().parse_args([])
+    arguments = box.build_parser().parse_args(["run"])
     assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro",)
 
 
 def test_load_config_adds_mount_flags_to_the_mounts_file(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
-    arguments = box.build_parser().parse_args(["--mount", "/other", "--mount", "/third:rw"])
+    arguments = box.build_parser().parse_args(["run", "--mount", "/other", "--mount", "/third:rw"])
     assert box.load_config(arguments, tmp_path).mounts == ("/cache:ro", "/other:ro", "/third")
 
 
 def test_load_config_takes_mount_flags_without_a_mounts_file(tmp_path: Path) -> None:
-    arguments = box.build_parser().parse_args(["--mount", "/other"])
+    arguments = box.build_parser().parse_args(["run", "--mount", "/other"])
     assert box.load_config(arguments, tmp_path).mounts == ("/other:ro",)
 
 
 def test_load_config_has_no_mounts_without_a_mounts_file(tmp_path: Path) -> None:
-    arguments = box.build_parser().parse_args([])
+    arguments = box.build_parser().parse_args(["run"])
     assert box.load_config(arguments, tmp_path).mounts == ()
 
 
@@ -375,12 +375,22 @@ def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> Non
         box.prepare_launch(make_config(), "/secrets/token", repository)
 
 
-def test_gen_is_the_only_command() -> None:
+def test_gen_is_a_command() -> None:
     assert box.build_parser().parse_args(["gen"]).command == "gen"
 
 
-def test_no_command_runs_a_sandbox() -> None:
-    assert box.build_parser().parse_args([]).command is None
+def test_run_is_a_command() -> None:
+    assert box.build_parser().parse_args(["run"]).command == "run"
+
+
+def test_a_command_is_required() -> None:
+    with pytest.raises(SystemExit):
+        box.build_parser().parse_args([])
+
+
+def test_an_unknown_command_is_rejected() -> None:
+    with pytest.raises(SystemExit):
+        box.build_parser().parse_args(["nope"])
 
 
 def test_gen_alone_takes_no_flags() -> None:
@@ -630,7 +640,7 @@ def test_config_keys_match_the_config_fields() -> None:
 
 
 def test_flags_use_the_config_keys_with_hyphens() -> None:
-    arguments = box.build_parser().parse_args(["--root-size", "20g", "--prompt-file", "p.md"])
+    arguments = box.build_parser().parse_args(["run", "--root-size", "20g", "--prompt-file", "p.md"])
     assert vars(arguments)["root_size"] == "20g"
     assert vars(arguments)["prompt_file"] == "p.md"
 

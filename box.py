@@ -268,9 +268,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="print the config in effect")
     parser.add_argument(
         "command",
-        nargs="?",
-        choices=["gen", "mount-prompt"],
-        help=f"gen writes a starter {BOX_DIR} directory, mount-prompt asks an agent to fill it in",
+        choices=["run", "gen", "mount-prompt"],
+        help=f"run starts a sandbox, gen writes a starter {BOX_DIR} directory, "
+        "mount-prompt asks an agent to fill in this machine's paths",
     )
     return parser
 
@@ -499,7 +499,8 @@ def to_flag(key: str) -> str:
 
 def require_no_flags(arguments: argparse.Namespace) -> None:
     """Reject flags passed to a command, which reads the config rather than taking settings."""
-    defaults = vars(build_parser().parse_args([]))
+    # Parsing a command is the only way to reach the defaults, since command itself is required.
+    defaults = vars(build_parser().parse_args(["run"]))
     given = sorted(
         to_flag(key) for key, value in vars(arguments).items() if key != "command" and value != defaults[key]
     )
@@ -614,21 +615,21 @@ def mount_prompt(working_directory: Path) -> int:
     return 0
 
 
-def run_command(command: str, working_directory: Path) -> int:
-    """Run the named command instead of creating a sandbox."""
+def setup_command(command: str, working_directory: Path) -> int:
+    """Run a command that reads the project's files instead of creating a sandbox."""
     if command == "gen":
         return generate(working_directory)
     return mount_prompt(working_directory)
 
 
 def main() -> int:
-    """Entry point: run a command, or load config and hand off to a sandbox session."""
+    """Entry point: run a setup command, or load config and hand off to a sandbox session."""
     arguments = build_parser().parse_args()
     working_directory = Path.cwd()
     try:
-        if arguments.command:
+        if arguments.command != "run":
             require_no_flags(arguments)
-            return run_command(arguments.command, working_directory)
+            return setup_command(arguments.command, working_directory)
         config = load_config(arguments, working_directory)
         token_file = token_file_from_environment()
         if arguments.verbose:
