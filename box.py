@@ -63,6 +63,9 @@ SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 # The token path is deliberately the one setting that is not a flag or a config file key.
 TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 
+# What box config shows for a setting nothing was given for, rather than an empty column.
+UNSET = "(unset)"
+
 # Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
 READ_WRITE_SUFFIX = ":rw"
 
@@ -442,11 +445,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def or_unset(text: str) -> str:
+    """Name what a setting holds nothing for, since a blank column reads as a missing row."""
+    if not text:
+        return UNSET
+    return text
+
+
 def format_value(value: object) -> str:
     """Render one config value, joining the mount list into a readable line."""
     if isinstance(value, tuple):
-        return " ".join(str(item) for item in value)
-    return str(value)
+        return or_unset(" ".join(str(item) for item in value))
+    return or_unset(str(value))
 
 
 def format_config(config: Config, token_file: str) -> str:

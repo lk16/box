@@ -92,7 +92,7 @@ own looks like this:
 ```
 
 A command line flag wins over that file, which wins over the built-in default. `box config` prints
-what a run would end up with.
+what a run would end up with, showing `(unset)` where nothing was given.
 
 | Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |

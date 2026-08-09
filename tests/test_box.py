@@ -2054,6 +2054,20 @@ def test_format_value_joins_mounts() -> None:
     assert box.format_value(("/a:ro", "/b")) == "/a:ro /b"
 
 
+def test_format_value_names_a_setting_nothing_was_given_for() -> None:
+    assert box.format_value("") == box.UNSET
+
+
+def test_format_value_names_an_empty_mount_list() -> None:
+    assert box.format_value(()) == box.UNSET
+
+
+def test_format_config_leaves_no_line_ending_in_whitespace(tmp_path: Path) -> None:
+    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    assert box.UNSET in rendered
+    assert [line for line in rendered.splitlines() if line != line.rstrip()] == []
+
+
 def test_format_config_shows_the_token_path_with_the_settings() -> None:
     rendered = box.format_config(make_config(), "/secrets/token")
     assert box.TOKEN_FILE_ENV in rendered
