@@ -34,8 +34,12 @@ SETUP_COMMANDS = ("gen", "mount-prompt")
 
 # box.py has no version, so being current means hashing the same as the published copy.
 UPDATE_URL = "https://raw.githubusercontent.com/lk16/box/main/box.py"
-UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
+UPDATE_INTERVAL_SECONDS = 60 * 60
 UPDATE_TIMEOUT_SECONDS = 2
+
+# The update notice competes with whatever the agent prints, so it is coloured to stand out.
+RED = "\033[31m"
+RESET = "\033[0m"
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -846,7 +850,7 @@ def cached_remote_hash(path: Path, now: float) -> str:
 
 
 def store_remote_hash(path: Path, remote_hash: str, now: float) -> None:
-    """Remember the hash, so the rest of the day's runs need no network."""
+    """Remember the hash, so the rest of the hour's runs need no network."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"checked_at": now, "remote_hash": remote_hash}))
 
@@ -867,7 +871,8 @@ def update_message(script_path: Path, remote_hash: str) -> str:
         return ""
     if remote_hash == file_hash(script_path):
         return ""
-    return f"An update to box is available. Take it with:\n  curl -fsSL -o {script_path} {UPDATE_URL}"
+    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {script_path} {UPDATE_URL}"
+    return f"{RED}{take_it}{RESET}"
 
 
 def warn_when_outdated() -> None:

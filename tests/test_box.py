@@ -780,6 +780,14 @@ def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> Non
     assert "curl" in message
 
 
+def test_the_update_message_is_red(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    message = box.update_message(script, "a-different-hash")
+    assert message.startswith(box.RED)
+    assert message.endswith(box.RESET)
+
+
 def test_warn_when_outdated_stays_silent_when_the_check_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
