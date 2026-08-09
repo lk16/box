@@ -26,11 +26,6 @@ terminal):
 alias box='~/.local/bin/box.py'
 ```
 
-Re-run the same `curl` to update. One copy serves every project, so do not commit `box.py` into
-your repositories. box checks whether the published copy differs from yours at most once an hour,
-and the run that checks prints the `curl` to take it in red on stderr when it does, so the notice
-comes back hourly rather than on every command.
-
 ## Use
 
 Every command runs from the root of the repository you want an agent to work on.
@@ -83,24 +78,14 @@ prints what a run would end up with.
 Anything unknown in `.box/config.json` is an error, so typos surface immediately.
 
 `kit` and `model` have no defaults: box refuses to start without them, rather than falling back to
-something you did not choose.
+something you did not choose — see [Conservative by default](#conservative-by-default).
 
 The kit carries the sandbox's network allowlist, and running without one would quietly give the
 agent whatever network access `sbx` grants by default. Point `kit` at the directory holding a
 `spec.yaml`, by convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`.
 
-The model must be named because the Claude CLI inside the sandbox is a different install from the
-one on your machine, possibly a different version, and an unset model means *its* default decides
-what runs — which can differ from what you expect and from run to run. Naming it makes the
-sandbox's choice yours.
-
-### Conservative by default
-
-box would rather refuse to start, or hand the agent less, than let a run go wrong quietly. A
-missing setting is an error instead of a guess, network access is whatever the kit allows and
-nothing more, mounts are read-only until you say otherwise, and a sandbox with uncommitted work is
-never removed. Losing work, or an agent doing something you did not expect, is the thing box
-exists to prevent.
+The sandbox's Claude CLI is a different install from yours, so an unset model leaves what runs to
+*its* default rather than to you.
 
 ## The system prompt
 
@@ -163,12 +148,13 @@ box mount-prompt | claude
 ```
 
 This prints a prompt naming every declared mount that has no path yet, each with its description
-and the platform it is running on. Pipe it into an **interactive** session, so you approve each
-command the agent runs and the diff it writes. It assumes a shell here: the agent can run
-`go env GOMODCACHE` or `brew --prefix` and check a path exists rather than guess, and is told to
-say which it could not find instead of inventing one. Where nothing on the machine fits — the
-sandbox runs Linux whatever you run — it downloads a suitable build into `.box/deps/` and points
-the mount there.
+and the platform it is running on. Pipe it into an **interactive** session: this agent runs on
+your machine rather than in a sandbox, so it is deliberately the one place box puts a human in
+front of every command it runs and the diff it writes — see [Conservative by
+default](#conservative-by-default). It assumes a shell, so the agent can probe system specific
+paths and check they exist rather than guess, and is told to say which it could not find instead
+of inventing one. Where nothing on the machine fits — the sandbox runs Linux whatever you run —
+it downloads a suitable build into `.box/deps/` and points the mount there.
 
 It works straight after someone declares a new mount, and prints nothing once they all have
 paths, so you can re-run it after a partial fill.
@@ -198,6 +184,14 @@ the commits stay on their ref and box says so — the work is already fetched, a
 If the tree is dirty the sandbox is kept, its refs are left alone, and the recovery commands are
 printed — inspect it with `sbx exec`, copy files out with `sbx cp`, and remove it yourself with
 `sbx rm --force <name>`.
+
+## Conservative by default
+
+box would rather refuse to start, or hand the agent less, than let a run go wrong quietly. A
+missing setting is an error instead of a guess, network access is whatever the kit allows and
+nothing more, mounts are read-only until you say otherwise, the one agent that runs on your
+machine is interactive, and a sandbox with uncommitted work is never removed. Losing work, or an
+agent doing something you did not expect, is the thing box exists to prevent.
 
 ## Development
 
