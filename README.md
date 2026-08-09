@@ -26,6 +26,9 @@ terminal):
 alias box='~/.local/bin/box.py'
 ```
 
+Re-run the same `curl` to update — box prints it in red on stderr, at most once an hour, when the
+published copy differs from yours.
+
 ## Use
 
 Every command runs from the root of the repository you want an agent to work on.
