@@ -19,6 +19,10 @@ does. Every function in `box.py` has a one-line docstring. In the tests, the hel
 have one and the `test_*` functions do not: their names are the documentation, and a docstring
 would only say the name again.
 
+ruff enforces that: `D` is selected, with `D103` and `D107` ignored under `tests/`, so a missing
+docstring is a failed check rather than something a reader has to notice. A fake's class docstring
+covers its `__init__`, which is why `D107` is off there too.
+
 ## Naming
 
 Full words, no abbreviations: `sandbox_name`, not `sbx_nm`.
