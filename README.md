@@ -44,7 +44,7 @@ Run everything from the root of the repository you want an agent to work on:
 
 ```sh
 box gen                    # writes .box/ and the .gitignore lines box needs
-$EDITOR .box/config.json   # fill in kit and model
+$EDITOR .box/config.json   # fill in model; gen wrote the kit it points at
 export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
 box mount-prompt | claude  # only if the project declares required_mounts
 box config                 # the settings, plus every check a run makes
@@ -63,7 +63,7 @@ per machine, so each clone does those two again.
 
 | Command | What it does |
 | --- | --- |
-| `box gen` | writes a starter `.box/` directory and the `.gitignore` lines box needs, changing nothing already filled in |
+| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` lines box needs, changing nothing already filled in |
 | `box config` | prints the settings in effect, the `CLAUDE_OAUTH_TOKEN_FILE` path included, then runs every check a run makes |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
 | `box run` | creates the sandbox and starts Claude in it |
@@ -113,8 +113,13 @@ a list are errors naming the key. `required_mounts` is the one key holding an ob
 
 `kit` and `model` are required rather than defaulted: an unset kit leaves the sandbox's network
 access to whatever `sbx` grants, and an unset model leaves the choice to the sandbox's own Claude
-install, which is not this host's. Point `kit` at the directory holding a `spec.yaml`, by
-convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`.
+install, which is not this host's.
+
+`kit` names the directory holding a `spec.yaml`, not the file inside it. `box gen` writes a starter
+policy at `.box/kit/spec.yaml` — the agent's own API calls and nothing else — and points `kit` at
+it, so the only setting left to fill in is `model`. Widen the allowlist for whatever the project's
+checks fetch, or point `kit` at a policy you keep elsewhere; box's own lives in `.sbx/kit`, which is
+sbx's convention.
 
 ## The system prompt
 

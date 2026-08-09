@@ -1642,13 +1642,53 @@ def test_gen_names_every_flag_it_was_given() -> None:
 
 def test_gen_writes_both_files(tmp_path: Path) -> None:
     box.generate(tmp_path)
-    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.DEFAULTS
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
     assert json.loads((tmp_path / box.MOUNTS_FILE).read_text()) == {}
 
 
 def test_gen_writes_a_config_box_can_read_back(tmp_path: Path) -> None:
     box.generate(tmp_path)
-    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == box.DEFAULTS
+    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == box.STARTER_CONFIG
+
+
+def test_the_starter_config_is_every_default_but_the_kit_gen_writes() -> None:
+    assert box.STARTER_CONFIG == {**box.DEFAULTS, "kit": box.KIT_DIR}
+
+
+def test_gen_writes_a_starter_kit(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    spec = (tmp_path / box.KIT_SPEC_FILE).read_text()
+    assert "api.anthropic.com:443" in spec
+    assert spec.endswith("\n")
+
+
+def test_the_starter_kit_is_named_after_the_project() -> None:
+    assert "name: my-repo-network-policy" in box.build_kit_spec("my-repo")
+
+
+def test_the_starter_kit_says_it_is_a_starting_point() -> None:
+    assert "starting point" in box.build_kit_spec("demo")
+
+
+def test_gen_points_the_kit_setting_at_the_kit_it_writes(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    config = config_from_values(box.read_config_file(tmp_path / box.CONFIG_FILE), tmp_path)
+    assert config.kit == box.KIT_DIR
+    assert (tmp_path / config.kit).is_dir()
+
+
+def test_gen_keeps_a_kit_the_project_already_has(tmp_path: Path) -> None:
+    spec = tmp_path / box.KIT_SPEC_FILE
+    spec.parent.mkdir(parents=True)
+    spec.write_text("kind: mixin\n")
+    box.generate(tmp_path)
+    assert spec.read_text() == "kind: mixin\n"
+
+
+def test_gen_says_what_it_wrote_and_what_it_kept(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    box.generate(tmp_path)
+    box.generate(tmp_path)
+    assert f"kept    {box.KIT_SPEC_FILE}" in capsys.readouterr().out
 
 
 def test_gen_keeps_an_existing_config(tmp_path: Path) -> None:

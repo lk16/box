@@ -27,6 +27,10 @@ MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
 DEPS_DIR = f"{BOX_DIR}/deps"
 GITIGNORE_FILE = ".gitignore"
 
+# The sandbox's network policy, which sbx reads from the directory holding a spec.yaml.
+KIT_DIR = f"{BOX_DIR}/kit"
+KIT_SPEC_FILE = f"{KIT_DIR}/spec.yaml"
+
 # What box gen writes where it cannot know the path, so an unfilled mount fails loudly.
 MOUNT_PLACEHOLDER = "/placeholder/for/real/path"
 
@@ -85,14 +89,15 @@ better.
 Commit subjects:"""
 
 NO_CONFIG_HELP = f"""this project has no {CONFIG_FILE}, so box has no settings to run with.
-Run box gen to write a starter one, then fill in kit and model."""
+Run box gen to write a starter one, then name a model in it."""
 
 KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
-Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
+Point it at a kit directory holding a spec.yaml in {CONFIG_FILE} or with --kit; box gen writes a
+starter one at {KIT_SPEC_FILE} and points kit at it."""
 
-KIT_FILE_HELP = """kit names a file, and sbx reads anything that is not a directory as a zip
-artifact. Point it at the directory holding spec.yaml, e.g. .sbx/kit rather than
-.sbx/kit/spec.yaml."""
+KIT_FILE_HELP = f"""kit names a file, and sbx reads anything that is not a directory as a zip
+artifact. Point it at the directory holding spec.yaml, e.g. {KIT_DIR} rather than
+{KIT_SPEC_FILE}."""
 
 MODEL_HELP = f"""model is not set, so the sandbox's own Claude version would pick the model.
 That version need not match the one on this host. Name the model in {CONFIG_FILE} or with --model."""
@@ -148,6 +153,22 @@ allowed rather than working around it.
 If you cannot reasonably finish the task, stop, state concisely what is
 blocking you, and suggest a solution -- do not keep flailing."""
 
+# The network policy box gen writes, kept here with BASE_PROMPT so one script stays the whole of box.
+STARTER_KIT_SPEC = """# A starting point rather than a finished policy: the agent's own API calls,
+# and nothing else. Add a host for every dependency the project's checks fetch, or mount a warmed
+# cache and keep them offline. Whatever is missing here is a 403 in the sandbox, not a bug.
+schemaVersion: "2"
+kind: mixin
+name: {name}-network-policy
+displayName: {name} network policy
+description: The agent's own API calls and nothing else
+
+caps:
+  network:
+    allow:
+      - api.anthropic.com:443
+"""
+
 # The one config key that is not a setting, so it is the one key whose value is not a string.
 REQUIRED_MOUNTS = "required_mounts"
 
@@ -173,6 +194,9 @@ DEFAULTS: dict[str, object] = {
     "kit": "",
     REQUIRED_MOUNTS: {},
 }
+
+# What box gen writes: every default, with kit pointed at the policy it writes alongside.
+STARTER_CONFIG: dict[str, object] = {**DEFAULTS, "kit": KIT_DIR}
 
 
 class ConfigError(Exception):
@@ -878,8 +902,24 @@ def write_starter_config(path: Path) -> None:
     if path.exists():
         print(f"kept    {CONFIG_FILE}")
         return
-    path.write_text(to_json(DEFAULTS))
+    path.write_text(to_json(STARTER_CONFIG))
     print(f"written {CONFIG_FILE}")
+
+
+def build_kit_spec(base_name: str) -> str:
+    """Render the starter network policy, named after the project it belongs to."""
+    return STARTER_KIT_SPEC.format(name=base_name)
+
+
+def write_starter_kit(working_directory: Path) -> None:
+    """Write a policy allowing the agent's own API calls, unless the project already has one."""
+    path = working_directory / KIT_SPEC_FILE
+    if path.exists():
+        print(f"kept    {KIT_SPEC_FILE}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(build_kit_spec(default_base_name(working_directory)))
+    print(f"written {KIT_SPEC_FILE}")
 
 
 def fill_mounts(required: dict[str, str], provided: dict[str, str]) -> dict[str, str]:
@@ -928,6 +968,7 @@ def generate(working_directory: Path) -> int:
     """Write a starter .box directory, adding what is missing and keeping what is filled in."""
     (working_directory / BOX_DIR).mkdir(exist_ok=True)
     write_starter_config(working_directory / CONFIG_FILE)
+    write_starter_kit(working_directory)
     write_mounts(working_directory, read_required_mounts(working_directory))
     make_deps_dir(working_directory)
     ignore_local_paths(working_directory)

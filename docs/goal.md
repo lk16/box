@@ -74,6 +74,11 @@ and `box self-update` writes the published `box.py` over the running one.
   container gets a clone and a clone has no ignored files.
 - Refuse to run while `.box/mounts.json` or `.box/deps/` exists and `git check-ignore` says it is
   not ignored. One carries a machine's paths into every clone, the other its binaries.
+- `box gen` writes a starter kit at `.box/kit/spec.yaml` and points `kit` at it, since a hand-written
+  network policy is the biggest step in setting box up and "the agent's own API calls and nothing
+  else" is where most projects start. It says in the file that it is a starting point, and holds only
+  the few fields box is sure of, because the schema is sbx's and can drift. It lives under `.box/`
+  like everything else box writes; box's own kit predates it and stays in `.sbx/kit`.
 - `box gen` never changes a value that is already there, so re-running it cannot lose a config or
   a path someone filled in. It adds declared mount names the file is missing, as placeholders it
   warns about, which is how a machine picks up a mount declared after it was set up. It takes no
