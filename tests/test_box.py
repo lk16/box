@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import re
 import subprocess
 import sys
@@ -1130,12 +1131,12 @@ def test_gen_leaves_an_existing_deps_dir_alone(tmp_path: Path) -> None:
 
 
 def test_the_prompt_offers_the_deps_dir_when_nothing_here_fits() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
     assert f"{box.DEPS_DIR}/" in prompt
 
 
 def test_the_prompt_says_the_sandbox_runs_linux_whatever_this_machine_runs() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
     assert "The sandbox runs Linux" in prompt
 
 
@@ -1476,26 +1477,26 @@ def test_mount_prompt_takes_no_flags() -> None:
 
 def test_the_prompt_carries_the_names_and_descriptions() -> None:
     required = {"go": "the Go toolchain", "cargo": "the cargo home"}
-    prompt = box.build_mount_prompt(required, ["go", "cargo"], "darwin")
+    prompt = box.build_mount_prompt(required, ["go", "cargo"], "darwin arm64")
     assert "go: the Go toolchain" in prompt
     assert "cargo: the cargo home" in prompt
 
 
-def test_the_prompt_names_the_file_the_placeholder_and_the_platform() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
+def test_the_prompt_names_the_file_the_placeholder_and_the_host() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
     assert box.MOUNTS_FILE in prompt
     assert box.MOUNT_PLACEHOLDER in prompt
-    assert "darwin" in prompt
+    assert "darwin arm64" in prompt
 
 
 def test_the_prompt_holds_the_rules_box_enforces() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64")
     assert ":rw" in prompt
     assert "Never guess" in prompt
 
 
 def test_the_prompt_covers_a_key_that_is_not_in_the_file_yet() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64")
     assert "adding the key where it is missing" in prompt
 
 
@@ -1812,12 +1813,16 @@ def test_setup_command_runs_mount_prompt(tmp_path: Path, capsys: pytest.CaptureF
     assert not (tmp_path / box.MOUNTS_FILE).exists()
 
 
-def test_mount_prompt_names_the_platform_this_machine_runs(
+def test_mount_prompt_names_the_platform_and_architecture_this_machine_runs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
     box.mount_prompt(tmp_path)
-    assert sys.platform in capsys.readouterr().out
+    assert box.host_description() in capsys.readouterr().out
+
+
+def test_the_host_description_holds_the_platform_and_the_architecture() -> None:
+    assert box.host_description() == f"{sys.platform} {platform.machine()}"
 
 
 class FakeDownload:

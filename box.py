@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
 import subprocess
@@ -914,9 +915,14 @@ def read_required_mounts(working_directory: Path) -> dict[str, str]:
     return as_descriptions(values.get(REQUIRED_MOUNTS, {}))
 
 
-def build_mount_prompt(required: dict[str, str], names: list[str], platform: str) -> str:
+def host_description() -> str:
+    """Name what a build has to match: the platform and the architecture, never one alone."""
+    return f"{sys.platform} {platform.machine()}"
+
+
+def build_mount_prompt(required: dict[str, str], names: list[str], host: str) -> str:
     """Render the prompt that has an agent on this host fill in the mounts file."""
-    return f"""Fill in {MOUNTS_FILE} for this machine, which runs {platform}.
+    return f"""Fill in {MOUNTS_FILE} for this machine, which runs {host}.
 
 Give each of these a path, adding the key where it is missing and replacing
 {MOUNT_PLACEHOLDER} where it is already there:
@@ -941,7 +947,7 @@ def mount_prompt(working_directory: Path) -> int:
     if not names:
         print(f"every mount in {MOUNTS_FILE} already has a path", file=sys.stderr)
         return 0
-    print(build_mount_prompt(required, names, sys.platform))
+    print(build_mount_prompt(required, names, host_description()))
     return 0
 
 

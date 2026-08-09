@@ -165,8 +165,8 @@ box mount-prompt | claude
 ```
 
 The prompt names every declared mount that has no path yet, with its description and the platform
-it is running on. Pipe it into an **interactive** session: this agent runs on your
-machine rather than in a sandbox, so its commands and its diff belong in front of you to approve.
+and architecture a build has to match. Pipe it into an **interactive** session: this agent runs on
+your machine rather than in a sandbox, so its commands and its diff belong in front of you to approve.
 It is told to probe for each path and check it exists rather than guess, to say which it could not
 find, and — where nothing here fits, since the sandbox runs Linux whatever you run — to download a
 suitable build into `.box/deps/` and point the mount there.
