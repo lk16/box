@@ -26,8 +26,9 @@ echo "alias box='~/.local/bin/box.py'" >> ~/.bashrc      # or ~/.zshrc
 ```
 
 Re-run the same `curl` to update. One copy serves every project, so do not commit `box.py` into
-your repositories. Every command checks whether the published copy differs from yours, at most
-once an hour, and prints the `curl` to take it in red on stderr when it does.
+your repositories. box checks whether the published copy differs from yours at most once an hour,
+and the run that checks prints the `curl` to take it in red on stderr when it does, so the notice
+comes back hourly rather than on every command.
 
 ## Use
 

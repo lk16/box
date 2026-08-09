@@ -731,31 +731,31 @@ def test_file_hash_differs_on_different_bytes(tmp_path: Path) -> None:
     assert box.file_hash(first) != box.file_hash(second)
 
 
-def test_a_stored_hash_is_read_back_while_fresh(tmp_path: Path) -> None:
+def test_a_stored_check_time_is_fresh(tmp_path: Path) -> None:
     path = tmp_path / "update-check.json"
-    box.store_remote_hash(path, "abc123", 1000.0)
-    assert box.cached_remote_hash(path, 1000.0) == "abc123"
+    box.store_check_time(path, 1000.0)
+    assert box.checked_recently(path, 1000.0)
 
 
-def test_a_stored_hash_expires(tmp_path: Path) -> None:
+def test_a_stored_check_time_expires(tmp_path: Path) -> None:
     path = tmp_path / "update-check.json"
-    box.store_remote_hash(path, "abc123", 1000.0)
-    assert box.cached_remote_hash(path, 1000.0 + box.UPDATE_INTERVAL_SECONDS + 1) == ""
+    box.store_check_time(path, 1000.0)
+    assert not box.checked_recently(path, 1000.0 + box.UPDATE_INTERVAL_SECONDS + 1)
 
 
-def test_a_missing_cache_reads_as_nothing(tmp_path: Path) -> None:
-    assert box.cached_remote_hash(tmp_path / "absent.json", 1000.0) == ""
+def test_a_missing_cache_reads_as_never_checked(tmp_path: Path) -> None:
+    assert not box.checked_recently(tmp_path / "absent.json", 1000.0)
 
 
-def test_a_broken_cache_reads_as_nothing(tmp_path: Path) -> None:
+def test_a_broken_cache_reads_as_never_checked(tmp_path: Path) -> None:
     path = tmp_path / "update-check.json"
     path.write_text("{not json")
-    assert box.cached_remote_hash(path, 1000.0) == ""
+    assert not box.checked_recently(path, 1000.0)
 
 
-def test_store_remote_hash_creates_the_cache_directory(tmp_path: Path) -> None:
+def test_store_check_time_creates_the_cache_directory(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "update-check.json"
-    box.store_remote_hash(path, "abc123", 1000.0)
+    box.store_check_time(path, 1000.0)
     assert path.is_file()
 
 
@@ -763,12 +763,6 @@ def test_no_update_message_when_the_hashes_match(tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
     assert box.update_message(script, box.file_hash(script)) == ""
-
-
-def test_no_update_message_without_a_remote_hash(tmp_path: Path) -> None:
-    script = tmp_path / "box.py"
-    script.write_text("print()")
-    assert box.update_message(script, "") == ""
 
 
 def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> None:
@@ -800,6 +794,24 @@ def test_warn_when_outdated_stays_silent_when_the_check_fails(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_warn_when_outdated_warns_at_most_once_an_hour(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    fetches = []
+
+    def fetch() -> str:
+        fetches.append("a-different-hash")
+        return "a-different-hash"
+
+    monkeypatch.setattr(box, "fetch_remote_hash", fetch)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    box.warn_when_outdated()
+    assert box.UPDATE_URL in capsys.readouterr().err
+    box.warn_when_outdated()
+    assert capsys.readouterr().err == ""
+    assert fetches == ["a-different-hash"]
 
 
 def test_a_command_is_required() -> None:
