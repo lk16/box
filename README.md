@@ -32,32 +32,33 @@ login bash:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-To update, run `box self-update`. box says one is waiting on stderr, at most once an hour, when the
-published copy differs from yours — in red on a terminal, as plain text into a pipe or with
-`NO_COLOR` set. A copy git tracks is left alone, and `self-update` refuses one outright, so working
-on box itself never overwrites your own changes. A fork points both at its own copy with
-`BOX_UPDATE_URL`, and setting that variable to nothing switches the check off.
+To update, run `box self-update`. When box runs, it checks if an update is available. It does so at
+most once an hour.
 
 ## Quick start
 
-Run everything from the root of the repository you want an agent to work on:
+Run everything from the root of the repository you want an agent to work on.
 
-```sh
-box gen                    # writes .box/ and the .gitignore lines box needs
-$EDITOR .box/config.json   # fill in model; gen wrote the kit it points at
-export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
-box mount-prompt | claude  # only if the project declares required_mounts
-box config                 # the settings, plus every check a run makes
-box run                    # start the sandbox
-```
+Per machine, so every clone does these again:
+
+- `export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token` — set it with
+  [direnv](https://direnv.net/) and it follows the checkout
+- `box mount-prompt | claude` — only if the project declares `required_mounts`
+
+Once for everyone, committed with the project:
+
+- `box gen` — writes `.box/` and the `.gitignore` lines box needs
+- `$EDITOR .box/config.json` — fill in `model`; `gen` wrote the kit it points at
+
+Every run:
+
+- `box config` — the settings, plus every check a run makes
+- `box run` — start the sandbox
 
 `box run` drops you into an interactive Claude session inside the sandbox: type the task at its
 prompt. The built-in prompt tells the agent to make assumptions and keep going rather than stop on
 a question, since you may well walk away — but the session is interactive, so you can watch what
 it does and step in.
-
-`.box/config.json` and the kit are committed once for everyone. The token and the mount paths are
-per machine, so every clone does those two again.
 
 ## Commands
 
