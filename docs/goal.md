@@ -36,7 +36,8 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   stderr so a piped stdout stays clean, in red only when stderr is a terminal and `NO_COLOR` is
   unset, since a pipe or a log file would otherwise be handed the escape codes as characters. box
   follows XDG on macOS as well as on Linux, the way uv, ruff, pip and gh do, rather than splitting
-  the cache path per platform. Every failure is swallowed: an unreachable GitHub, a broken cache or
+  the cache path per platform. `BOX_UPDATE_URL` names the copy to compare with, so a fork or a
+  vendored copy is not nagged about box's own `main`, and an empty value costs no round trip at all. Every failure is swallowed: an unreachable GitHub, a broken cache or
   a missing home directory must never stop a command that would otherwise work.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
   Its `version` is inert -- uv refuses a `[project]` table without one -- and says nothing about

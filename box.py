@@ -36,6 +36,9 @@ SETUP_COMMANDS = ("gen", "mount-prompt")
 
 # box.py has no version, so being current means hashing the same as the published copy.
 UPDATE_URL = "https://raw.githubusercontent.com/lk16/box/main/box.py"
+
+# How a fork points the check at its own copy, or switches it off by setting it to nothing.
+UPDATE_URL_ENV = "BOX_UPDATE_URL"
 UPDATE_INTERVAL_SECONDS = 60 * 60
 UPDATE_TIMEOUT_SECONDS = 2
 
@@ -983,9 +986,14 @@ def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fetch_remote_hash() -> str:
+def update_url() -> str:
+    """Where the published box.py lives, which a fork or a vendored copy can point elsewhere."""
+    return os.environ.get(UPDATE_URL_ENV, UPDATE_URL)
+
+
+def fetch_remote_hash(url: str) -> str:
     """Hash the published box.py."""
-    with urllib.request.urlopen(UPDATE_URL, timeout=UPDATE_TIMEOUT_SECONDS) as response:
+    with urllib.request.urlopen(url, timeout=UPDATE_TIMEOUT_SECONDS) as response:
         return hashlib.sha256(response.read()).hexdigest()
 
 
@@ -1020,20 +1028,24 @@ def in_red(text: str) -> str:
     return f"{RED}{text}{RESET}"
 
 
-def update_message(script_path: Path, remote_hash: str) -> str:
+def update_message(script_path: Path, remote_hash: str, url: str) -> str:
     """Say an update is available, and how to take it, when this copy is not the published one."""
     if remote_hash == file_hash(script_path):
         return ""
     if not os.access(script_path, os.W_OK):
         return in_red(f"An update to box is available, but {script_path} is not writable by you.")
     quoted = shlex.quote(str(script_path))
-    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {quoted} {UPDATE_URL}"
+    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {quoted} {url}"
     return in_red(take_it)
 
 
 def warn_when_outdated() -> None:
     """Mention a newer box on stderr once an hour, staying silent about anything that goes wrong."""
     try:
+        url = update_url()
+        # An empty URL is a copy that has nowhere to compare itself with, so there is nothing to say.
+        if not url:
+            return
         script_path = Path(__file__).resolve()
         # A checked out box.py is being worked on, and its own changes are what differ from main.
         if is_tracked_by_git(script_path):
@@ -1044,7 +1056,7 @@ def warn_when_outdated() -> None:
             return
         # A failed check is still a check, so the hour it buys must not depend on GitHub answering.
         store_check_time(path, now)
-        message = update_message(script_path, fetch_remote_hash())
+        message = update_message(script_path, fetch_remote_hash(url), url)
     except Exception:
         return
     if message:

@@ -1265,13 +1265,13 @@ def test_store_check_time_creates_the_cache_directory(tmp_path: Path) -> None:
 def test_no_update_message_when_the_hashes_match(tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
-    assert box.update_message(script, box.file_hash(script)) == ""
+    assert box.update_message(script, box.file_hash(script), box.UPDATE_URL) == ""
 
 
 def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
-    message = box.update_message(script, "a-different-hash")
+    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
     assert str(script) in message
     assert box.UPDATE_URL in message
     assert "curl" in message
@@ -1280,7 +1280,7 @@ def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> Non
 def test_the_update_message_quotes_a_path_holding_a_space(tmp_path: Path) -> None:
     script = tmp_path / "my box.py"
     script.write_text("print()")
-    message = box.update_message(script, "a-different-hash")
+    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
     assert f"'{script}'" in message
 
 
@@ -1288,7 +1288,7 @@ def test_the_update_message_says_when_the_script_cannot_be_written(tmp_path: Pat
     script = tmp_path / "box.py"
     script.write_text("print()")
     script.chmod(0o444)
-    message = box.update_message(script, "a-different-hash")
+    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
     assert "not writable by you" in message
     assert "curl" not in message
 
@@ -1342,7 +1342,7 @@ def test_the_update_message_is_red_on_a_terminal(monkeypatch: pytest.MonkeyPatch
     script = tmp_path / "box.py"
     script.write_text("print()")
     use_a_terminal(monkeypatch, terminal=True)
-    message = box.update_message(script, "a-different-hash")
+    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
     assert message.startswith(box.RED)
     assert message.endswith(box.RESET)
 
@@ -1353,19 +1353,43 @@ def test_the_update_message_carries_no_escape_codes_into_a_pipe(
     script = tmp_path / "box.py"
     script.write_text("print()")
     use_a_terminal(monkeypatch, terminal=False)
-    assert box.RED not in box.update_message(script, "a-different-hash")
+    assert box.RED not in box.update_message(script, "a-different-hash", box.UPDATE_URL)
 
 
 def use_an_installed_copy(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
     """Make the update check see the copy it exists for: an installed one, with its own cache."""
     monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    monkeypatch.delenv(box.UPDATE_URL_ENV, raising=False)
+
+
+def test_the_update_url_is_box_own_published_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(box.UPDATE_URL_ENV, raising=False)
+    assert box.update_url() == box.UPDATE_URL
+
+
+def test_a_fork_can_point_the_update_check_at_its_own_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(box.UPDATE_URL_ENV, "https://example.com/box.py")
+    assert box.update_url() == "https://example.com/box.py"
+
+
+def test_an_empty_update_url_checks_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    def explode(url: str) -> str:
+        raise AssertionError("a copy with no update URL must not be compared with anything")
+
+    use_an_installed_copy(monkeypatch, tmp_path)
+    monkeypatch.setenv(box.UPDATE_URL_ENV, "")
+    monkeypatch.setattr(box, "fetch_remote_hash", explode)
+    box.warn_when_outdated()
+    assert capsys.readouterr().err == ""
 
 
 def test_warn_when_outdated_stays_silent_when_the_check_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    def explode() -> str:
+    def explode(url: str) -> str:
         raise OSError("no network")
 
     use_an_installed_copy(monkeypatch, tmp_path)
@@ -1382,7 +1406,7 @@ def test_warn_when_outdated_survives_a_cache_it_cannot_write(
     unwritable = tmp_path / "cache"
     unwritable.write_text("not a directory")
     use_an_installed_copy(monkeypatch, unwritable)
-    monkeypatch.setattr(box, "fetch_remote_hash", lambda: "a-different-hash")
+    monkeypatch.setattr(box, "fetch_remote_hash", lambda url: "a-different-hash")
     box.warn_when_outdated()
     assert capsys.readouterr().err == ""
 
@@ -1392,7 +1416,7 @@ def test_warn_when_outdated_records_a_check_that_failed(
 ) -> None:
     fetches: list[str] = []
 
-    def explode() -> str:
+    def explode(url: str) -> str:
         fetches.append("tried")
         raise OSError("no network")
 
@@ -1406,7 +1430,7 @@ def test_warn_when_outdated_records_a_check_that_failed(
 def test_warn_when_outdated_says_nothing_about_a_checked_out_box(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    def explode() -> str:
+    def explode(url: str) -> str:
         raise AssertionError("a checked out box.py must not be compared with the published one")
 
     monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: True)
@@ -1431,7 +1455,7 @@ def test_warn_when_outdated_warns_at_most_once_an_hour(
 ) -> None:
     fetches = []
 
-    def fetch() -> str:
+    def fetch(url: str) -> str:
         fetches.append("a-different-hash")
         return "a-different-hash"
 
@@ -1894,7 +1918,7 @@ def test_fetch_remote_hash_hashes_what_the_update_url_serves(monkeypatch: pytest
         return FakeDownload(b"print()")
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    assert box.fetch_remote_hash() == hashlib.sha256(b"print()").hexdigest()
+    assert box.fetch_remote_hash(box.UPDATE_URL) == hashlib.sha256(b"print()").hexdigest()
     assert seen == {"url": box.UPDATE_URL, "timeout": box.UPDATE_TIMEOUT_SECONDS}
 
 
