@@ -42,6 +42,10 @@ UPDATE_TIMEOUT_SECONDS = 2
 # The update notice competes with whatever the agent prints, so it is coloured to stand out.
 RED = "\033[31m"
 RESET = "\033[0m"
+
+# What a reader of plain text asks for, and every other tool honours: no escape codes at all.
+NO_COLOUR_ENV = "NO_COLOR"
+
 SECRET_HOST = "api.anthropic.com"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
@@ -1006,15 +1010,25 @@ def is_tracked_by_git(script_path: Path) -> bool:
     return succeeds(command)
 
 
+def in_red(text: str) -> str:
+    """Colour a notice red, unless stderr is no terminal or NO_COLOR asked for plain text."""
+    if os.environ.get(NO_COLOUR_ENV, ""):
+        return text
+    # A pipe, a log file or a CI capture would otherwise be handed the escape codes as characters.
+    if not sys.stderr.isatty():
+        return text
+    return f"{RED}{text}{RESET}"
+
+
 def update_message(script_path: Path, remote_hash: str) -> str:
     """Say an update is available, and how to take it, when this copy is not the published one."""
     if remote_hash == file_hash(script_path):
         return ""
     if not os.access(script_path, os.W_OK):
-        return f"{RED}An update to box is available, but {script_path} is not writable by you.{RESET}"
+        return in_red(f"An update to box is available, but {script_path} is not writable by you.")
     quoted = shlex.quote(str(script_path))
     take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {quoted} {UPDATE_URL}"
-    return f"{RED}{take_it}{RESET}"
+    return in_red(take_it)
 
 
 def warn_when_outdated() -> None:

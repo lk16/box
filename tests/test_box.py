@@ -1305,12 +1305,55 @@ def test_a_cache_holding_a_check_time_that_is_not_a_number_reads_as_never_checke
     assert not box.checked_recently(path, 1000.0)
 
 
-def test_the_update_message_is_red(tmp_path: Path) -> None:
+class FakeStderr:
+    """Stand in for sys.stderr, which is what decides whether a notice is coloured."""
+
+    def __init__(self, *, terminal: bool) -> None:
+        self.terminal = terminal
+
+    def isatty(self) -> bool:
+        """Say whether this stream is a terminal, which is the one thing in_red asks it."""
+        return self.terminal
+
+
+def use_a_terminal(monkeypatch: pytest.MonkeyPatch, terminal: bool) -> None:
+    """Point stderr at a terminal or at a pipe, with no NO_COLOR in the environment either way."""
+    monkeypatch.delenv(box.NO_COLOUR_ENV, raising=False)
+    monkeypatch.setattr(sys, "stderr", FakeStderr(terminal=terminal))
+
+
+def test_a_notice_is_red_on_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_a_terminal(monkeypatch, terminal=True)
+    assert box.in_red("an update") == f"{box.RED}an update{box.RESET}"
+
+
+def test_a_notice_is_plain_text_when_stderr_is_not_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_a_terminal(monkeypatch, terminal=False)
+    assert box.in_red("an update") == "an update"
+
+
+def test_a_notice_is_plain_text_when_no_color_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_a_terminal(monkeypatch, terminal=True)
+    monkeypatch.setenv(box.NO_COLOUR_ENV, "1")
+    assert box.in_red("an update") == "an update"
+
+
+def test_the_update_message_is_red_on_a_terminal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
+    use_a_terminal(monkeypatch, terminal=True)
     message = box.update_message(script, "a-different-hash")
     assert message.startswith(box.RED)
     assert message.endswith(box.RESET)
+
+
+def test_the_update_message_carries_no_escape_codes_into_a_pipe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    use_a_terminal(monkeypatch, terminal=False)
+    assert box.RED not in box.update_message(script, "a-different-hash")
 
 
 def use_an_installed_copy(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:

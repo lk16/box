@@ -31,9 +31,10 @@ login bash:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Re-run the same `curl` to update. box prints it in red on stderr, at most once an hour, when the
-published copy differs from yours. A copy git tracks is left alone, so working on box itself never
-nags you to overwrite your own changes.
+Re-run the same `curl` to update. box prints it on stderr, at most once an hour, when the published
+copy differs from yours — in red on a terminal, as plain text into a pipe or with `NO_COLOR` set. A
+copy git tracks is left alone, so working on box itself never nags you to overwrite your own
+changes.
 
 ## Quick start
 

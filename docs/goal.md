@@ -32,10 +32,12 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   one exception: it hashes the script's own file, which is the only thing it can compare.
 - box.py carries no version, so being current means hashing the same as the published copy. A
   timestamp under `XDG_CACHE_HOME` keeps the hour after a check quiet, so the notice appears as
-  often as the check does and no more: an alert on every command is noise, not news. It prints in
-  red on stderr so a piped stdout stays clean, and swallows every failure -- an unreachable
-  GitHub, a broken cache or a missing home directory must never stop a command that would
-  otherwise work.
+  often as the check does and no more: an alert on every command is noise, not news. It prints on
+  stderr so a piped stdout stays clean, in red only when stderr is a terminal and `NO_COLOR` is
+  unset, since a pipe or a log file would otherwise be handed the escape codes as characters. box
+  follows XDG on macOS as well as on Linux, the way uv, ruff, pip and gh do, rather than splitting
+  the cache path per platform. Every failure is swallowed: an unreachable GitHub, a broken cache or
+  a missing home directory must never stop a command that would otherwise work.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
   Its `version` is inert -- uv refuses a `[project]` table without one -- and says nothing about
   box, which has no version at all.
