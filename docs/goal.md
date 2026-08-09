@@ -27,6 +27,11 @@ and `box self-update` writes the published `box.py` over the running one.
 
 ## Constraints
 
+[README.md](../README.md) is where what box does is written down, for the people who use it. This
+file says why, and is the authority when the two disagree. So a rule the README spells out — the
+settings table, the mount contract, what a run hands back — is here as the reason for it rather than
+as a second copy of the mechanics, which is how the two came to disagree about a timeout once.
+
 - All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS. The shebang
   takes whatever `python3` comes first, which on a stock macOS is Xcode's 3.9, so box names the
   version it needs and stops rather than running on something older and breaking somewhere obscure.
@@ -42,11 +47,12 @@ and `box self-update` writes the published `box.py` over the running one.
   follows XDG on macOS as well as on Linux, the way uv, ruff, pip and gh do, rather than splitting
   the cache path per platform. `BOX_UPDATE_URL` names the copy to compare with, so a fork or a
   vendored copy is not nagged about box's own `main`, and an empty value costs no round trip at all.
+  Every failure is swallowed: an unreachable GitHub, a broken cache or a missing home directory must
+  never stop a command that would otherwise work.
 - `box self-update` takes the update the check found, since the alternative is a `curl` line to
   copy. It writes beside the running script and moves the new copy over it, so a failed download or
   a directory it cannot write leaves the working box exactly as it was, and it refuses a `box.py`
-  git tracks: that copy is someone's work in progress, and git is how it is updated. Every failure is swallowed: an unreachable GitHub, a broken cache or
-  a missing home directory must never stop a command that would otherwise work.
+  git tracks: that copy is someone's work in progress, and git is how it is updated.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
   Its `version` is inert -- uv refuses a `[project]` table without one -- and says nothing about
   box, which has no version at all.
@@ -57,16 +63,16 @@ and `box self-update` writes the published `box.py` over the running one.
 - Everything box writes to a project lives under `.box/`, apart from the `.gitignore` lines it
   needs, so a project has one box footprint rather than a scatter of dotfiles at its root. It
   reads two things from outside it: the `prompt_file` at whatever path names it, and the `kit`.
-- Mounts are declared and supplied separately. `required_mounts` in `.box/config.json` names what
-  the project needs and describes what belongs there; `.box/mounts.json` gives each of those names
-  a path on this machine. The two must match exactly: a declared name with no path, or a path
-  still holding `MOUNT_PLACEHOLDER`, is an error naming the mount and its description, and a name
-  the project does not declare is an error the way an unknown config key is.
+- Mounts are declared and supplied separately, because what a project needs is the same everywhere
+  and where it sits is not. The two must match exactly, rather than a missing path being skipped,
+  since a mount that is quietly absent becomes a failure inside the sandbox with nothing pointing
+  back here, and a name nobody declared is a typo. The contract itself is in the README.
 - Mounts reach `sbx` in declaration order, so the arguments do not depend on how one machine
   ordered its file.
 - `:rw` belongs on the path in `.box/mounts.json` and never in the declaration. Whoever owns the
   machine decides what the agent may write to; a description may ask for write access, but
-  nothing enforces it.
+  nothing enforces it. Read-only is the default everywhere, so write access to the host is always
+  something that was asked for.
 - `.box/deps/` holds what this machine cannot supply, such as a Linux toolchain on macOS, since
   the sandbox runs Linux whatever the host runs and there is nowhere natural on the host for a
   build that exists only to be mounted. box creates and ignores it; box never downloads into it.
@@ -99,7 +105,13 @@ and `box self-update` writes the published `box.py` over the running one.
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.
 - `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
-  one project belongs in that project's `prompt_file`.
+  one project belongs in that project's `prompt_file`, and anything about one machine or one host
+  operating system belongs nowhere: the sandbox is Linux, but where a host directory is mounted is
+  not something the prompt can assert.
+- `BASE_PROMPT` tells the agent it is unattended while `box run` opens an *interactive* session, and
+  both are deliberate. The session is interactive so the user can watch what the agent does and step
+  in; the prompt tells it to assume and keep going because the user may well walk away, and an agent
+  waiting on a question they never see wastes the whole run.
 - Never remove a sandbox that holds uncommitted work. Its refs are left as they are too, since
   the run is not over: the work is fetched again once the sandbox is clean.
 - A `refs/sandboxes/*` ref is where the fetch lands, not where work is left. A ref holding
@@ -111,8 +123,6 @@ and `box self-update` writes the published `box.py` over the running one.
 - The branch name is the last line `claude` printed, kebab-cased and cut to five words, so a model
   that answers with a sentence still produces a name rather than an error. A name the repository
   already has takes a `-2`, `-3` suffix, since a fetched commit must never overwrite a branch.
-- Extra mounts are read-only unless the user appends `:rw`, so write access to the host is
-  always something that was asked for.
 - A directory git does not read as a repository, or a repository with no commits, is an error
   naming what to do about it. `sbx create --clone` clones the working directory, so neither gives
   the agent anything to work from, and the second leaves every fetched ref with no HEAD to settle
