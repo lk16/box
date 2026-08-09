@@ -2,16 +2,19 @@
 
 A full review of box: `box.py`, its tests, its documentation, its CI and how it is published.
 Findings are numbered once, continuously, and grouped by area. Each one says what is wrong, where,
-and what to do about it. Nothing here has been changed in the code — this is the list to work from.
+and what to do about it, and carries a **Done** line once it has been dealt with.
 
 Verified against the working tree at commit `ba1b932`, with `ruff`, `ruff format --check`,
-`mypy --strict` and `pytest` (159 tests) all passing beforehand.
+`mypy --strict` and `pytest` (159 tests) all passing beforehand. Line numbers therefore point at
+that commit, not at the file as it stands now.
 
-**Read this first.** The findings worth acting on before anything else are
-[1](#1) (cleanup can delete committed work), [2](#2) and [3](#3) (validation holes and a
-traceback), [5](#5) (the update check never rate-limits failures), [41](#41) (the README never
-says how you give the agent a task), and [45](#45)–[49](#49) (the macOS CI leg proves almost
-nothing). The rest are worth doing but nothing breaks while they wait.
+**State.** Findings [1](#1)–[39](#39) and [70](#70)–[90](#90) are done: every bug and
+simplification in `box.py`, every contradiction between the docs and the code, and every gap and
+smell in the tests, which now number 255. Still open, in the order they are worth doing:
+[41](#41) (the README never says how you give the agent a task), [45](#45)–[49](#49) (the macOS
+CI leg proves almost nothing, and seven pre-commit hooks run only on one machine), [55](#55) and
+[57](#57) (`BASE_PROMPT` and the mount prompt assume one machine's layout), and the rest of
+sections 4, 6, 8, 9 and 10.
 
 ---
 
@@ -29,6 +32,8 @@ one outcome `docs/goal.md:81` says must never happen.
 **Fix:** run both with `subprocess.run(..., check=False)` and inspect `returncode`. Anything
 non-zero must take the `warn_dirty` path — keep the sandbox, print recovery steps — rather than
 falling through to removal. "I could not tell" and "it is clean" must not be the same value.
+
+**Done.**
 
 ### 2
 **Non-string values in `.box/config.json` are coerced into garbage that passes validation.**
@@ -50,6 +55,8 @@ directory name.
 `required_mounts` a dict — and raise a `ConfigError` naming the key. That also lets `build_config`
 drop all nine `str()` calls, so the fix shortens the file.
 
+**Done.**
+
 ### 3
 **A missing `sbx` exits with a traceback.** `box.py:344-349`. `capture` catches a non-zero exit
 but not `OSError`, so on a machine without `sbx` on `PATH` the first thing `box run` does is die:
@@ -68,6 +75,8 @@ sees, and it contradicts `docs/goal.md:97` ("no traceback in front of the reason
 **Fix:** `except OSError: return ""` in `capture`, and turn a failed `store_secret` into a
 `ConfigError`. See also [99](#99) for checking the three required binaries up front.
 
+**Done.**
+
 ### 4
 **`to_workspace` turns a degenerate mount into a read-write mount of the current directory.**
 `box.py:269-276`. Verified: `to_workspace(":rw")` returns `"."` — the project bind-mounted
@@ -76,6 +85,8 @@ prevent — and `to_workspace("")` returns `".:ro"`. The `endswith(":rw")` test 
 colon guard, so `/data/a:b:rw` passes a colon-containing path straight to `sbx`.
 **Fix:** reject an empty mount, and an empty remainder after stripping `:rw`, with a
 `ConfigError`; apply the `":" in path` check to the stripped remainder as well.
+
+**Done.**
 
 ### 5
 **A failed update check is never recorded, so the quiet hour only covers successes.**
@@ -88,6 +99,8 @@ the notice should appear "as often as the check does and no more"; a failed chec
 check.
 **Fix:** move `store_check_time(path, now)` above `fetch_remote_hash()`.
 
+**Done.**
+
 ### 6
 **`read_token` strips only `\n`.** `box.py:378-382`. A token file written on Windows, or saved
 with a trailing space, yields `"sk-ant-…\r"` or `"…  "`, which is stored verbatim as the sbx
@@ -96,6 +109,8 @@ auth error a long way from the cause. A whitespace-only file also passes the `st
 and stores a blank token.
 **Fix:** `path.read_text().strip()`, and raise `ConfigError` when the result is empty. The
 existing test at `tests/test_box.py:552` still passes.
+
+**Done.**
 
 ### 7
 **`require_no_flags` names a flag that does not exist.** `box.py:668-684`. Verified:
@@ -111,12 +126,16 @@ asserts the wrong string, so it locks the bug in.
 **Fix:** map dest to option string for `mounts`, and update the test to assert `--mount`. This
 also removes the contradiction with `docs/style.md:24-26` — see [30](#30).
 
+**Done.**
+
 ### 8
 **Ctrl-C ends a run with a traceback.** `box.py:648-665`, `box.py:880-897`. The `finally: cleanup`
 is correct and does run, but nothing catches `KeyboardInterrupt`, so the user sees a traceback
 after it. A second Ctrl-C during cleanup aborts it half-way, leaving both the secret and the
 sandbox behind.
 **Fix:** `except KeyboardInterrupt: return 130` around the `main()` call, with a one-line message.
+
+**Done.**
 
 ### 9
 **An unborn HEAD makes every fetched ref unsettleable.** `box.py:508-510`, `box.py:546-548`. In a
@@ -126,11 +145,16 @@ work that is perfectly branchable. No data is lost, but no branch is ever made.
 **Fix:** fall back to `git rev-list --count <commit> --not --all`, or check
 `git rev-parse --verify HEAD` first.
 
+**Done** — box now refuses to run outside a git repository, or in one with no commits, rather than
+falling back to another rev-list.
+
 ### 10
 **`read_mounts_file` has the same coercion hole as [2](#2).** `box.py:211-218`. `{"cache": null}`
 becomes the path string `"None"`, which is neither `""` nor `MOUNT_PLACEHOLDER`, so
 `unfilled_mounts` accepts it and box mounts a relative path named `None`.
 **Fix:** require string values, raise `ConfigError` otherwise.
+
+**Done.**
 
 ### 11
 **`box gen` outside a git repository appends duplicate `.gitignore` lines, and `box run` then
@@ -142,6 +166,8 @@ to .gitignore" for a line that is already there. Verified.
 is not a git repository" in the second case — box cannot work outside one anyway, since
 `sbx create --clone` needs one.
 
+**Done.**
+
 ### 12
 **`pick_name` is check-then-create, and the loser deletes the winner's secret.** `box.py:370-375`
 against `box.py:652-657`. Two `box run`s started at once in the same project both pick `demo-1`.
@@ -150,9 +176,13 @@ secret belonging to the sandbox that *did* get created. Harmless in practice, be
 the env var at creation time, but it is a real cross-run side effect.
 **Fix:** at minimum a comment saying why it is safe; better, re-check the name after create.
 
+**Done** — a comment says why the loser's `drop_secret` is harmless; the name is not re-checked.
+
 ### 13
 **`settle_ref` prints "1 commits".** `box.py:563`. Ungrammatical on every single-commit sandbox,
 which is a common case.
+
+**Done.**
 
 ### 14
 **The update instruction is unquoted and assumes `curl`.** `box.py:860`. `script_path` comes from
@@ -161,6 +191,8 @@ a `curl -o` line that silently writes to the wrong place. `curl` is not present 
 image.
 **Fix:** `shlex.quote(str(script_path))`. If the file is not writable by the current user, say so
 rather than printing a command that will fail.
+
+**Done.**
 
 ### 15
 **The update notice tells a developer to destroy their own work in progress.** `box.py:856-861`
@@ -177,10 +209,14 @@ Following that overwrites the change being worked on. Verified.
 or when `git status --porcelain box.py` is non-empty; alternatively gate it behind an env var —
 see [66](#66).
 
+**Done** — the check is skipped when git tracks the running `box.py`, which no installed copy is.
+
 ### 16
 **Bare `except Exception` in `checked_recently`.** `box.py:841-847`. The intent (a corrupt cache
 should self-heal) is right, but it also swallows programming errors.
 **Fix:** `except (OSError, ValueError, KeyError, TypeError)` says the same thing precisely.
+
+**Done.**
 
 ---
 
@@ -192,24 +228,34 @@ argparse default is `None`, so `value != defaults[key]` is exactly `value is not
 `defaults = vars(build_parser().parse_args(["run"]))` line and the comment explaining it can both
 go.
 
+**Done.**
+
 ### 18
 **One helper for "run this and tell me whether it worked".** `create_branch` (`box.py:533-536`)
 and `is_git_ignored` (`box.py:620-623`) have identical bodies. A shared
 `succeeds(command: list[str]) -> bool` collapses both, and gives [1](#1)'s fix a natural home.
+
+**Done.**
 
 ### 19
 **`resolve_mounts` takes a whole `Namespace` for one attribute.** `box.py:584-592` reads only
 `arguments.mounts`. Taking a `list[str]` matches `docs/style.md:7` ("a function takes exactly what
 it needs") and makes it testable without argparse.
 
+**Done.**
+
 ### 20
 **`read_required_mounts` round-trips through `merge_values`.** `box.py:772-775` builds the whole
 merged dict to read one key. `as_descriptions(read_config_file(path).get("required_mounts", {}))`
 says it directly.
 
+**Done.**
+
 ### 21
 **Fixing [2](#2) removes nine `str()` calls** from `build_config` (`box.py:283-298`). Worth doing
 as one change, not two.
+
+**Done** — the nine `str()` calls are gone; a checked accessor reads each setting instead.
 
 ---
 
@@ -225,6 +271,8 @@ both docs have always been wrong.
 **Fix:** say ten in both docs, rename the test, and assert against the constant rather than a
 literal.
 
+**Done.**
+
 ### 23
 **`box config` does not validate what `box run` validates, though `docs/goal.md:39-40` says it
 does.** `main` returns from `show_config` before `prepare_launch` (`box.py:891-893`), so neither
@@ -236,11 +284,16 @@ makes `config` genuinely answer "what would `run` do" — or narrow `docs/goal.m
 "validates that the JSON parses and that the mounts match". The first is better: `box config` is
 the natural place to find out that a project is not set up.
 
+**Done** — `box config` now runs the checks, printing the settings first: the first of the two
+options.
+
 ### 24
 **`--name`'s default is the *kebab-cased* directory name.** `README.md:70` says "current
 directory name". `box.py:175-180` runs it through `to_kebab_case` and falls back to the literal
 `box` when nothing survives. `My Repo` gives `my-repo`.
 **Fix:** "current directory name, kebab-cased (`box` if nothing survives)".
+
+**Done.**
 
 ### 25
 **`box mount-prompt` does print something when every mount is filled.** `README.md:163` says
@@ -249,16 +302,22 @@ mount has a path". `box.py:803` prints `every mount in .box/mounts.json already 
 **stderr** — which is the right design, since stdout is what gets piped into `claude`.
 **Fix:** say "prints nothing on stdout" in both places.
 
+**Done.**
+
 ### 26
 **`docs/goal.md:14` says `BASE_PROMPT` is the agent's system prompt; it is appended to one.**
 `box.py:425` passes `--append-system-prompt`. `README.md:94` gets this right.
 **Fix:** "appended to the agent's system prompt" in goal.md.
+
+**Done.**
 
 ### 27
 **`docs/goal.md:90` omits that only the last line of the model's answer is used.** It says "the
 branch name is whatever `claude` printed, kebab-cased and cut to five words".
 `to_branch_name` (`box.py:460-466`) discards everything but the last non-blank line.
 **Fix:** "the last line `claude` printed, kebab-cased and cut to five words".
+
+**Done.**
 
 ### 28
 **`docs/goal.md:42-43` says everything box reads from a project lives under `.box/`.** Three
@@ -268,14 +327,21 @@ things do not: `.gitignore` (read and appended, `box.py:692-708`), the `prompt_f
 **Fix:** "everything box *writes* to a project lives under `.box/`, apart from the `.gitignore`
 lines it needs".
 
+**Done.**
+
 ### 29
 **`docs/style.md:41` says "CI runs the same checks"; it runs a strict subset.** See [49](#49).
+
+**Done** — `docs/style.md` now says which subset CI runs; the CI change itself is [49](#49), still
+open.
 
 ### 30
 **`docs/style.md:24-26` says "argparse derives every `dest` on its own"; `box.py:307` admits in a
 comment that it derives "every dest but the repeatable one",** and `box.py:316-318` sets
 `dest="mounts"` explicitly. That exception is what causes [7](#7).
 **Fix:** fix [7](#7) and carve the repeatable flag out of the style rule in one sentence.
+
+**Done.**
 
 ### 31
 **`docs/style.md:18-19` requires a one-line docstring on every function, and CLAUDE.md scopes that
@@ -287,17 +353,23 @@ documentation; helpers get docstrings".
 times. If you would rather enforce it, add `D` to ruff's `select` with a per-file ignore for
 `tests/` — see [102](#102).
 
+**Done** — the convention is written down; enforcing it with ruff, [102](#102), is still open.
+
 ### 32
 **`README.md:183` lists three ways branch naming can fail; the code has five.** The two missing
 are `box.py:548` ("git could not read `<ref>`") and `box.py:560` ("git refused branch `<name>`").
 `docs/goal.md:87` covers the second but not the first.
 **Fix:** add "or git cannot read the ref" to both.
 
+**Done.**
+
 ### 33
 **`box config` prints a `CLAUDE_OAUTH_TOKEN_FILE` row that no doc mentions.** `box.py:336-341`.
 It is useful — it is the one setting with no flag and no config key — and `README.md:48-49`
 describes `box config` only as showing "the settings in effect".
 **Fix:** one clause in the README.
+
+**Done.**
 
 ### 34
 **The disk limits reach `sbx` through the environment, not through flags, and no doc says so.**
@@ -306,15 +378,21 @@ environment; neither appears in `build_create_command`. This matters to anyone w
 those variables, because box silently overrides them.
 **Fix:** one line in `docs/goal.md`'s run walkthrough.
 
+**Done.**
+
 ### 35
 **box exits with the sandbox agent's exit code, undocumented.** `box.py:662-663`. Relevant to
 anyone scripting box.
 **Fix:** one line in README's "What you get back".
 
+**Done.**
+
 ### 36
 **`read_token` rejects an empty token file as well as a missing one, undocumented.**
 `box.py:380-381`; `README.md:43-45` only says box refuses to start without the variable.
 **Fix:** "…without it, or if the file it names is missing or empty".
+
+**Done.**
 
 ### 37
 **`README.md:79` puts a filename in the config-key column.** The column is headed
@@ -324,16 +402,23 @@ are validated against `required_mounts` (`box.py:238-249`), `--mount` paths are 
 unvalidated (`box.py:591-592`).
 **Fix:** put `—` in the key column and let the prose at `README.md:144` carry the relationship.
 
+**Done.**
+
 ### 38
 **`build_agent_args` takes two `Config` fields loose** (`box.py:421`) where `docs/style.md:8` says
 to pass the `Config`. Its sibling `build_create_command` does it the documented way. Arguable —
 `system_prompt` is derived rather than a field — but worth a decision either way.
+
+**Done** — `build_agent_args` takes the `Config`, like its sibling.
 
 ### 39
 **`pyproject.toml:3` carries `version = "0.1.0"` while `docs/goal.md:29-30` says box has no
 version.** The value is inert (uv resolves the project as `virtual`, so nothing is built or
 installed) but it is a second, contradictory answer to "what version is this".
 **Fix:** delete the line, or note in goal.md that it exists only to satisfy the dev tooling.
+
+**Done** — the line stays, with a comment: uv refuses a `[project]` table without a version.
+`docs/goal.md` says it is inert.
 
 **Verified as accurate, for the record:** the `-1`/`-2` sandbox suffix, the `-2`/`-3` branch
 suffix, five words, `:ro` being an error, `~` expansion, the read-only default, the hourly update
@@ -676,19 +761,27 @@ byte-identical. `test_mount_prompt_needs_no_mounts_file_at_all` (908) and
 same assertion.
 **Fix:** delete one of each.
 
+**Done.**
+
 ### 71
 **`test_build_create_command_omits_empty_kit` (492) tests two things,** the first of which
 `test_build_create_command_includes_mounts_and_kit` already pins exactly. Drop lines 493-494.
+
+**Done.**
 
 ### 72
 **`test_every_config_key_is_snake_case` (1092) does not test snake_case** — `key == key.lower()`
 also passes for `root-size` and `rootsize`.
 **Fix:** `re.fullmatch(r"[a-z][a-z0-9_]*", key)`.
 
+**Done.**
+
 ### 73
 **`test_config_takes_the_same_flags_as_run` (689) does not test what it claims** — it parses one
 flag on `config`.
 **Fix:** compare the full `vars()` key sets of both parses, or rename the test.
+
+**Done.**
 
 ### 74
 **Names that mislead.** `test_suggest_branch_name_gives_claude_five_seconds` (387) asserts 10
@@ -696,11 +789,15 @@ flag on `config`.
 "The sandbox runs Linux". `test_merge_values_prefers_cli_over_file` (80) also asserts the subtler
 rule that a `None` CLI value leaves the file value alone, which deserves its own test.
 
+**Done.**
+
 ### 75
 **The test helper `build_config` (42) shadows `box.build_config` with a different signature** —
 `(values, directory)` versus `(values, mounts, working_directory)`. A reader of
 `build_config({}, tmp_path)` is misled.
 **Fix:** rename to `config_from_values`.
+
+**Done.**
 
 ### 76
 **`make_config()` makes `require_settings` depend on the process working directory.** Its
@@ -711,11 +808,16 @@ repository root happens to contain a `.sbx/kit` *directory*. Run pytest from els
 change meaning.
 **Fix:** use an absolute `tmp_path` kit, or a name that cannot exist on disk.
 
+**Done** — `make_config` names a kit that is not on disk, so nothing resolves against the process
+working directory.
+
 ### 77
 **The module docstring is stale.** `tests/test_box.py:1` says "Tests for the pure configuration
 and command-building helpers"; the file now runs `git init`, writes files and captures stderr.
 
 ### Missing coverage
+
+**Done.**
 
 ### 78
 **`main()` is completely untested.** Nothing covers the `ConfigError` → `box: <error>` → exit 1
@@ -725,10 +827,14 @@ of the tool.
 **Fix:** drive `main()` with `monkeypatch.setattr(sys, "argv", …)` plus `chdir(tmp_path)`, stubbing
 `run_session` and `warn_when_outdated`.
 
+**Done.**
+
 ### 79
 **`store_secret` is untested, including the security constraint `docs/goal.md:103` calls out** —
 "never put the token on a command line". This is the highest-value missing test in the suite:
 assert `keywords["input"] == token` and `token not in " ".join(command)`.
+
+**Done.**
 
 ### 80
 **The `store_secret`-before-`sbx create` ordering is untested,** though `docs/goal.md:104` says a
@@ -736,11 +842,15 @@ secret stored after create leaves the agent logged out. A reordering regression 
 today.
 **Fix:** an order-recording fake in the style of `FakeSandbox`.
 
+**Done.**
+
 ### 81
 **The `sbx create` failure path is untested** (`docs/goal.md:97`): that a non-zero create returns
 1, drops the secret again, prints the "never started" line, and never runs `sbx run` or `cleanup`.
 Likewise `run_session`'s `finally: cleanup(…)` — nothing asserts cleanup still runs when the agent
 exits non-zero, nor that the agent's exit code is propagated ([35](#35)).
+
+**Done.**
 
 ### 82
 **Every real `git` and `sbx` invocation is monkeypatched away and never executed.**
@@ -753,6 +863,8 @@ are asserted nowhere. Only their parsers are tested.
 assert on the `list[str]`, or exercise them against a real `tmp_path` repository — you already do
 that for `git check-ignore` and it costs milliseconds.
 
+**Done.**
+
 ### 83
 **Other untested functions,** in rough order of value: `capture`'s "empty string on non-zero exit"
 contract (relied on by eight call sites), `prepare_launch`'s happy path, `build_environment`
@@ -762,10 +874,14 @@ nothing would catch it), `warn_dirty`'s three recovery lines (the entire point o
 and the timeout, `format_config`'s column alignment, `to_flag`, `resolve_path`, and
 `mount_prompt` passing the real `sys.platform` through.
 
+**Done** — every function listed is covered.
+
 ### 84
 **Two small gaps in otherwise-tested functions:** `read_config_file` has no test for a JSON array
 though `read_mounts_file` does, and `read_token` has no test for a missing file, only an empty
 one.
+
+**Done.**
 
 ### 85
 **`settle_ref`'s success message is never asserted.** The failure branches check stderr; the line
@@ -773,6 +889,8 @@ the user reads on a normal run — "`<n>` commits from `<ref>` are on branch `<b
 test. Fixing [13](#13) would be caught by it.
 
 ### Smells
+
+**Done.**
 
 ### 86
 **Thirteen tests shell out to real `git init` without isolating git configuration.** This is fine
@@ -785,6 +903,8 @@ global gitignore, so the asymmetry stays invisible until someone else clones.
 **Fix:** there is no `conftest.py` at all — add one with an autouse fixture setting
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`.
 
+**Done.**
+
 ### 87
 **`test_warn_when_outdated_stays_silent_when_the_check_fails` (785) passes for the wrong reason.**
 `XDG_CACHE_HOME=/nonexistent/unwritable` is never written to, because the stubbed
@@ -793,10 +913,14 @@ unwritability, and would create `/nonexistent` if the ordering changed and the s
 **Fix:** point it at `tmp_path`, and add a separate test that a genuinely unwritable cache
 directory is survived.
 
+**Done.**
+
 ### 88
 **`FakeSandbox.capture` dispatches on `if "status" in command`** (441) — a token match over the
 whole argv. Any future cleanup command containing a `status` argument silently takes the
 dirty-check branch. Match the command prefix instead.
+
+**Done.**
 
 ### 89
 **Five tests monkeypatch `subprocess.run` globally** (383, 394, 403, 411, 419) plus
@@ -804,11 +928,15 @@ dirty-check branch. Match the command prefix instead.
 subprocess call anywhere, and the fakes take `**keywords`, so a wrong call site is absorbed rather
 than failing. Prefer patching the narrow seam (`box.capture`, `box.suggest_branch_name`).
 
+**Done.**
+
 ### 90
 **`FakeRepository.__init__` takes three unlabelled positionals plus a post-construction flag**
 (274). `FakeRepository("", "add-retry-logic", set())` requires reading the class to learn that
 `""` means "git could not count". Keyword-only arguments, and move `refuse_branch` into the
 constructor.
+
+**Done.**
 
 ---
 
