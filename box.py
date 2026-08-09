@@ -115,15 +115,13 @@ Commit as you go, one feature or fix per commit, rather than saving it all
 for the end. Only committed work survives sandbox removal -- if the session
 is cut off mid-task, uncommitted changes are gone for good.
 
-pre-commit is not installed here, so its git hook will not run. Run the
-project's own checks by hand before committing.
+Git hooks the project's own tooling installs are not set up here, so run the
+project's checks by hand before committing.
 
 The sandbox runs as a different user than the host, so PATH and any tool or
-package caches do not point at the host's copies. Host home directories are
-mounted under /home/*/ and more than one exists, so join the glob matches
-rather than assuming a single path:
-
-    export PATH="$PATH:$(echo /home/*/.local/bin | tr ' ' ':')"
+package caches do not point at the host's copies. A mounted host directory
+keeps the path it has on the host, and there may be several homes to choose
+between, so find what you need rather than assuming where it sits.
 
 Network access is limited to an allowlist, so fetching a dependency that is
 not already cached fails with 403. That is a sandbox limit, not a bug in the
