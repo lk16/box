@@ -45,6 +45,19 @@ TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 # Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
 READ_WRITE_SUFFIX = ":rw"
 
+# Where sbx's git daemon lands a sandbox's work: refs/sandboxes/<sandbox>/<branch>.
+SANDBOX_REFS = "refs/sandboxes"
+
+# A branch name is a courtesy, so the agent naming it gets one turn and no more.
+BRANCH_NAME_TIMEOUT_SECONDS = 10
+BRANCH_NAME_WORDS = 5
+
+BRANCH_NAME_PROMPT = f"""Name a git branch after the work these commit subjects describe.
+Answer with the name and nothing else: kebab-case, at most {BRANCH_NAME_WORDS} words, shorter is
+better.
+
+Commit subjects:"""
+
 KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
 Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
 
@@ -140,6 +153,14 @@ class Launch:
     sandbox_name: str
     token: str
     agent_args: list[str]
+
+
+@dataclass(frozen=True)
+class SandboxRef:
+    """One ref a sandbox left behind, and the commit it points at."""
+
+    ref_name: str
+    commit: str
 
 
 def to_kebab_case(text: str) -> str:
@@ -432,6 +453,118 @@ def warn_dirty(sandbox_name: str, dirty: str) -> None:
     print(f"Then remove manually once safe: sbx rm --force {sandbox_name}", file=sys.stderr)
 
 
+def to_branch_name(text: str) -> str:
+    """Turn an agent's answer into a branch name: its last line, kebab-cased and cut to five words."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    words = to_kebab_case(lines[-1]).split("-")
+    return "-".join(words[:BRANCH_NAME_WORDS]).strip("-")
+
+
+def build_branch_name_command(subjects: str) -> list[str]:
+    """Assemble the headless Claude invocation that names a branch after the sandbox's work."""
+    return ["claude", "-p", f"{BRANCH_NAME_PROMPT}\n{subjects}"]
+
+
+def suggest_branch_name(subjects: str) -> str:
+    """Ask Claude for a branch name, returning nothing when it fails, stalls or is not installed."""
+    try:
+        result = subprocess.run(
+            build_branch_name_command(subjects),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=BRANCH_NAME_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return to_branch_name(result.stdout)
+
+
+def parse_sandbox_refs(refs_output: str) -> list[SandboxRef]:
+    """Pull the ref name and commit out of for-each-ref lines."""
+    refs = []
+    for line in refs_output.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        refs.append(SandboxRef(ref_name=parts[0], commit=parts[1]))
+    return refs
+
+
+def sandbox_refs(sandbox_name: str) -> list[SandboxRef]:
+    """Read the refs this sandbox's work was fetched into."""
+    command = ["git", "for-each-ref", "--format=%(refname) %(objectname)", f"{SANDBOX_REFS}/{sandbox_name}"]
+    return parse_sandbox_refs(capture(command))
+
+
+def count_new_commits(commit: str) -> str:
+    """Count the sandbox's commits this checkout lacks, returning nothing when git could not say."""
+    return capture(["git", "rev-list", "--count", f"HEAD..{commit}"]).strip()
+
+
+def new_commit_subjects(commit: str) -> str:
+    """Read the subjects of the sandbox's commits, which are what a branch gets named after."""
+    return capture(["git", "log", "--format=%s", f"HEAD..{commit}"])
+
+
+def local_branch_names() -> set[str]:
+    """Collect the branch names this repository already has."""
+    return set(capture(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"]).split())
+
+
+def pick_branch_name(branch: str, used: set[str]) -> str:
+    """Return the suggested name, numbered from two when the repository already has it."""
+    if branch not in used:
+        return branch
+    number = 2
+    while f"{branch}-{number}" in used:
+        number += 1
+    return f"{branch}-{number}"
+
+
+def create_branch(branch: str, commit: str) -> bool:
+    """Point a new branch at the sandbox's commit, saying whether git accepted it."""
+    command = ["git", "branch", branch, commit]
+    return subprocess.run(command, capture_output=True, check=False).returncode == 0
+
+
+def delete_ref(ref_name: str) -> None:
+    """Drop a ref, which is safe to leave behind when it fails."""
+    capture(["git", "update-ref", "-d", ref_name])
+
+
+def settle_ref(ref: SandboxRef) -> None:
+    """Turn one sandbox ref into a branch, drop it when it holds nothing, and keep it otherwise."""
+    count = count_new_commits(ref.commit)
+    if not count:
+        print(f"box: git could not read {ref.ref_name}, so it was kept.", file=sys.stderr)
+        return
+    if count == "0":
+        delete_ref(ref.ref_name)
+        print(f"box: {ref.ref_name} held no commits, so it was dropped.", file=sys.stderr)
+        return
+    suggested = suggest_branch_name(new_commit_subjects(ref.commit))
+    if not suggested:
+        print(f"box: naming a branch failed, so the work stayed on {ref.ref_name}.", file=sys.stderr)
+        return
+    branch = pick_branch_name(suggested, local_branch_names())
+    if not create_branch(branch, ref.commit):
+        print(f"box: git refused branch {branch}, so the work stayed on {ref.ref_name}.", file=sys.stderr)
+        return
+    delete_ref(ref.ref_name)
+    print(f"box: {count} commits from {ref.ref_name} are on branch {branch}.", file=sys.stderr)
+
+
+def settle_sandbox_refs(sandbox_name: str) -> None:
+    """Give the sandbox's committed work a branch, so nothing is left addressable only by ref."""
+    for ref in sandbox_refs(sandbox_name):
+        settle_ref(ref)
+
+
 def cleanup(sandbox_name: str) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
     capture(["git", "fetch", f"sandbox-{sandbox_name}"])
@@ -439,6 +572,7 @@ def cleanup(sandbox_name: str) -> None:
     if dirty.strip():
         warn_dirty(sandbox_name, dirty)
         return
+    settle_sandbox_refs(sandbox_name)
     drop_secret(sandbox_name)
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 

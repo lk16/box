@@ -209,12 +209,264 @@ def test_parse_ref_names_extracts_sandbox_names() -> None:
     assert box.parse_ref_names(refs) == {"demo-1", "demo-2"}
 
 
+def test_parse_sandbox_refs_reads_name_and_commit() -> None:
+    refs = "refs/sandboxes/demo-1/main abc123\nrefs/sandboxes/demo-1/wip def456\n"
+    assert box.parse_sandbox_refs(refs) == [
+        box.SandboxRef(ref_name="refs/sandboxes/demo-1/main", commit="abc123"),
+        box.SandboxRef(ref_name="refs/sandboxes/demo-1/wip", commit="def456"),
+    ]
+
+
+def test_parse_sandbox_refs_skips_lines_that_are_not_a_ref_and_a_commit() -> None:
+    assert box.parse_sandbox_refs("refs/sandboxes/demo-1/main\n\n") == []
+
+
+def test_to_branch_name_kebab_cases_the_answer() -> None:
+    assert box.to_branch_name("Add Retry Logic") == "add-retry-logic"
+
+
+def test_to_branch_name_keeps_at_most_five_words() -> None:
+    assert box.to_branch_name("one two three four five six seven") == "one-two-three-four-five"
+
+
+def test_to_branch_name_takes_the_last_line_the_agent_wrote() -> None:
+    assert box.to_branch_name("Here is a name:\n\nfix-flaky-test\n") == "fix-flaky-test"
+
+
+def test_to_branch_name_is_empty_without_an_answer() -> None:
+    assert box.to_branch_name("\n  \n") == ""
+
+
+def test_to_branch_name_is_empty_when_nothing_survives_kebab_casing() -> None:
+    assert box.to_branch_name("!!!") == ""
+
+
+def test_build_branch_name_command_runs_claude_headless_with_the_subjects() -> None:
+    command = box.build_branch_name_command("Add retry logic")
+    assert command[:2] == ["claude", "-p"]
+    assert command[-1].startswith(box.BRANCH_NAME_PROMPT)
+    assert "Add retry logic" in command[-1]
+
+
+def test_pick_branch_name_keeps_a_free_name() -> None:
+    assert box.pick_branch_name("add-retry-logic", {"main"}) == "add-retry-logic"
+
+
+def test_pick_branch_name_numbers_a_taken_name_from_two() -> None:
+    used = {"add-retry-logic", "add-retry-logic-2"}
+    assert box.pick_branch_name("add-retry-logic", used) == "add-retry-logic-3"
+
+
 def test_pick_name_skips_used_names() -> None:
     assert box.pick_name("demo", {"demo-1", "demo-2"}) == "demo-3"
 
 
 def test_pick_name_starts_at_one() -> None:
     assert box.pick_name("demo", set()) == "demo-1"
+
+
+SANDBOX_REF = box.SandboxRef(ref_name="refs/sandboxes/demo-1/main", commit="abc123")
+
+
+class FakeRepository:
+    """Answer the git and Claude calls settle_ref makes, recording the branches and refs it wrote."""
+
+    def __init__(self, count: str, suggestion: str, branches: set[str]) -> None:
+        self.count = count
+        self.suggestion = suggestion
+        self.branches = branches
+        self.refuse_branch = False
+        self.created: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
+        self.named_after = ""
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stand in for everything settle_ref runs against git and Claude."""
+
+        def count_new_commits(commit: str) -> str:
+            return self.count
+
+        def new_commit_subjects(commit: str) -> str:
+            return "Add retry logic\n"
+
+        def local_branch_names() -> set[str]:
+            return self.branches
+
+        monkeypatch.setattr(box, "count_new_commits", count_new_commits)
+        monkeypatch.setattr(box, "new_commit_subjects", new_commit_subjects)
+        monkeypatch.setattr(box, "suggest_branch_name", self.suggest)
+        monkeypatch.setattr(box, "local_branch_names", local_branch_names)
+        monkeypatch.setattr(box, "create_branch", self.create)
+        monkeypatch.setattr(box, "delete_ref", self.deleted.append)
+
+    def suggest(self, subjects: str) -> str:
+        """Record what the branch was named after, and answer with the fixed suggestion."""
+        self.named_after = subjects
+        return self.suggestion
+
+    def create(self, branch: str, commit: str) -> bool:
+        """Create a branch unless this repository was set up to refuse one."""
+        if self.refuse_branch:
+            return False
+        self.created.append((branch, commit))
+        return True
+
+
+def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = FakeRepository("3", "add-retry-logic", {"main"})
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.created == [("add-retry-logic", "abc123")]
+    assert repository.deleted == [SANDBOX_REF.ref_name]
+
+
+def test_settle_ref_names_the_branch_after_the_commits(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = FakeRepository("3", "add-retry-logic", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.named_after == "Add retry logic\n"
+
+
+def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = FakeRepository("1", "add-retry-logic", {"add-retry-logic"})
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.created == [("add-retry-logic-2", "abc123")]
+
+
+def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = FakeRepository("0", "add-retry-logic", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.created == []
+    assert repository.deleted == [SANDBOX_REF.ref_name]
+
+
+def test_settle_ref_keeps_the_ref_when_naming_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository = FakeRepository("2", "", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.created == []
+    assert repository.deleted == []
+    assert SANDBOX_REF.ref_name in capsys.readouterr().err
+
+
+def test_settle_ref_keeps_the_ref_when_git_refuses_the_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = FakeRepository("2", "add-retry-logic", set())
+    repository.refuse_branch = True
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.deleted == []
+
+
+def test_settle_ref_keeps_the_ref_when_git_cannot_count_the_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeRepository("", "add-retry-logic", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert repository.created == []
+    assert repository.deleted == []
+
+
+def completed(returncode: int, stdout: str) -> subprocess.CompletedProcess[str]:
+    """Build the result a finished claude run would hand back."""
+    return subprocess.CompletedProcess(args=["claude"], returncode=returncode, stdout=stdout, stderr="")
+
+
+def test_suggest_branch_name_kebab_cases_what_claude_printed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        return completed(0, "Add Retry Logic\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert box.suggest_branch_name("Add retry logic") == "add-retry-logic"
+
+
+def test_suggest_branch_name_gives_claude_five_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        seen.update(keywords)
+        return completed(0, "add-retry-logic\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    box.suggest_branch_name("Add retry logic")
+    assert seen["timeout"] == 10
+
+
+def test_suggest_branch_name_is_empty_when_claude_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=box.BRANCH_NAME_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert box.suggest_branch_name("Add retry logic") == ""
+
+
+def test_suggest_branch_name_is_empty_when_claude_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        return completed(1, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert box.suggest_branch_name("Add retry logic") == ""
+
+
+def test_suggest_branch_name_is_empty_when_claude_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("claude")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert box.suggest_branch_name("Add retry logic") == ""
+
+
+class FakeSandbox:
+    """Answer the commands cleanup runs, recording every one of them in the order it ran."""
+
+    def __init__(self, dirty: str) -> None:
+        self.dirty = dirty
+        self.commands: list[list[str]] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stand in for everything cleanup runs against git, sbx and the refs."""
+
+        def settle_sandbox_refs(sandbox_name: str) -> None:
+            self.commands.append(["settle", sandbox_name])
+
+        monkeypatch.setattr(box, "capture", self.capture)
+        monkeypatch.setattr(box, "settle_sandbox_refs", settle_sandbox_refs)
+        monkeypatch.setattr(subprocess, "run", self.run)
+
+    def capture(self, command: list[str]) -> str:
+        """Record a command, answering the dirty check with this sandbox's status."""
+        self.commands.append(command)
+        if "status" in command:
+            return self.dirty
+        return ""
+
+    def run(self, command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        """Record a command that cleanup does not read the output of."""
+        self.commands.append(command)
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+
+def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = FakeSandbox("")
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    settled = sandbox.commands.index(["settle", "demo-1"])
+    assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
+
+
+def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(" M box.py\n")
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    assert "uncommitted changes" in capsys.readouterr().err
 
 
 def test_build_create_command_includes_mounts_and_kit() -> None:

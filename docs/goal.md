@@ -13,8 +13,9 @@ One run does this:
 4. Store the Claude OAuth token as an `sbx` secret scoped to that sandbox name.
 5. Run the agent with `BASE_PROMPT` as its system prompt, followed by the project's own
    `prompt_file` when one is configured, plus the model when one is set.
-6. On exit, fetch committed work back to the host and remove the sandbox — unless the sandbox
-   still has uncommitted changes, in which case it is kept and recovery steps are printed.
+6. On exit, fetch committed work back to the host, put it on a branch a headless Claude names,
+   and remove the sandbox — unless the sandbox still has uncommitted changes, in which case it is
+   kept and recovery steps are printed.
 
 `box run` does that. Every command starts with a word, so nothing happens by accident when a flag
 is mistyped. The others all exit without creating a sandbox: `box config` prints the settings in
@@ -75,7 +76,17 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.
 - `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
   one project belongs in that project's `prompt_file`.
-- Never remove a sandbox that holds uncommitted work.
+- Never remove a sandbox that holds uncommitted work. Its refs are left as they are too, since
+  the run is not over: the work is fetched again once the sandbox is clean.
+- A `refs/sandboxes/*` ref is where the fetch lands, not where work is left. A ref holding
+  commits becomes a branch named by `claude -p`, and is dropped once that branch exists; a ref
+  holding nothing new is dropped without one, since there is nothing to name.
+- Naming a branch is a courtesy, so every way it can fail -- no `claude` on `PATH`, a non-zero
+  exit, five seconds of silence, an empty answer, a name git refuses -- keeps the ref instead.
+  The work is already fetched, and a kept ref is what the user had before.
+- The branch name is whatever `claude` printed, kebab-cased and cut to five words, so a model
+  that answers with a sentence still produces a name rather than an error. A name the repository
+  already has takes a `-2`, `-3` suffix, since a fetched commit must never overwrite a branch.
 - Extra mounts are read-only unless the user appends `:rw`, so write access to the host is
   always something that was asked for.
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
