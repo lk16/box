@@ -8,11 +8,13 @@ What it gives you:
 - CPU, memory and disk limits on the agent
 - an in-container git clone instead of a bind mount, so the working tree stays untouched
 - several sandboxes for the same project side by side, without name collisions
-- committed work fetched back to the host, and the sandbox removed, when the agent exits
+- committed work fetched back to the host onto a named branch, and the sandbox removed, when the
+  agent exits
 - a refusal to remove a sandbox that still holds uncommitted changes
 
 Needs Python 3.11+, plus `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) and
-`git` on `PATH`. Works on Linux and macOS.
+`git` on `PATH`. The `claude` CLI is used to name the branch, and its absence costs you the name
+and nothing else. Works on Linux and macOS.
 
 ## Install
 
@@ -180,12 +182,28 @@ paths, so you can re-run it after a partial fill.
 Its output is only as good as your descriptions: `"go cache"` gives an agent nothing, while
 `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run.
 
-## When the agent leaves work behind
+## What you get back
 
 Only committed work survives. On exit `box.py` fetches from the `sandbox-<name>` git remote,
-then checks whether the sandbox has a dirty tree. If it does, the sandbox is kept and the
-recovery commands are printed — inspect it with `sbx exec`, copy files out with `sbx cp`, and
-remove it yourself with `sbx rm --force <name>`.
+which lands the sandbox's commits on a `refs/sandboxes/<name>/<branch>` ref, then checks whether
+the sandbox has a dirty tree.
+
+A clean sandbox is settled and removed. Each of its refs is one of:
+
+- **commits you do not have** — `claude -p` is given their subjects and asked for a kebab-case
+  name of at most five words, the commits are put on a branch under that name, and the ref is
+  dropped. `git switch <branch>` and the work is in front of you. A name the repository already
+  has takes a `-2`, `-3` suffix, so nothing is overwritten
+- **nothing new** — the agent committed nothing, so the ref is dropped and no branch is made,
+  rather than leaving an empty name behind
+
+Naming is best effort. If `claude` is not on `PATH`, fails, answers with nothing, or takes longer
+than five seconds, the commits stay on their ref and box says so — the work is already fetched,
+and `git log refs/sandboxes/<name>/<branch>` still reaches it.
+
+If the tree is dirty the sandbox is kept, its refs are left alone, and the recovery commands are
+printed — inspect it with `sbx exec`, copy files out with `sbx cp`, and remove it yourself with
+`sbx rm --force <name>`.
 
 ## Development
 
