@@ -921,9 +921,10 @@ def repository_with_sandbox_work(directory: Path) -> str:
 
 
 def make_repository(directory: Path, gitignore: str) -> Path:
-    """Create a git repository holding a mounts file and the given .gitignore."""
+    """Create a git repository holding a config, a mounts file and the given .gitignore."""
     make_git_repository(directory)
     (directory / ".gitignore").write_text(gitignore)
+    write_config(directory, {})
     write_box_file(directory, box.MOUNTS_FILE, {"cache": "/cache"})
     return directory
 
@@ -1037,6 +1038,21 @@ def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.Monk
     assert commands == [["sbx", "secret", "rm", "demo-1", "--host", box.SECRET_HOST, "-f"]]
 
 
+def test_a_project_with_no_config_is_sent_to_gen(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="Run box gen"):
+        box.require_config_file(tmp_path)
+
+
+def test_a_project_with_a_config_is_accepted(tmp_path: Path) -> None:
+    write_config(tmp_path, {})
+    box.require_config_file(tmp_path)
+
+
+def test_the_missing_config_is_named_the_way_the_file_is(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match=re.escape(box.CONFIG_FILE)):
+        box.require_config_file(tmp_path)
+
+
 def test_a_directory_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(box.ConfigError, match="not a git repository"):
         box.require_git_repository(tmp_path)
@@ -1073,13 +1089,15 @@ def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
 
 
 def test_prepare_launch_rejects_a_directory_that_is_not_a_repository(tmp_path: Path) -> None:
+    write_config(tmp_path, {})
     with pytest.raises(box.ConfigError, match="not a git repository"):
         box.prepare_launch(make_config(), "/secrets/token", tmp_path)
 
 
 def test_prepare_launch_rejects_a_repository_with_no_commits(tmp_path: Path) -> None:
+    write_config(git_init(tmp_path), {})
     with pytest.raises(box.ConfigError, match="no commits"):
-        box.prepare_launch(make_config(), "/secrets/token", git_init(tmp_path))
+        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
@@ -1182,16 +1200,18 @@ def test_config_is_not_a_setup_command() -> None:
 def test_show_config_prints_the_settings_and_returns_zero(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    assert box.show_config(make_config(), "/secrets/token", make_git_repository(tmp_path)) == 0
+    write_config(make_git_repository(tmp_path), {})
+    assert box.show_config(make_config(), "/secrets/token", tmp_path) == 0
     printed = capsys.readouterr().out
     assert "claude-opus-5" in printed
     assert "/secrets/token" in printed
 
 
 def test_show_config_makes_the_checks_a_run_would(tmp_path: Path) -> None:
+    write_config(make_git_repository(tmp_path), {"model": "claude-opus-5"})
     config = config_from_values({"model": "claude-opus-5"}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.show_config(config, "/secrets/token", make_git_repository(tmp_path))
+        box.show_config(config, "/secrets/token", tmp_path)
 
 
 def test_show_config_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
@@ -1813,20 +1833,23 @@ def test_append_line_creates_the_file_when_absent(tmp_path: Path) -> None:
 
 
 def test_prepare_launch_requires_the_token_environment_variable(tmp_path: Path) -> None:
+    write_config(make_git_repository(tmp_path), {})
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(make_config(), "", make_git_repository(tmp_path))
+        box.prepare_launch(make_config(), "", tmp_path)
 
 
-def test_prepare_launch_requires_a_kit() -> None:
-    config = config_from_values({}, Path("/tmp/demo"))
+def test_prepare_launch_requires_a_kit(tmp_path: Path) -> None:
+    write_config(tmp_path, {})
+    config = config_from_values({}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
+        box.prepare_launch(config, "/secrets/token", tmp_path)
 
 
-def test_prepare_launch_requires_a_model() -> None:
-    config = config_from_values({"kit": ".sbx/kit"}, Path("/tmp/demo"))
+def test_prepare_launch_requires_a_model(tmp_path: Path) -> None:
+    write_config(tmp_path, {"kit": "registry/kit"})
+    config = config_from_values({"kit": "registry/kit"}, tmp_path)
     with pytest.raises(box.ConfigError, match="model is not set"):
-        box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
+        box.prepare_launch(config, "/secrets/token", tmp_path)
 
 
 def test_a_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
@@ -2181,11 +2204,20 @@ def test_main_prints_the_config_without_creating_anything(
 def test_main_turns_a_rejected_project_into_one_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    write_config(tmp_path, {})
     monkeypatch.setattr(box, "run_session", refuse_to_run)
     assert call_main(monkeypatch, tmp_path, ["run"]) == 1
     printed = capsys.readouterr().err
     assert printed.startswith("box: kit is not set")
     assert "Traceback" not in printed
+
+
+def test_main_sends_a_project_with_no_box_directory_to_gen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(box, "run_session", refuse_to_run)
+    assert call_main(monkeypatch, tmp_path, ["run"]) == 1
+    assert "Run box gen" in capsys.readouterr().err
 
 
 def test_main_rejects_a_flag_on_a_setup_command(

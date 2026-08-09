@@ -208,10 +208,11 @@ refusal exits 1, and a Ctrl-C exits 130.
 ## Troubleshooting
 
 box would rather refuse to start than let a run go wrong quietly, so a refusal names what to do.
-The five you are most likely to meet:
+The ones you are most likely to meet:
 
 | Message | Fix |
 | --- | --- |
+| `this project has no .box/config.json` | run `box gen` |
 | `kit is not set` | point `kit` at a kit directory in `.box/config.json` |
 | `model is not set` | name a model in `.box/config.json` |
 | `CLAUDE_OAUTH_TOKEN_FILE is not set` | export it, pointing at a file holding a `claude setup-token` token |

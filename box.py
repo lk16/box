@@ -84,6 +84,9 @@ better.
 
 Commit subjects:"""
 
+NO_CONFIG_HELP = f"""this project has no {CONFIG_FILE}, so box has no settings to run with.
+Run box gen to write a starter one, then fill in kit and model."""
+
 KIT_HELP = f"""kit is not set, so the sandbox would run without a network policy.
 Point it at a kit directory holding a spec.yaml, e.g. .sbx/kit, in {CONFIG_FILE} or with --kit."""
 
@@ -774,8 +777,16 @@ def require_ignored_local_paths(working_directory: Path) -> None:
         raise ConfigError(help_text)
 
 
+def require_config_file(working_directory: Path) -> None:
+    """Send a project with no box setup at all to the command that writes one."""
+    if not (working_directory / CONFIG_FILE).is_file():
+        raise ConfigError(NO_CONFIG_HELP)
+
+
 def require_project(config: Config, working_directory: Path) -> None:
     """Run every check on the settings and the project that does not create anything."""
+    # A first-timer has no settings to be told about yet, so the missing file comes first.
+    require_config_file(working_directory)
     require_settings(config)
     require_git_repository(working_directory)
     require_ignored_local_paths(working_directory)

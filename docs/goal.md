@@ -112,6 +112,8 @@ and `box self-update` writes the published `box.py` over the running one.
   naming what to do about it. `sbx create --clone` clones the working directory, so neither gives
   the agent anything to work from, and the second leaves every fetched ref with no HEAD to settle
   against.
+- A project with no `.box/config.json` at all is an error naming `box gen`, before any setting is
+  mentioned. "kit is not set" answers the wrong question for someone who has not set box up yet.
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
   unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
   install, which is not this host's.
