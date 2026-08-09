@@ -8,13 +8,17 @@ Verified against the working tree at commit `ba1b932`, with `ruff`, `ruff format
 `mypy --strict` and `pytest` (159 tests) all passing beforehand. Line numbers therefore point at
 that commit, not at the file as it stands now.
 
-**State.** Findings [1](#1)–[39](#39) and [70](#70)–[90](#90) are done: every bug and
-simplification in `box.py`, every contradiction between the docs and the code, and every gap and
-smell in the tests, which now number 255. Still open, in the order they are worth doing:
-[41](#41) (the README never says how you give the agent a task), [45](#45)–[49](#49) (the macOS
-CI leg proves almost nothing, and seven pre-commit hooks run only on one machine), [55](#55) and
-[57](#57) (`BASE_PROMPT` and the mount prompt assume one machine's layout), and the rest of
-sections 4, 6, 8, 9 and 10.
+**State.** Everything is done except section 5, and the suite now numbers 300 tests. Done since this
+review was written: findings [1](#1)–[44](#44), [55](#55)–[69](#69) and [70](#70)–[102](#102) — every
+bug and simplification in `box.py`, every contradiction between the docs and the code, every gap and
+smell in the tests, the README rewrite, everything that assumed one machine or one project, every
+place a reader or an agent was sent to the wrong answer, and every suggested improvement bar one.
+[103](#103) is skipped on purpose, [68](#68) asked for no change, and section 10's decision is
+recorded there: box stays on A.
+
+**Still open:** [45](#45)–[54](#54), all of section 5. CI runs four steps that prove almost nothing
+on macOS, pins no Python, verifies no lockfile, enforces seven pre-commit hooks nowhere, and is not a
+required check on `main` — which is what section 10's recommendation asks for next.
 
 ---
 
@@ -457,6 +461,11 @@ is the main reason. Fourteen sentences run to 30 words or more; the longest is 6
 
 Roughly 500 words come out with no information lost.
 
+**Done** — all four cuts made. The README is longer than the suggested 900 words all the same: the
+sections [42](#42)–[44](#44) asked for are new, and six behaviours added since ([98](#98)'s starter
+kit, [99](#99)'s binary check, [100](#100)'s `self-update`, [101](#101)'s `(unset)`, [66](#66)'s
+`BOX_UPDATE_URL` and [69](#69)'s Python floor) are documented there too.
+
 ### 41
 **The README never says how you give the agent a task.** This is the largest gap. `box run` starts
 an interactive Claude session inside the sandbox (`build_run_command`, `box.py:431-437`, passes no
@@ -467,10 +476,15 @@ Those two facts read as a contradiction until you have run it once.
 type the task there" — and one clarifying that the built-in prompt tells the agent to make
 assumptions and keep going rather than block on questions, because you may well walk away.
 
+**Done** — in Quick start, with [94](#94)'s other half: the session is interactive so the user can
+watch and step in.
+
 ### 42
 **Add a quick start.** The path from nothing to a first run is spread over three sections
 (`install` → `gen` → edit config → export the token → `mount-prompt` → `run`). Six lines at the
 top would carry it.
+
+**Done.**
 
 ### 43
 **Add a short troubleshooting table.** Every refusal box can produce is already a good message,
@@ -479,12 +493,16 @@ but a reader hits them one at a time. A five-row table mapping message to fix ("
 uncommitted changes -- not removing it") would answer most first-week questions. Keep it to five
 rows.
 
+**Done** — six rows, since [97](#97) added a message a first-timer meets before any of the five.
+
 ### 44
 **Give requirements their own heading.** `README.md:11-12` buries Python, `sbx`, `git`, `claude`
 and the supported platforms in a paragraph between the feature list and Install.
 
 Suggested shape: Features / Requirements / Install / Quick start / Commands / Settings / Mounts /
 What you get back / Troubleshooting / Development. That is the same content at about 900 words.
+
+**Done** — that shape, in that order.
 
 ---
 
@@ -630,6 +648,9 @@ stop asserting a layout: "the host's home directory is mounted somewhere under `
 `/Users/`; find it rather than assuming". **Worth verifying on a macOS host if you ever get
 access to one.**
 
+**Done** — the second way: `BASE_PROMPT` asserts no layout at all now, and the `PATH` line is gone
+with it. Nothing left there needs a Mac to verify.
+
 ### 56
 **`BASE_PROMPT` leaks this repository's tooling into every project.** `box.py:102-104`:
 "pre-commit is not installed here, so its git hook will not run." A project that does not use
@@ -640,6 +661,8 @@ project's own checks by hand before committing", and leave the pre-commit specif
 `docs/sandbox.md`, which already covers them. `README.md:97` documents the sentence, so it changes
 too. (`uv` is correctly absent from `BASE_PROMPT` — well done.)
 
+**Done.**
+
 ### 57
 **The mount prompt is told the platform but not the architecture.** `box.py:780`, `box.py:805`.
 The prompt says "this machine, which runs {platform}" — `linux` or `darwin` — yet the problem it
@@ -648,6 +671,8 @@ machine's architecture" and `box.py:790` mentions "the wrong platform or archite
 told only `darwin` cannot tell arm64 from x86_64 and will fetch the wrong toolchain half the time.
 **Fix:** pass `f"{sys.platform} {platform.machine()}"` — `platform` is stdlib, so the
 zero-dependency rule holds. Update `tests/test_box.py:885-894`.
+
+**Done** — through a `host_description()` helper, so the prompt builder still takes a string.
 
 ### 58
 **ANSI colour is emitted with no TTY or `NO_COLOR` check.** `box.py:41-42`, `box.py:861`,
@@ -658,12 +683,16 @@ present, so it changes with the fix.
 **Fix:** a `colour()` helper returning plain text when `not sys.stderr.isatty()` or `NO_COLOR` is
 set; assert both branches.
 
+**Done** — as `in_red`, with both branches asserted.
+
 ### 59
 **`~/.cache` as the fallback is an XDG (Linux) convention applied to macOS.** `box.py:822-827`.
 Defensible — uv, ruff, pip and gh all do the same — but it should be a stated decision rather than
 an accident; `docs/goal.md:32` mentions `XDG_CACHE_HOME` without acknowledging macOS at all.
 **Fix:** one sentence in goal.md saying box follows XDG everywhere on purpose. (Do not switch to
 `~/Library/Caches` without also changing `tests/test_box.py:712-715`; I would not switch.)
+
+**Done** — the sentence is there and the path is unchanged.
 
 ### 60
 **`~/.local/bin` is not on `PATH` by default on macOS.** `README.md:16-20`. Debian and Ubuntu add
@@ -674,12 +703,17 @@ invisible to scripts, `Makefile`s, `direnv` hooks, cron and other agents.
 **Fix:** see section 10 — install the file as `box`, with no extension, and recommend putting
 `~/.local/bin` on `PATH`, keeping the alias as the fallback.
 
+**Done** — with one deviation: the alias is gone rather than kept as a fallback. A file named `box`
+needs none, and the README says which startup file puts `~/.local/bin` on `PATH`.
+
 ### 61
 **The shell-config instruction is Linux-bash-shaped.** `README.md:22` says "`~/.bashrc` or
 `~/.zshrc`". macOS bash reads `~/.bash_profile` for login shells, so a Homebrew-bash user
 following this literally gets nothing.
 **Fix:** "your shell's startup file (`~/.zshrc` on macOS, `~/.bashrc` on Linux,
 `~/.bash_profile` for login bash)".
+
+**Done.**
 
 ### 62
 **`docs/agent.md` does not exist.** `README.md:60,76` and `tests/test_box.py:23` both use
@@ -688,11 +722,16 @@ following this literally gets nothing.
 that is not there.
 **Fix:** use `docs/sandbox.md`, or rename the example to something unmistakably generic.
 
+**Done** — `docs/sandbox.md` in the README, which is labelled as box's own config, and a plainly
+generic `docs/project-prompt.md` in the tests.
+
 ### 63
 **The README's config example is this repository's config without the label.** `README.md:56-63`
 copies `"kit": ".sbx/kit"` and `"model": "claude-opus-5"` straight from `.box/config.json`. A
 reader will paste a model id that may not be valid for their account.
 **Fix:** label it ("box's own `.box/config.json` looks like this") or genericise it.
+
+**Done** — labelled.
 
 ### 64
 **The Go mounts example uses a customised path.** `README.md:126-129` gives
@@ -702,6 +741,8 @@ machine-specific. (`"go_toolchain": "/usr/local/go"` is Linux-shaped too, but th
 arguably the point.)
 **Fix:** `~/go/pkg/mod`.
 
+**Done.**
+
 ### 65
 **`uv sync --python 3.14` is baked into a committed, shared file.** `.box/config.json:12` and
 `docs/sandbox.md:29`. sandbox.md explains the failure mode and the recovery well; the mount
@@ -709,11 +750,15 @@ arguably the point.)
 image's Python.
 **Fix:** "the Python the sandbox image ships — `python3 -V` inside the sandbox names it".
 
+**Done.**
+
 ### 66
 **`UPDATE_URL` hard-codes your repository.** `box.py:36`. Any fork or vendored copy nags "An
 update to box is available" on every run, forever, with no opt-out.
 **Fix:** `os.environ.get("BOX_UPDATE_URL", …)`, treating an empty value as "never check". This
 also gives [15](#15) an escape hatch.
+
+**Done.**
 
 ### 67
 **`.sbx/kit/spec.yaml` is box's own arrangement and is copy-hazardous.** `README.md:88` points
@@ -725,12 +770,16 @@ download 403s.
 (The `grep " virtiofs " /proc/mounts` is Linux-only but runs *inside* the sandbox, which is always
 Linux — correct, not a bug.)
 
+**Done** — and it now points a reader at the starter kit [98](#98) writes instead.
+
 ### 68
 **`.box/config.json:11` is exemplary and should be the model for [57](#57).** "it must be a Linux
 build for this machine's architecture, so on macOS put one in `.box/deps/` and point here instead"
 is exactly the right way to encode a per-machine, per-architecture requirement — which is what
 makes `BASE_PROMPT`'s `/home/*/` assumption ([55](#55)) look like an oversight rather than a
 decision.
+
+**Nothing to change** — [57](#57) took it as the model, as suggested.
 
 ### 69
 **`box.py` most likely runs on Python 3.9 despite claiming 3.11+, and there is no guard.**
@@ -743,6 +792,10 @@ obscure, which is worse than failing loudly.
 near the top, or — better, given the macOS system Python — lower `requires-python` to what box
 actually needs and prove it in CI per [48](#48). The dev tooling can keep a higher floor
 independently.
+
+**Done** — the guard, not the lowered floor: `run_box` names both versions and exits 1 before doing
+anything. `requires-python` stays at 3.11, and a test pins that `box.py` still parses on 3.9, which
+is what lets that message reach the reader at all. Proving the floor in CI is still [48](#48).
 
 ---
 
@@ -951,6 +1004,8 @@ files, three answers, and the first one an agent reads is the wrong one.
 **Fix:** put the two-line check block directly in `CLAUDE.md`, with a one-clause note that inside
 a box sandbox the commands in `docs/sandbox.md` apply instead.
 
+**Done.**
+
 ### 92
 **A generic `CLAUDE.md` one directory up contradicts this project's tooling.**
 `/home/luuk/projects/CLAUDE.md` (outside the repository, so not fixable here) tells agents to use
@@ -959,6 +1014,9 @@ project uses `uv`, `ruff` and `mypy`. Because the repository's own `CLAUDE.md` s
 ([91](#91)), an agent has nothing closer to fall back on.
 **Fix:** [91](#91) fixes this from inside the repository, which is the right place.
 
+**Done** — by [91](#91), as suggested. The file one directory up is still there and still wrong;
+`CLAUDE.md` now answers first.
+
 ### 93
 **Nothing says that `docs/sandbox.md` *is* this repository's `prompt_file`.** `.box/config.json:8`
 points at it, but `CLAUDE.md:10` describes it only as "what is true of this repository inside a
@@ -966,10 +1024,17 @@ box sandbox". So editing that file silently edits the system prompt of every box
 repository.
 **Fix:** add "(this repository's own `prompt_file`)" to `CLAUDE.md:10`.
 
+**Done** — with the consequence spelled out: editing it edits the system prompt of every run here.
+
 ### 94
 **"Unattended" versus an interactive session.** See [41](#41) — the built-in prompt tells the
 agent nobody is available to answer follow-ups, while `box run` opens an interactive Claude
 session. Both are intentional, and neither doc reconciles them.
+
+**Done** — reconciled in the README and in `goal.md`, as a decision rather than an oversight: the
+session is interactive so the user can see what the agent does and step in, and the prompt tells it
+to assume and keep going because the user may well walk away, where an agent waiting on a question
+they never see wastes the whole run.
 
 ### 95
 **The docs restate the README rather than linking to it, and have already drifted.**
@@ -978,9 +1043,15 @@ session. Both are intentional, and neither doc reconciles them.
 the same wrong "five seconds" in both.
 **Fix:** have `goal.md` carry the *why* and link to the README for the *what*.
 
+**Done** — `goal.md` says so at the top of its constraints, and the mount contract it restated is now
+reasons plus a pointer.
+
 ### 96
 **`.box/config.json` in this repository is both a working config and the de-facto example,** and
 nothing labels it as either. Same for `.sbx/kit` ([67](#67)) and the README's example ([63](#63)).
+
+**Done** — `CLAUDE.md` says the config, the kit and the prompt file are box's own working setup, not
+templates, and names `box gen` as where a new project starts.
 
 ---
 
@@ -994,6 +1065,9 @@ fresh repository, `box run` says "kit is not set", which tells a first-timer not
 do first.
 **Fix:** if `.box/config.json` does not exist, say so and name `box gen`. Two lines.
 
+**Done** — checked before any setting is mentioned, so "kit is not set" no longer greets a
+first-timer.
+
 ### 98
 **`box gen` should scaffold a starter `.sbx/kit/spec.yaml`.** `kit` is required and has no
 default, and hand-writing a kit is the single biggest setup hurdle — the one step `box gen`
@@ -1003,11 +1077,18 @@ which `docs/goal.md:60-61` already establishes as the right home for such text.
 **Caveat:** it couples box to sbx's kit schema, which can drift. Write only the two or three
 fields you are confident in, and have the file say it is a starting point.
 
+**Done**, with one deviation: it lands at `.box/kit/spec.yaml`, not `.sbx/kit`, so everything box
+writes still lives under `.box/` — and the starter config points `kit` at it, leaving `model` as the
+only value to fill in. The file says it is a starting point and holds only the fields box is sure of.
+
 ### 99
 **Check the required binaries up front.** `README.md:11-12` lists `sbx`, `git` and `claude` as
 requirements and nothing verifies any of them; the result is [3](#3).
 **Fix:** a `shutil.which` check in `require_settings` producing the usual `box: …` message. This
 is most of a `box doctor` without adding a command.
+
+**Done** — in `require_project` rather than `require_settings`, since it is a fact about the machine
+and not about a setting, and first, since nothing else box does works without them.
 
 ### 100
 **Add `box self-update`.** The update check already knows the URL and both hashes; the user
@@ -1015,15 +1096,23 @@ currently copy-pastes a `curl` line. Roughly ten lines — fetch, write to a tem
 alongside the script, `chmod +x`, `os.replace` — and it removes the last manual step from the
 install story ([15](#15) and [14](#14) both stop mattering).
 
+**Done** — and the notice names the command, so [14](#14)'s quoted `curl` line is gone with it. It
+refuses a `box.py` git tracks, which is [15](#15)'s hazard from the other side.
+
 ### 101
 **Show `(unset)` rather than an empty column in `box config`.** Verified: unset settings print as
 trailing whitespace, so "is `model` empty or is the row missing?" is a real question a reader has.
+
+**Done.**
 
 ### 102
 **Enforce the docstring rule with ruff instead of by hand.** Add `"D"` to
 `[tool.ruff.lint] select` with `[tool.ruff.lint.per-file-ignores] "tests/*" = ["D103"]`. That
 turns `docs/style.md:18-19` into a check rather than a promise, and resolves [31](#31) in the
 direction of keeping the rule.
+
+**Done** — `D107` is ignored under `tests/` as well, since a fake's class docstring covers its
+`__init__`. `docs/style.md` says so.
 
 ### 103
 **Not recommended, listed so it is a decision rather than an oversight:** `box ls` for leftover
@@ -1032,6 +1121,8 @@ sandboxes and refs (`sbx ls` and `git for-each-ref` already do it), shell comple
 would make `box run "do the thing"` fire-and-forget and would reconcile [94](#94) — but it changes
 box from "start a session" to "start a session and drive it", which is a different tool. Decide
 deliberately.
+
+**Decided: none of them.** [94](#94) is reconciled in the docs instead, which is what it needed.
 
 ---
 
@@ -1107,3 +1198,17 @@ B's benefit for a fraction of the cost:
 
 Revisit B when box has users outside this machine. The thing that will force the change is
 needing to say "upgrade to 1.4.2, it fixes X" — and nothing needs that today.
+
+**Decided: A, with three of the four rough edges filed off.**
+
+1. **Done.** The README installs the file as `~/.local/bin/box` and drops the alias rather than
+   keeping it as a fallback ([60](#60)) — a file named `box` needs none.
+2. **Done** ([100](#100)). The notice names the command instead of a `curl` line.
+3. **Open.** Making CI a required check on `main` is a repository setting, and the CI job it would
+   gate is still section 5's work ([54](#54)).
+4. **Half done.** `box.py` names the Python it needs and stops on an older one ([69](#69)); proving
+   that floor in CI is [48](#48), still open. No PEP 723 header: it helps only `uv` users, and E's
+   round trip is a worse trade than the guard.
+
+Nothing here moves box off A, and no version number was introduced, so `docs/goal.md`'s no-version
+constraint stands.
