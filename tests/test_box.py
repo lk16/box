@@ -1,10 +1,13 @@
-"""Tests for the pure configuration and command-building helpers in box.py."""
+"""Tests for box.py: its pure helpers, and the git and sbx work behind them."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -22,7 +25,7 @@ def make_config() -> box.Config:
         docker_size="30g",
         model="claude-opus-5",
         prompt_file="docs/agent.md",
-        kit=".sbx/kit",
+        kit="registry/kit",
         mounts=("/cache:ro",),
     )
 
@@ -40,8 +43,8 @@ def write_config(directory: Path, values: dict[str, object]) -> Path:
     return write_box_file(directory, box.CONFIG_FILE, values)
 
 
-def build_config(values: dict[str, object], directory: Path) -> box.Config:
-    """Build a config with no mounts, which come from their own file."""
+def config_from_values(values: dict[str, object], directory: Path) -> box.Config:
+    """Build a config from config file values and no mounts, which come from their own file."""
     return box.build_config(box.merge_values(values, {}), [], directory)
 
 
@@ -68,6 +71,12 @@ def test_read_config_file_reads_known_keys(tmp_path: Path) -> None:
 def test_read_config_file_rejects_unknown_keys(tmp_path: Path) -> None:
     path = write_config(tmp_path, {"nope": 1})
     with pytest.raises(box.ConfigError, match="unknown keys: nope"):
+        box.read_config_file(path)
+
+
+def test_read_config_file_rejects_a_json_array(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.CONFIG_FILE, ["memory"])
+    with pytest.raises(box.ConfigError, match="must contain a JSON object"):
         box.read_config_file(path)
 
 
@@ -103,8 +112,12 @@ def test_read_config_file_keeps_required_mounts_an_object(tmp_path: Path) -> Non
 
 
 def test_merge_values_prefers_cli_over_file() -> None:
-    merged = box.merge_values({"memory": "16g", "cpus": "8"}, {"memory": "2g", "cpus": None})
+    merged = box.merge_values({"memory": "16g"}, {"memory": "2g"})
     assert merged["memory"] == "2g"
+
+
+def test_merge_values_keeps_the_file_value_where_no_flag_was_given() -> None:
+    merged = box.merge_values({"cpus": "8"}, {"cpus": None})
     assert merged["cpus"] == "8"
 
 
@@ -114,13 +127,13 @@ def test_merge_values_falls_back_to_defaults() -> None:
 
 
 def test_build_config_derives_name_from_directory() -> None:
-    config = build_config({}, Path("/home/luuk/My Repo"))
+    config = config_from_values({}, Path("/home/luuk/My Repo"))
     assert config.name == "my-repo"
 
 
 def test_build_config_rejects_a_setting_that_is_not_a_string() -> None:
     with pytest.raises(box.ConfigError, match="cpus is a number, and it must be a string"):
-        build_config({"cpus": 6}, Path("/tmp/demo"))
+        config_from_values({"cpus": 6}, Path("/tmp/demo"))
 
 
 def test_a_bare_mount_is_read_only() -> None:
@@ -322,11 +335,11 @@ SANDBOX_REF = box.SandboxRef(ref_name="refs/sandboxes/demo-1/main", commit="abc1
 class FakeRepository:
     """Answer the git and Claude calls settle_ref makes, recording the branches and refs it wrote."""
 
-    def __init__(self, count: str, suggestion: str, branches: set[str]) -> None:
+    def __init__(self, *, count: str, suggestion: str, branches: set[str], refuse_branch: bool) -> None:
         self.count = count
         self.suggestion = suggestion
         self.branches = branches
-        self.refuse_branch = False
+        self.refuse_branch = refuse_branch
         self.created: list[tuple[str, str]] = []
         self.deleted: list[str] = []
         self.named_after = ""
@@ -364,7 +377,9 @@ class FakeRepository:
 
 
 def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.MonkeyPatch) -> None:
-    repository = FakeRepository("3", "add-retry-logic", {"main"})
+    repository = FakeRepository(
+        count="3", suggestion="add-retry-logic", branches={"main"}, refuse_branch=False
+    )
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.created == [("add-retry-logic", "abc123")]
@@ -372,14 +387,16 @@ def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.Monk
 
 
 def test_settle_ref_names_the_branch_after_the_commits(monkeypatch: pytest.MonkeyPatch) -> None:
-    repository = FakeRepository("3", "add-retry-logic", set())
+    repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.named_after == "Add retry logic\n"
 
 
 def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pytest.MonkeyPatch) -> None:
-    repository = FakeRepository("1", "add-retry-logic", {"add-retry-logic"})
+    repository = FakeRepository(
+        count="1", suggestion="add-retry-logic", branches={"add-retry-logic"}, refuse_branch=False
+    )
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.created == [("add-retry-logic-2", "abc123")]
@@ -388,7 +405,7 @@ def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pyt
 def test_settle_ref_says_where_the_work_ended_up(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    repository = FakeRepository("3", "add-retry-logic", set())
+    repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     printed = capsys.readouterr().err
@@ -399,14 +416,14 @@ def test_settle_ref_says_where_the_work_ended_up(
 def test_settle_ref_counts_a_single_commit_in_the_singular(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    repository = FakeRepository("1", "add-retry-logic", set())
+    repository = FakeRepository(count="1", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert "holds 1 commit from" in capsys.readouterr().err
 
 
 def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
-    repository = FakeRepository("0", "add-retry-logic", set())
+    repository = FakeRepository(count="0", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.created == []
@@ -416,7 +433,7 @@ def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPat
 def test_settle_ref_keeps_the_ref_when_naming_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    repository = FakeRepository("2", "", set())
+    repository = FakeRepository(count="2", suggestion="", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.created == []
@@ -425,7 +442,7 @@ def test_settle_ref_keeps_the_ref_when_naming_fails(
 
 
 def test_settle_ref_keeps_the_ref_when_git_refuses_the_branch(monkeypatch: pytest.MonkeyPatch) -> None:
-    repository = FakeRepository("2", "add-retry-logic", set())
+    repository = FakeRepository(count="2", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.refuse_branch = True
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
@@ -435,7 +452,7 @@ def test_settle_ref_keeps_the_ref_when_git_refuses_the_branch(monkeypatch: pytes
 def test_settle_ref_keeps_the_ref_when_git_cannot_count_the_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = FakeRepository("", "add-retry-logic", set())
+    repository = FakeRepository(count="", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
     box.settle_ref(SANDBOX_REF)
     assert repository.created == []
@@ -447,47 +464,68 @@ def completed(returncode: int, stdout: str) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=["claude"], returncode=returncode, stdout=stdout, stderr="")
 
 
-def test_suggest_branch_name_kebab_cases_what_claude_printed(monkeypatch: pytest.MonkeyPatch) -> None:
-    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
-        return completed(0, "Add Retry Logic\n")
+class FakeClaude:
+    """Answer the one headless claude run suggest_branch_name makes, recording how it made it."""
 
-    monkeypatch.setattr(subprocess, "run", run)
+    def __init__(self, *, result: subprocess.CompletedProcess[str], error: Exception | None) -> None:
+        self.result = result
+        self.error = error
+        self.commands: list[list[str]] = []
+        self.keywords: dict[str, object] = {}
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stand in for subprocess.run, which is all suggest_branch_name reaches the system by."""
+        monkeypatch.setattr(subprocess, "run", self.run)
+
+    def run(self, command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        """Answer a claude run, failing loudly when anything else was run instead."""
+        assert command[0] == "claude"
+        self.commands.append(command)
+        self.keywords.update(keywords)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def answering_claude(answer: str) -> FakeClaude:
+    """Build a claude that succeeds with the given answer."""
+    return FakeClaude(result=completed(0, answer), error=None)
+
+
+def test_suggest_branch_name_kebab_cases_what_claude_printed(monkeypatch: pytest.MonkeyPatch) -> None:
+    answering_claude("Add Retry Logic\n").install(monkeypatch)
     assert box.suggest_branch_name("Add retry logic") == "add-retry-logic"
 
 
 def test_suggest_branch_name_gives_claude_one_turn_and_no_more(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, object] = {}
-
-    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
-        seen.update(keywords)
-        return completed(0, "add-retry-logic\n")
-
-    monkeypatch.setattr(subprocess, "run", run)
+    claude = answering_claude("add-retry-logic\n")
+    claude.install(monkeypatch)
     box.suggest_branch_name("Add retry logic")
-    assert seen["timeout"] == box.BRANCH_NAME_TIMEOUT_SECONDS
+    assert claude.keywords["timeout"] == box.BRANCH_NAME_TIMEOUT_SECONDS
+
+
+def test_suggest_branch_name_sends_the_subjects_to_a_headless_claude(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claude = answering_claude("add-retry-logic\n")
+    claude.install(monkeypatch)
+    box.suggest_branch_name("Add retry logic")
+    assert claude.commands == [box.build_branch_name_command("Add retry logic")]
 
 
 def test_suggest_branch_name_is_empty_when_claude_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(cmd="claude", timeout=box.BRANCH_NAME_TIMEOUT_SECONDS)
-
-    monkeypatch.setattr(subprocess, "run", run)
+    timed_out = subprocess.TimeoutExpired(cmd="claude", timeout=box.BRANCH_NAME_TIMEOUT_SECONDS)
+    FakeClaude(result=completed(0, ""), error=timed_out).install(monkeypatch)
     assert box.suggest_branch_name("Add retry logic") == ""
 
 
 def test_suggest_branch_name_is_empty_when_claude_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
-        return completed(1, "")
-
-    monkeypatch.setattr(subprocess, "run", run)
+    FakeClaude(result=completed(1, ""), error=None).install(monkeypatch)
     assert box.suggest_branch_name("Add retry logic") == ""
 
 
 def test_suggest_branch_name_is_empty_when_claude_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
-    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
-        raise FileNotFoundError("claude")
-
-    monkeypatch.setattr(subprocess, "run", run)
+    FakeClaude(result=completed(0, ""), error=FileNotFoundError("claude")).install(monkeypatch)
     assert box.suggest_branch_name("Add retry logic") == ""
 
 
@@ -697,15 +735,13 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
         "--cpus",
         "2",
         "--kit",
-        ".sbx/kit",
+        "registry/kit",
     ]
 
 
-def test_build_create_command_omits_empty_kit() -> None:
-    command = box.build_create_command(make_config(), "demo-1")
-    assert "--kit" in command
-    without_kit = box.build_create_command(build_config({}, Path("/tmp/demo")), "demo-1")
-    assert "--kit" not in without_kit
+def test_build_create_command_omits_empty_kit(tmp_path: Path) -> None:
+    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    assert "--kit" not in command
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
@@ -718,7 +754,7 @@ def test_build_agent_args_includes_prompt_and_model() -> None:
 
 
 def test_build_agent_args_is_empty_without_settings(tmp_path: Path) -> None:
-    assert box.build_agent_args(build_config({}, tmp_path), "") == []
+    assert box.build_agent_args(config_from_values({}, tmp_path), "") == []
 
 
 def test_build_run_command_omits_separator_without_args() -> None:
@@ -830,6 +866,15 @@ def test_load_config_has_no_mounts_without_a_mounts_file(tmp_path: Path) -> None
     assert box.load_config(arguments, tmp_path).mounts == ()
 
 
+AUTHOR = ["-c", "user.name=box", "-c", "user.email=box@example.com"]
+
+
+def git(directory: Path, arguments: list[str]) -> str:
+    """Run a git command in a test repository, insisting it worked, and return what it printed."""
+    command = ["git", "-C", str(directory), *AUTHOR, *arguments]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
+
+
 def git_init(directory: Path) -> Path:
     """Create a git repository with no commits in it."""
     subprocess.run(["git", "init", "-q", str(directory)], check=True)
@@ -839,10 +884,27 @@ def git_init(directory: Path) -> Path:
 def make_git_repository(directory: Path) -> Path:
     """Create a git repository with the one commit box needs to have something to clone."""
     git_init(directory)
-    author = ["-c", "user.name=box", "-c", "user.email=box@example.com"]
-    commit = ["commit", "-q", "--allow-empty", "-m", "first"]
-    subprocess.run(["git", "-C", str(directory), *author, *commit], check=True)
+    git(directory, ["commit", "-q", "--allow-empty", "-m", "first"])
     return directory
+
+
+def commit_file(directory: Path, name: str, subject: str) -> str:
+    """Commit one new file and return the commit that holds it."""
+    (directory / name).write_text(name)
+    git(directory, ["add", name])
+    git(directory, ["commit", "-q", "-m", subject])
+    return git(directory, ["rev-parse", "HEAD"])
+
+
+def repository_with_sandbox_work(directory: Path) -> str:
+    """Build a repository whose HEAD lacks the two commits a sandbox ref points at."""
+    make_git_repository(directory)
+    base = git(directory, ["rev-parse", "HEAD"])
+    commit_file(directory, "one.txt", "Add one")
+    work = commit_file(directory, "two.txt", "Add two")
+    git(directory, ["update-ref", f"{box.SANDBOX_REFS}/demo-1/main", work])
+    git(directory, ["reset", "--hard", "-q", base])
+    return work
 
 
 def make_repository(directory: Path, gitignore: str) -> Path:
@@ -851,6 +913,115 @@ def make_repository(directory: Path, gitignore: str) -> Path:
     (directory / ".gitignore").write_text(gitignore)
     write_box_file(directory, box.MOUNTS_FILE, {"cache": "/cache"})
     return directory
+
+
+def test_count_new_commits_counts_what_this_checkout_lacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.count_new_commits(work) == "2"
+
+
+def test_count_new_commits_is_empty_when_git_cannot_read_the_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.count_new_commits("no-such-commit") == ""
+
+
+def test_new_commit_subjects_reads_the_subjects_of_what_this_checkout_lacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.new_commit_subjects(work) == "Add two\nAdd one\n"
+
+
+def test_sandbox_refs_finds_what_the_fetch_left(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.sandbox_refs("demo-1") == [
+        box.SandboxRef(ref_name=f"{box.SANDBOX_REFS}/demo-1/main", commit=work)
+    ]
+
+
+def test_sandbox_refs_ignores_another_sandboxs_refs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.sandbox_refs("demo-2") == []
+
+
+def test_create_branch_points_a_branch_at_the_sandboxs_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert box.create_branch("add-retry-logic", work)
+    assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
+
+
+def test_create_branch_says_no_to_a_name_git_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert not box.create_branch("a name with spaces", work)
+
+
+def test_local_branch_names_reads_the_branches_this_repository_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    box.create_branch("add-retry-logic", work)
+    assert "add-retry-logic" in box.local_branch_names()
+
+
+def test_delete_ref_drops_the_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    box.delete_ref(f"{box.SANDBOX_REFS}/demo-1/main")
+    assert box.sandbox_refs("demo-1") == []
+
+
+def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = repository_with_sandbox_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(box, "suggest_branch_name", lambda subjects: "add-retry-logic")
+    box.settle_sandbox_refs("demo-1")
+    assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
+    assert box.sandbox_refs("demo-1") == []
+
+
+def test_taken_names_asks_both_sbx_and_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def capture(command: list[str]) -> str:
+        commands.append(command)
+        if command[0] == "sbx":
+            return "demo-1\n"
+        return f"{box.SANDBOX_REFS}/demo-2/main\n"
+
+    monkeypatch.setattr(box, "capture", capture)
+    assert box.taken_names() == {"demo-1", "demo-2"}
+    assert commands == [
+        ["sbx", "ls", "-q"],
+        ["git", "for-each-ref", "--format=%(refname)", box.SANDBOX_REFS],
+    ]
+
+
+def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def capture(command: list[str]) -> str:
+        commands.append(command)
+        return ""
+
+    monkeypatch.setattr(box, "capture", capture)
+    box.drop_secret("demo-1")
+    assert commands == [["sbx", "secret", "rm", "demo-1", "--host", box.SECRET_HOST, "-f"]]
 
 
 def test_a_directory_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
@@ -865,6 +1036,27 @@ def test_a_repository_with_no_commits_is_rejected(tmp_path: Path) -> None:
 
 def test_a_repository_with_a_commit_is_accepted(tmp_path: Path) -> None:
     box.require_git_repository(make_git_repository(tmp_path))
+
+
+def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    token = tmp_path / "token"
+    token.write_text("sk-ant-secret\n")
+    monkeypatch.setattr(box, "taken_names", lambda: {"demo-1"})
+    prompt = tmp_path / "agent.md"
+    prompt.write_text("project rules")
+    config = config_from_values(
+        {"name": "demo", "kit": "registry/kit", "model": "claude-opus-5", "prompt_file": str(prompt)},
+        tmp_path,
+    )
+    launch = box.prepare_launch(config, str(token), repository)
+    assert launch.sandbox_name == "demo-2"
+    assert launch.token == "sk-ant-secret"
+    assert launch.agent_args[0] == "--append-system-prompt"
+    assert launch.agent_args[1] == f"{box.BASE_PROMPT}\n\nproject rules"
+    assert launch.agent_args[2:] == ["--model", "claude-opus-5"]
 
 
 def test_prepare_launch_rejects_a_directory_that_is_not_a_repository(tmp_path: Path) -> None:
@@ -926,15 +1118,13 @@ def test_gen_leaves_an_existing_deps_dir_alone(tmp_path: Path) -> None:
     assert kept.is_dir()
 
 
-def test_gen_leaves_a_project_whose_deps_dir_box_accepts(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    box.generate(tmp_path)
-    box.require_ignored_local_paths(tmp_path)
-
-
 def test_the_prompt_offers_the_deps_dir_when_nothing_here_fits() -> None:
     prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
     assert f"{box.DEPS_DIR}/" in prompt
+
+
+def test_the_prompt_says_the_sandbox_runs_linux_whatever_this_machine_runs() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin")
     assert "The sandbox runs Linux" in prompt
 
 
@@ -962,8 +1152,14 @@ def test_config_is_a_command() -> None:
 
 
 def test_config_takes_the_same_flags_as_run() -> None:
-    arguments = box.build_parser().parse_args(["config", "--memory", "8g"])
-    assert arguments.memory == "8g"
+    parser = box.build_parser()
+    for_config = vars(parser.parse_args(["config"]))
+    for_run = vars(parser.parse_args(["run"]))
+    assert set(for_config) == set(for_run)
+
+
+def test_config_takes_a_setting_flag() -> None:
+    assert box.build_parser().parse_args(["config", "--memory", "8g"]).memory == "8g"
 
 
 def test_config_is_not_a_setup_command() -> None:
@@ -980,7 +1176,7 @@ def test_show_config_prints_the_settings_and_returns_zero(
 
 
 def test_show_config_makes_the_checks_a_run_would(tmp_path: Path) -> None:
-    config = build_config({"model": "claude-opus-5"}, tmp_path)
+    config = config_from_values({"model": "claude-opus-5"}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
         box.show_config(config, "/secrets/token", make_git_repository(tmp_path))
 
@@ -1327,14 +1523,6 @@ def test_mount_prompt_prints_nothing_without_declared_mounts(
     assert capsys.readouterr().out == ""
 
 
-def test_mount_prompt_asks_about_a_name_the_mounts_file_lacks(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
-    box.mount_prompt(tmp_path)
-    assert "go: the Go toolchain" in capsys.readouterr().out
-
-
 def test_gen_scaffolds_a_placeholder_for_every_declared_mount(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
     box.generate(tmp_path)
@@ -1439,13 +1627,13 @@ def test_prepare_launch_requires_the_token_environment_variable(tmp_path: Path) 
 
 
 def test_prepare_launch_requires_a_kit() -> None:
-    config = build_config({}, Path("/tmp/demo"))
+    config = config_from_values({}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="kit is not set"):
         box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
 
 
 def test_prepare_launch_requires_a_model() -> None:
-    config = build_config({"kit": ".sbx/kit"}, Path("/tmp/demo"))
+    config = config_from_values({"kit": ".sbx/kit"}, Path("/tmp/demo"))
     with pytest.raises(box.ConfigError, match="model is not set"):
         box.prepare_launch(config, "/secrets/token", Path("/tmp/demo"))
 
@@ -1453,7 +1641,7 @@ def test_prepare_launch_requires_a_model() -> None:
 def test_a_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
     spec = tmp_path / "spec.yaml"
     spec.write_text("kit: {}\n")
-    config = build_config({"kit": str(spec), "model": "claude-opus-5"}, tmp_path)
+    config = config_from_values({"kit": str(spec), "model": "claude-opus-5"}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit names a file"):
         box.require_settings(config)
 
@@ -1462,12 +1650,12 @@ def test_a_kit_naming_a_directory_is_accepted(tmp_path: Path) -> None:
     kit = tmp_path / "kit"
     kit.mkdir()
     (kit / "spec.yaml").write_text("kit: {}\n")
-    config = build_config({"kit": str(kit), "model": "claude-opus-5"}, tmp_path)
+    config = config_from_values({"kit": str(kit), "model": "claude-opus-5"}, tmp_path)
     box.require_settings(config)
 
 
 def test_a_kit_that_is_not_on_disk_is_left_to_sbx(tmp_path: Path) -> None:
-    config = build_config({"kit": "some/registry/ref", "model": "claude-opus-5"}, tmp_path)
+    config = config_from_values({"kit": "some/registry/ref", "model": "claude-opus-5"}, tmp_path)
     box.require_settings(config)
 
 
@@ -1490,11 +1678,11 @@ def test_token_file_is_not_a_config_key() -> None:
 
 
 def test_every_config_key_is_snake_case() -> None:
-    assert all(key == key.lower() for key in box.DEFAULTS)
+    assert all(re.fullmatch(r"[a-z][a-z0-9_]*", key) for key in box.DEFAULTS)
 
 
 def test_config_keys_match_the_config_fields() -> None:
-    config = build_config({}, Path("/tmp/demo"))
+    config = config_from_values({}, Path("/tmp/demo"))
     settings = set(box.DEFAULTS) - {"required_mounts"}
     assert set(vars(config)) == settings | {"mounts"}
 
@@ -1558,3 +1746,260 @@ def test_format_config_shows_the_token_path_with_the_settings() -> None:
     assert box.TOKEN_FILE_ENV in rendered
     assert "/secrets/token" in rendered
     assert "8g" in rendered
+
+
+def test_format_config_aligns_every_value_in_one_column() -> None:
+    lines = box.format_config(make_config(), "/secrets/token").splitlines()[1:]
+    columns = {len(line) - len(line.lstrip().split(" ", 1)[-1].lstrip()) for line in lines}
+    assert len(columns) == 1
+
+
+def test_resolve_path_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", "/home/someone")
+    assert box.resolve_path("~/.cargo") == Path("/home/someone/.cargo")
+
+
+def test_resolve_path_leaves_an_absolute_path_alone() -> None:
+    assert box.resolve_path("/usr/local/go") == Path("/usr/local/go")
+
+
+def test_build_environment_keeps_the_environment_box_was_run_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOX_TEST_MARKER", "kept")
+    assert box.build_environment(make_config())["BOX_TEST_MARKER"] == "kept"
+
+
+def test_warn_dirty_says_how_to_inspect_recover_and_remove(capsys: pytest.CaptureFixture[str]) -> None:
+    box.warn_dirty("demo-1", " M box.py\n")
+    printed = capsys.readouterr().err
+    assert " M box.py" in printed
+    assert f"Inspect:  sbx exec demo-1 git -C {Path.cwd()} diff" in printed
+    assert f"Recover:  sbx cp demo-1:{Path.cwd()}/<file> ." in printed
+    assert "sbx rm --force demo-1" in printed
+
+
+def test_is_git_ignored_reads_the_gitignore(tmp_path: Path) -> None:
+    make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    assert box.is_git_ignored(tmp_path, box.MOUNTS_FILE)
+
+
+def test_is_git_ignored_says_no_to_a_path_the_gitignore_misses(tmp_path: Path) -> None:
+    make_repository(tmp_path, "*.log\n")
+    assert not box.is_git_ignored(tmp_path, box.MOUNTS_FILE)
+
+
+def test_setup_command_runs_gen(tmp_path: Path) -> None:
+    assert box.setup_command("gen", tmp_path) == 0
+    assert (tmp_path / box.CONFIG_FILE).is_file()
+
+
+def test_setup_command_runs_mount_prompt(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    assert box.setup_command("mount-prompt", tmp_path) == 0
+    assert "go: the Go toolchain" in capsys.readouterr().out
+    assert not (tmp_path / box.MOUNTS_FILE).exists()
+
+
+def test_mount_prompt_names_the_platform_this_machine_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    box.mount_prompt(tmp_path)
+    assert sys.platform in capsys.readouterr().out
+
+
+class FakeDownload:
+    """Stand in for the response urlopen hands back, holding the published box.py's bytes."""
+
+    def __init__(self, published: bytes) -> None:
+        self.published = published
+
+    def __enter__(self) -> FakeDownload:
+        """Enter the with block fetch_remote_hash reads the response in."""
+        return self
+
+    def __exit__(self, *details: object) -> None:
+        """Leave that block, letting any error through."""
+
+    def read(self) -> bytes:
+        """Answer with the published bytes."""
+        return self.published
+
+
+def test_fetch_remote_hash_hashes_what_the_update_url_serves(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def urlopen(url: str, timeout: float) -> FakeDownload:
+        seen.update(url=url, timeout=timeout)
+        return FakeDownload(b"print()")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert box.fetch_remote_hash() == hashlib.sha256(b"print()").hexdigest()
+    assert seen == {"url": box.UPDATE_URL, "timeout": box.UPDATE_TIMEOUT_SECONDS}
+
+
+class FakeSession:
+    """Record the order run_session does things in, and how far a failing step lets it get."""
+
+    def __init__(self, *, create_fails: bool, agent_code: int) -> None:
+        self.create_fails = create_fails
+        self.agent_code = agent_code
+        self.steps: list[str] = []
+        self.commands: list[list[str]] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stand in for the secret, the cleanup and every sbx call run_session makes."""
+
+        def drop_secret(sandbox_name: str) -> None:
+            self.steps.append("drop-secret")
+
+        def store_secret(sandbox_name: str, token: str) -> None:
+            self.steps.append("store-secret")
+
+        def cleanup(sandbox_name: str) -> None:
+            self.steps.append("cleanup")
+
+        monkeypatch.setattr(box, "drop_secret", drop_secret)
+        monkeypatch.setattr(box, "store_secret", store_secret)
+        monkeypatch.setattr(box, "cleanup", cleanup)
+        monkeypatch.setattr(subprocess, "run", self.run)
+
+    def run(self, command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        """Answer an sbx call, failing loudly when anything else was run instead."""
+        assert command[0] == "sbx"
+        self.steps.append(" ".join(command[:2]))
+        self.commands.append(command)
+        if command[1] == "create" and self.create_fails:
+            return subprocess.CompletedProcess(args=command, returncode=1)
+        if command[1] == "create":
+            return subprocess.CompletedProcess(args=command, returncode=0)
+        return subprocess.CompletedProcess(args=command, returncode=self.agent_code)
+
+
+def make_launch() -> box.Launch:
+    """Build what prepare_launch would have resolved for a run."""
+    return box.Launch(sandbox_name="demo-1", token="sk-ant-secret", agent_args=["--model", "claude-opus-5"])
+
+
+def test_run_session_stores_the_secret_before_creating_the_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    box.run_session(make_config(), make_launch())
+    assert session.steps.index("store-secret") < session.steps.index("sbx create")
+
+
+def test_run_session_creates_runs_and_cleans_up_in_that_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    assert box.run_session(make_config(), make_launch()) == 0
+    assert session.steps == ["drop-secret", "store-secret", "sbx create", "sbx run", "cleanup"]
+
+
+def test_run_session_returns_the_agents_own_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession(create_fails=False, agent_code=3)
+    session.install(monkeypatch)
+    assert box.run_session(make_config(), make_launch()) == 3
+
+
+def test_run_session_cleans_up_after_an_agent_that_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession(create_fails=False, agent_code=1)
+    session.install(monkeypatch)
+    box.run_session(make_config(), make_launch())
+    assert session.steps[-1] == "cleanup"
+
+
+def test_run_session_reports_a_failed_create_and_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession(create_fails=True, agent_code=0)
+    session.install(monkeypatch)
+    assert box.run_session(make_config(), make_launch()) == 1
+    assert session.steps == ["drop-secret", "store-secret", "sbx create", "drop-secret"]
+    assert "never started" in capsys.readouterr().err
+
+
+def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Build a project that passes every check box makes before it starts a sandbox."""
+    make_git_repository(directory)
+    (directory / box.GITIGNORE_FILE).write_text(f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n")
+    write_config(directory, {"kit": "registry/kit", "model": "claude-opus-5"})
+    token = directory / "token"
+    token.write_text("sk-ant-secret\n")
+    monkeypatch.setenv(box.TOKEN_FILE_ENV, str(token))
+    return directory
+
+
+def call_main(monkeypatch: pytest.MonkeyPatch, directory: Path, argument_list: list[str]) -> int:
+    """Run main the way the command line would, with the update check kept off the network."""
+    monkeypatch.setattr(sys, "argv", ["box", *argument_list])
+    monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.chdir(directory)
+    return box.main()
+
+
+def refuse_to_run(config: box.Config, launch: box.Launch) -> int:
+    """Stand in for run_session where reaching it at all is the failure."""
+    raise AssertionError("no sandbox may be created here")
+
+
+def test_main_writes_a_starter_project_with_gen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert call_main(monkeypatch, tmp_path, ["gen"]) == 0
+    assert (tmp_path / box.CONFIG_FILE).is_file()
+
+
+def test_main_prints_the_config_without_creating_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    make_runnable_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(box, "run_session", refuse_to_run)
+    assert call_main(monkeypatch, tmp_path, ["config"]) == 0
+    assert "claude-opus-5" in capsys.readouterr().out
+
+
+def test_main_turns_a_rejected_project_into_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(box, "run_session", refuse_to_run)
+    assert call_main(monkeypatch, tmp_path, ["run"]) == 1
+    printed = capsys.readouterr().err
+    assert printed.startswith("box: kit is not set")
+    assert "Traceback" not in printed
+
+
+def test_main_rejects_a_flag_on_a_setup_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert call_main(monkeypatch, tmp_path, ["--memory", "8g", "gen"]) == 1
+    assert "gen takes no flags" in capsys.readouterr().err
+    assert not (tmp_path / box.BOX_DIR).exists()
+
+
+def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    launched: list[box.Launch] = []
+
+    def run_session(config: box.Config, launch: box.Launch) -> int:
+        launched.append(launch)
+        return 7
+
+    make_runnable_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(box, "taken_names", set)
+    monkeypatch.setattr(box, "run_session", run_session)
+    assert call_main(monkeypatch, tmp_path, ["run"]) == 7
+    assert launched[0].token == "sk-ant-secret"
+    assert launched[0].agent_args[-2:] == ["--model", "claude-opus-5"]
+
+
+def test_main_checks_for_an_update_even_when_the_command_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checks: list[str] = []
+
+    monkeypatch.setattr(sys, "argv", ["box", "run"])
+    monkeypatch.setattr(box, "warn_when_outdated", lambda: checks.append("checked"))
+    monkeypatch.setattr(box, "run_session", refuse_to_run)
+    monkeypatch.chdir(tmp_path)
+    assert box.main() == 1
+    assert checks == ["checked"]
