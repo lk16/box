@@ -1,0 +1,53 @@
+schemaVersion: "2"
+kind: mixin
+name: box-network-policy
+displayName: box network policy
+description: The agent's own API calls and nothing else; every dependency comes off a mounted cache
+
+caps:
+  network:
+    allow:
+      - api.anthropic.com:443   # the agent's own API calls (not auto-included by the claude kit)
+      # Nothing else is allowlisted, and the checks still run: uv installs from the host's uv
+      # cache, mounted read-only and copied in below, with UV_OFFLINE=1. That holds only while
+      # the host has synced against the image's Python at least once, since a cache holds wheels
+      # built for one tag -- see docs/sandbox.md.
+      #
+      # pypi.org and github.com are deliberately absent, so `pre-commit run -a` does not work
+      # here: its upstream hook repo would be cloned from github and given an environment built
+      # from PyPI. docs/sandbox.md has the checks to run instead. Run pre-commit on the host.
+
+commands:
+  startup:
+    - command: ["sudo", "rm", "-f", "/usr/local/bin/clipboard-bridge", "/usr/local/bin/sbx-clipboard"]
+      description: Remove the clipboard bridge binaries (no documented off-switch exists)
+    - command:
+        - "sh"
+        - "-c"
+        - |
+          # A mount keeps the path it has on the host, which differs per machine, so find the
+          # two by what they contain rather than by where anyone happens to keep them.
+          for mount in $(grep " virtiofs " /proc/mounts | cut -d" " -f2); do
+            if [ -x "$mount/uv" ] && [ ! -e /usr/local/bin/uv.host ]; then
+              # The image ships an older uv that reads a different cache layout, so the host's
+              # own binary has to win: same version that wrote the cache, same version reading it.
+              sudo ln -sf "$mount/uv" /usr/local/bin/uv
+              sudo touch /usr/local/bin/uv.host
+            fi
+            if [ -f "$mount/CACHEDIR.TAG" ] && [ -d "$mount/archive-v0" ] && [ ! -e "$HOME/.cache/uv" ]; then
+              mkdir -p "$HOME/.cache"
+              # Copy aside and move into place, since this runs while the agent may already be
+              # working: a half-copied cache must never be visible as one uv will trust.
+              rm -rf "$HOME/.cache/uv.incoming"
+              cp -r "$mount" "$HOME/.cache/uv.incoming" || continue
+              [ -e "$HOME/.cache/uv" ] || mv "$HOME/.cache/uv.incoming" "$HOME/.cache/uv"
+              rm -rf "$HOME/.cache/uv.incoming"
+            fi
+          done
+      description: >-
+        Point uv at the host's binary and give it a writable copy of the host's
+        cache. uv refuses a read-only cache outright -- it creates marker files
+        at startup and fails with "Failed to initialize cache" -- and an overlay
+        over the mount is not available here either, so a plain copy is what is
+        left. With no PyPI on the allowlist this is where every dependency comes
+        from, not merely a way to save downloads.
