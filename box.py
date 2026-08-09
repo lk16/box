@@ -9,7 +9,6 @@ import json
 import os
 import platform
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -31,8 +30,9 @@ GITIGNORE_FILE = ".gitignore"
 # What box gen writes where it cannot know the path, so an unfilled mount fails loudly.
 MOUNT_PLACEHOLDER = "/placeholder/for/real/path"
 
-# Commands that work on the project's files, so settings and their flags mean nothing to them.
-SETUP_COMMANDS = ("gen", "mount-prompt")
+# Commands that read no settings, so a flag means nothing to them: they work on the project's
+# files, or on box itself.
+SETUP_COMMANDS = ("gen", "mount-prompt", "self-update")
 
 # box.py has no version, so being current means hashing the same as the published copy.
 UPDATE_URL = "https://raw.githubusercontent.com/lk16/box/main/box.py"
@@ -41,6 +41,9 @@ UPDATE_URL = "https://raw.githubusercontent.com/lk16/box/main/box.py"
 UPDATE_URL_ENV = "BOX_UPDATE_URL"
 UPDATE_INTERVAL_SECONDS = 60 * 60
 UPDATE_TIMEOUT_SECONDS = 2
+
+# What a half-written update is called until it is moved over the copy it replaces.
+INCOMING_SUFFIX = ".incoming"
 
 # The update notice competes with whatever the agent prints, so it is coloured to stand out.
 RED = "\033[31m"
@@ -392,10 +395,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=["run", "config", "gen", "mount-prompt"],
+        choices=["run", "config", "gen", "mount-prompt", "self-update"],
         help=f"run starts a sandbox, config prints the settings in effect, "
         f"gen writes a starter {BOX_DIR} directory, "
-        "mount-prompt asks an agent to fill in this machine's paths",
+        "mount-prompt asks an agent to fill in this machine's paths, "
+        "self-update replaces this box with the published one",
     )
     return parser
 
@@ -959,9 +963,11 @@ def mount_prompt(working_directory: Path) -> int:
 
 
 def setup_command(command: str, working_directory: Path) -> int:
-    """Run a command that writes or reads the project's files instead of loading settings."""
+    """Run a command that needs no settings: one that works on the project's files, or on box."""
     if command == "gen":
         return generate(working_directory)
+    if command == "self-update":
+        return self_update(Path(__file__).resolve())
     return mount_prompt(working_directory)
 
 
@@ -991,10 +997,15 @@ def update_url() -> str:
     return os.environ.get(UPDATE_URL_ENV, UPDATE_URL)
 
 
+def download(url: str) -> bytes:
+    """Read the published box.py, which is all either the check or an update needs from the network."""
+    with urllib.request.urlopen(url, timeout=UPDATE_TIMEOUT_SECONDS) as response:
+        return bytes(response.read())
+
+
 def fetch_remote_hash(url: str) -> str:
     """Hash the published box.py."""
-    with urllib.request.urlopen(url, timeout=UPDATE_TIMEOUT_SECONDS) as response:
-        return hashlib.sha256(response.read()).hexdigest()
+    return hashlib.sha256(download(url)).hexdigest()
 
 
 def checked_recently(path: Path, now: float) -> bool:
@@ -1028,15 +1039,47 @@ def in_red(text: str) -> str:
     return f"{RED}{text}{RESET}"
 
 
-def update_message(script_path: Path, remote_hash: str, url: str) -> str:
+def update_message(script_path: Path, remote_hash: str) -> str:
     """Say an update is available, and how to take it, when this copy is not the published one."""
     if remote_hash == file_hash(script_path):
         return ""
     if not os.access(script_path, os.W_OK):
         return in_red(f"An update to box is available, but {script_path} is not writable by you.")
-    quoted = shlex.quote(str(script_path))
-    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {quoted} {url}"
-    return in_red(take_it)
+    return in_red("An update to box is available. Take it with:\n  box self-update")
+
+
+def replace_script(script_path: Path, published: bytes) -> None:
+    """Write the published copy beside this one and move it over, so a failure changes nothing."""
+    incoming = script_path.with_name(f"{script_path.name}{INCOMING_SUFFIX}")
+    incoming.write_bytes(published)
+    # The copy being replaced is executable, and whatever replaces it has to stay that way.
+    incoming.chmod(script_path.stat().st_mode)
+    os.replace(incoming, script_path)
+
+
+def self_update(script_path: Path) -> int:
+    """Replace this box.py with the published one, which is the whole of updating an install."""
+    url = update_url()
+    if not url:
+        raise ConfigError(f"{UPDATE_URL_ENV} is set to nothing, so there is nowhere to update from")
+    # A checked out box.py is the copy someone is working on, and git is how that one is updated.
+    if is_tracked_by_git(script_path):
+        raise ConfigError(f"git tracks {script_path}, so this is a checkout rather than an install")
+    try:
+        published = download(url)
+    except OSError as error:
+        raise ConfigError(f"could not read {url}: {error}") from error
+    if not published:
+        raise ConfigError(f"{url} served an empty file, which is no copy of box")
+    if hashlib.sha256(published).hexdigest() == file_hash(script_path):
+        print(f"kept    {script_path}, which is already the published copy")
+        return 0
+    try:
+        replace_script(script_path, published)
+    except OSError as error:
+        raise ConfigError(f"could not write {script_path}: {error}") from error
+    print(f"updated {script_path}")
+    return 0
 
 
 def warn_when_outdated() -> None:
@@ -1056,7 +1099,7 @@ def warn_when_outdated() -> None:
             return
         # A failed check is still a check, so the hour it buys must not depend on GitHub answering.
         store_check_time(path, now)
-        message = update_message(script_path, fetch_remote_hash(url), url)
+        message = update_message(script_path, fetch_remote_hash(url))
     except Exception:
         return
     if message:

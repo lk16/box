@@ -21,8 +21,9 @@ One run does this:
 
 `box run` does that. Every command starts with a word, so nothing happens by accident when a flag
 is mistyped. The others all exit without creating a sandbox: `box config` prints the settings in
-effect, `box gen` writes a starter `.box/` directory, and `box mount-prompt` prints the prompt
-that has an agent on this host fill in the mounts `.box/mounts.json` still leaves as placeholders.
+effect, `box gen` writes a starter `.box/` directory, `box mount-prompt` prints the prompt
+that has an agent on this host fill in the mounts `.box/mounts.json` still leaves as placeholders,
+and `box self-update` writes the published `box.py` over the running one.
 
 ## Constraints
 
@@ -37,7 +38,11 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   unset, since a pipe or a log file would otherwise be handed the escape codes as characters. box
   follows XDG on macOS as well as on Linux, the way uv, ruff, pip and gh do, rather than splitting
   the cache path per platform. `BOX_UPDATE_URL` names the copy to compare with, so a fork or a
-  vendored copy is not nagged about box's own `main`, and an empty value costs no round trip at all. Every failure is swallowed: an unreachable GitHub, a broken cache or
+  vendored copy is not nagged about box's own `main`, and an empty value costs no round trip at all.
+- `box self-update` takes the update the check found, since the alternative is a `curl` line to
+  copy. It writes beside the running script and moves the new copy over it, so a failed download or
+  a directory it cannot write leaves the working box exactly as it was, and it refuses a `box.py`
+  git tracks: that copy is someone's work in progress, and git is how it is updated. Every failure is swallowed: an unreachable GitHub, a broken cache or
   a missing home directory must never stop a command that would otherwise work.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
   Its `version` is inert -- uv refuses a `[project]` table without one -- and says nothing about

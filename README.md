@@ -31,11 +31,11 @@ login bash:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Re-run the same `curl` to update. box prints it on stderr, at most once an hour, when the published
-copy differs from yours — in red on a terminal, as plain text into a pipe or with `NO_COLOR` set. A
-copy git tracks is left alone, so working on box itself never nags you to overwrite your own
-changes. A fork points the check at its own copy with `BOX_UPDATE_URL`, and setting that variable to
-nothing switches the check off.
+`box self-update` takes an update. box says one is there on stderr, at most once an hour, when the
+published copy differs from yours — in red on a terminal, as plain text into a pipe or with
+`NO_COLOR` set. A copy git tracks is left alone, and `self-update` refuses one outright, so working
+on box itself never overwrites your own changes. A fork points both at its own copy with
+`BOX_UPDATE_URL`, and setting that variable to nothing switches the check off.
 
 ## Quick start
 
@@ -66,10 +66,11 @@ per machine, so each clone does those two again.
 | `box config` | prints the settings in effect, the `CLAUDE_OAUTH_TOKEN_FILE` path included, then runs every check a run makes |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
 | `box run` | creates the sandbox and starts Claude in it |
+| `box self-update` | replaces this copy of box with the published one, in one move |
 
 `box run` hands the agent a clone of the current repository, so it refuses to start outside a git
-repository, or in one with no commits yet. `gen` and `mount-prompt` work on the project's files
-rather than on settings, so they reject every flag.
+repository, or in one with no commits yet. `gen`, `mount-prompt` and `self-update` read no settings,
+so they reject every flag.
 
 `CLAUDE_OAUTH_TOKEN_FILE` names a file holding a token from `claude setup-token`, and is the one
 setting with no flag and no config key: a shared project file can never point at someone else's

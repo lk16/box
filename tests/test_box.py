@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -1265,32 +1266,23 @@ def test_store_check_time_creates_the_cache_directory(tmp_path: Path) -> None:
 def test_no_update_message_when_the_hashes_match(tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
-    assert box.update_message(script, box.file_hash(script), box.UPDATE_URL) == ""
+    assert box.update_message(script, box.file_hash(script)) == ""
 
 
-def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> None:
-    script = tmp_path / "box.py"
+def test_the_update_message_names_the_command_that_takes_it(tmp_path: Path) -> None:
+    script = tmp_path / "box"
     script.write_text("print()")
-    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
-    assert str(script) in message
-    assert box.UPDATE_URL in message
-    assert "curl" in message
-
-
-def test_the_update_message_quotes_a_path_holding_a_space(tmp_path: Path) -> None:
-    script = tmp_path / "my box.py"
-    script.write_text("print()")
-    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
-    assert f"'{script}'" in message
+    assert "box self-update" in box.update_message(script, "a-different-hash")
 
 
 def test_the_update_message_says_when_the_script_cannot_be_written(tmp_path: Path) -> None:
-    script = tmp_path / "box.py"
+    script = tmp_path / "box"
     script.write_text("print()")
     script.chmod(0o444)
-    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
+    message = box.update_message(script, "a-different-hash")
     assert "not writable by you" in message
-    assert "curl" not in message
+    assert str(script) in message
+    assert "self-update" not in message
 
 
 def test_a_cache_without_a_check_time_reads_as_never_checked(tmp_path: Path) -> None:
@@ -1342,7 +1334,7 @@ def test_the_update_message_is_red_on_a_terminal(monkeypatch: pytest.MonkeyPatch
     script = tmp_path / "box.py"
     script.write_text("print()")
     use_a_terminal(monkeypatch, terminal=True)
-    message = box.update_message(script, "a-different-hash", box.UPDATE_URL)
+    message = box.update_message(script, "a-different-hash")
     assert message.startswith(box.RED)
     assert message.endswith(box.RESET)
 
@@ -1353,7 +1345,7 @@ def test_the_update_message_carries_no_escape_codes_into_a_pipe(
     script = tmp_path / "box.py"
     script.write_text("print()")
     use_a_terminal(monkeypatch, terminal=False)
-    assert box.RED not in box.update_message(script, "a-different-hash", box.UPDATE_URL)
+    assert box.RED not in box.update_message(script, "a-different-hash")
 
 
 def use_an_installed_copy(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
@@ -1462,10 +1454,130 @@ def test_warn_when_outdated_warns_at_most_once_an_hour(
     use_an_installed_copy(monkeypatch, tmp_path)
     monkeypatch.setattr(box, "fetch_remote_hash", fetch)
     box.warn_when_outdated()
-    assert box.UPDATE_URL in capsys.readouterr().err
+    assert "box self-update" in capsys.readouterr().err
     box.warn_when_outdated()
     assert capsys.readouterr().err == ""
     assert fetches == ["a-different-hash"]
+
+
+def an_installed_script(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Write a box.py the way an install has one: executable, and tracked by no repository."""
+    script = directory / "box"
+    script.write_bytes(b"print('old')\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: False)
+    monkeypatch.delenv(box.UPDATE_URL_ENV, raising=False)
+    return script
+
+
+def serve(monkeypatch: pytest.MonkeyPatch, published: bytes) -> None:
+    """Answer the one download self-update makes with the bytes the URL is meant to hold."""
+    monkeypatch.setattr(box, "download", lambda url: published)
+
+
+def test_self_update_is_a_command() -> None:
+    assert box.build_parser().parse_args(["self-update"]).command == "self-update"
+
+
+def test_self_update_takes_no_flags() -> None:
+    arguments = box.build_parser().parse_args(["--memory", "8g", "self-update"])
+    with pytest.raises(box.ConfigError, match="self-update takes no flags"):
+        box.require_no_flags(arguments)
+
+
+def test_self_update_writes_the_published_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    serve(monkeypatch, b"print('new')\n")
+    assert box.self_update(script) == 0
+    assert script.read_bytes() == b"print('new')\n"
+
+
+def test_self_update_keeps_the_script_executable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    serve(monkeypatch, b"print('new')\n")
+    box.self_update(script)
+    assert os.access(script, os.X_OK)
+
+
+def test_self_update_leaves_nothing_beside_the_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    serve(monkeypatch, b"print('new')\n")
+    box.self_update(script)
+    assert [path.name for path in tmp_path.iterdir()] == [script.name]
+
+
+def test_self_update_says_when_there_is_nothing_to_take(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    serve(monkeypatch, script.read_bytes())
+    assert box.self_update(script) == 0
+    assert "already the published copy" in capsys.readouterr().out
+
+
+def test_self_update_reports_a_url_it_cannot_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(url: str) -> bytes:
+        raise OSError("no network")
+
+    script = an_installed_script(tmp_path, monkeypatch)
+    monkeypatch.setattr(box, "download", explode)
+    with pytest.raises(box.ConfigError, match="could not read"):
+        box.self_update(script)
+    assert script.read_bytes() == b"print('old')\n"
+
+
+def test_self_update_rejects_an_empty_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    serve(monkeypatch, b"")
+    with pytest.raises(box.ConfigError, match="no copy of box"):
+        box.self_update(script)
+    assert script.read_bytes() == b"print('old')\n"
+
+
+def test_self_update_reports_a_script_it_cannot_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    script = an_installed_script(directory, monkeypatch)
+    serve(monkeypatch, b"print('new')\n")
+    directory.chmod(0o555)
+    try:
+        with pytest.raises(box.ConfigError, match="could not write"):
+            box.self_update(script)
+    finally:
+        directory.chmod(0o755)
+
+
+def test_self_update_refuses_a_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: True)
+    serve(monkeypatch, b"print('new')\n")
+    with pytest.raises(box.ConfigError, match="checkout rather than an install"):
+        box.self_update(script)
+
+
+def test_self_update_has_nowhere_to_update_from_without_a_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = an_installed_script(tmp_path, monkeypatch)
+    monkeypatch.setenv(box.UPDATE_URL_ENV, "")
+    with pytest.raises(box.ConfigError, match="nowhere to update from"):
+        box.self_update(script)
+
+
+def test_setup_command_updates_the_box_that_is_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    updated: list[Path] = []
+
+    def self_update(script_path: Path) -> int:
+        updated.append(script_path)
+        return 0
+
+    monkeypatch.setattr(box, "self_update", self_update)
+    assert box.setup_command("self-update", Path("/tmp/demo")) == 0
+    assert updated == [Path(box.__file__).resolve()]
 
 
 def test_a_command_is_required() -> None:
