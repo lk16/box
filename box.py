@@ -497,13 +497,13 @@ def build_create_command(config: Config, sandbox_name: str) -> list[str]:
     return command
 
 
-def build_agent_args(system_prompt: str, model: str) -> list[str]:
+def build_agent_args(config: Config, system_prompt: str) -> list[str]:
     """Assemble the arguments passed through to the Claude CLI."""
     args = []
     if system_prompt:
         args.extend(["--append-system-prompt", system_prompt])
-    if model:
-        args.extend(["--model", model])
+    if config.model:
+        args.extend(["--model", config.model])
     return args
 
 
@@ -755,16 +755,21 @@ def require_ignored_local_paths(working_directory: Path) -> None:
         raise ConfigError(help_text)
 
 
-def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
-    """Resolve everything that can still fail before the sandbox exists."""
+def require_project(config: Config, working_directory: Path) -> None:
+    """Run every check on the settings and the project that does not create anything."""
     require_settings(config)
     require_git_repository(working_directory)
     require_ignored_local_paths(working_directory)
+
+
+def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
+    """Resolve everything that can still fail before the sandbox exists."""
+    require_project(config, working_directory)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))
     system_prompt = build_system_prompt(read_system_prompt(config.prompt_file))
-    agent_args = build_agent_args(system_prompt, config.model)
+    agent_args = build_agent_args(config, system_prompt)
     return Launch(sandbox_name=pick_name(config.name, taken_names()), token=token, agent_args=agent_args)
 
 
@@ -943,9 +948,11 @@ def setup_command(command: str, working_directory: Path) -> int:
     return mount_prompt(working_directory)
 
 
-def show_config(config: Config, token_file: str) -> int:
-    """Print the settings in effect without creating a sandbox."""
+def show_config(config: Config, token_file: str, working_directory: Path) -> int:
+    """Print the settings in effect, then run every check a run would make before starting."""
     print(format_config(config, token_file))
+    # The settings are printed first, so a rejected project is read next to what it resolved to.
+    require_project(config, working_directory)
     return 0
 
 
@@ -1028,7 +1035,7 @@ def dispatch(arguments: argparse.Namespace, working_directory: Path) -> int:
     config = load_config(arguments, working_directory)
     token_file = token_file_from_environment()
     if arguments.command == "config":
-        return show_config(config, token_file)
+        return show_config(config, token_file, working_directory)
     launch = prepare_launch(config, token_file, working_directory)
     return run_session(config, launch)
 

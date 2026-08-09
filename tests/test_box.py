@@ -455,7 +455,7 @@ def test_suggest_branch_name_kebab_cases_what_claude_printed(monkeypatch: pytest
     assert box.suggest_branch_name("Add retry logic") == "add-retry-logic"
 
 
-def test_suggest_branch_name_gives_claude_five_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_suggest_branch_name_gives_claude_one_turn_and_no_more(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
     def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
@@ -464,7 +464,7 @@ def test_suggest_branch_name_gives_claude_five_seconds(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(subprocess, "run", run)
     box.suggest_branch_name("Add retry logic")
-    assert seen["timeout"] == 10
+    assert seen["timeout"] == box.BRANCH_NAME_TIMEOUT_SECONDS
 
 
 def test_suggest_branch_name_is_empty_when_claude_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -709,7 +709,7 @@ def test_build_create_command_omits_empty_kit() -> None:
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
-    assert box.build_agent_args("be careful", "claude-opus-5") == [
+    assert box.build_agent_args(make_config(), "be careful") == [
         "--append-system-prompt",
         "be careful",
         "--model",
@@ -717,8 +717,8 @@ def test_build_agent_args_includes_prompt_and_model() -> None:
     ]
 
 
-def test_build_agent_args_is_empty_without_settings() -> None:
-    assert box.build_agent_args("", "") == []
+def test_build_agent_args_is_empty_without_settings(tmp_path: Path) -> None:
+    assert box.build_agent_args(build_config({}, tmp_path), "") == []
 
 
 def test_build_run_command_omits_separator_without_args() -> None:
@@ -971,12 +971,32 @@ def test_config_is_not_a_setup_command() -> None:
 
 
 def test_show_config_prints_the_settings_and_returns_zero(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    assert box.show_config(make_config(), "/secrets/token") == 0
+    assert box.show_config(make_config(), "/secrets/token", make_git_repository(tmp_path)) == 0
     printed = capsys.readouterr().out
     assert "claude-opus-5" in printed
     assert "/secrets/token" in printed
+
+
+def test_show_config_makes_the_checks_a_run_would(tmp_path: Path) -> None:
+    config = build_config({"model": "claude-opus-5"}, tmp_path)
+    with pytest.raises(box.ConfigError, match="kit is not set"):
+        box.show_config(config, "/secrets/token", make_git_repository(tmp_path))
+
+
+def test_show_config_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, "")
+    with pytest.raises(box.ConfigError, match="not ignored by git"):
+        box.show_config(make_config(), "/secrets/token", repository)
+
+
+def test_show_config_prints_the_settings_before_rejecting_the_project(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(box.ConfigError):
+        box.show_config(make_config(), "/secrets/token", tmp_path)
+    assert "claude-opus-5" in capsys.readouterr().out
 
 
 def test_cache_path_follows_xdg_cache_home(monkeypatch: pytest.MonkeyPatch) -> None:

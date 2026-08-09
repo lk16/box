@@ -9,9 +9,11 @@ One run does this:
    command line taking priority.
 2. Pick the first free `<base>-<n>` sandbox name, checking both running sandboxes and leftover
    `refs/sandboxes/*` git refs.
-3. Create the sandbox with `--clone`, so the agent commits into an in-container clone.
+3. Create the sandbox with `--clone`, so the agent commits into an in-container clone. The disk
+   limits reach `sbx` as `DOCKER_SANDBOXES_ROOT_SIZE` and `DOCKER_SANDBOXES_DOCKER_SIZE` on its
+   environment rather than as flags, so box overrides either one the user already exported.
 4. Store the Claude OAuth token as an `sbx` secret scoped to that sandbox name.
-5. Run the agent with `BASE_PROMPT` as its system prompt, followed by the project's own
+5. Run the agent with `BASE_PROMPT` appended to its system prompt, followed by the project's own
    `prompt_file` when one is configured, plus the model when one is set.
 6. On exit, fetch committed work back to the host, put it on a branch a headless Claude names,
    and remove the sandbox — unless the sandbox still has uncommitted changes, in which case it is
@@ -35,12 +37,15 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   GitHub, a broken cache or a missing home directory must never stop a command that would
   otherwise work.
 - Standard library only. The tooling in `pyproject.toml` is for development, never for running.
+  Its `version` is inert -- uv refuses a `[project]` table without one -- and says nothing about
+  box, which has no version at all.
 - Settings come from flags or `.box/config.json` in the current directory, flags first.
 - `config` takes the same flags as `run` and resolves the same settings, so it answers "what
   would run do" and validates the project's files without creating anything. `gen` and
   `mount-prompt` work on those files instead of reading settings, so they reject every flag.
-- Everything box reads from a project lives under `.box/`, so a project has one box footprint
-  rather than a scatter of dotfiles at its root.
+- Everything box writes to a project lives under `.box/`, apart from the `.gitignore` lines it
+  needs, so a project has one box footprint rather than a scatter of dotfiles at its root. It
+  reads two things from outside it: the `prompt_file` at whatever path names it, and the `kit`.
 - Mounts are declared and supplied separately. `required_mounts` in `.box/config.json` names what
   the project needs and describes what belongs there; `.box/mounts.json` gives each of those names
   a path on this machine. The two must match exactly: a declared name with no path, or a path
@@ -72,7 +77,8 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   the diff belong in front of them to approve. It offers `.box/deps/` as the third outcome, after
   finding a path and giving up. It asks about every declared mount without a path,
   whether the key is absent or holds the placeholder, so it follows a declaration directly.
-  Printing nothing when every mount has a path keeps a second run from asking for done work.
+  Printing nothing on stdout when every mount has a path keeps a second run from asking for done
+  work; it says so on stderr, which no pipe into `claude` carries.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.
@@ -84,13 +90,17 @@ that has an agent on this host fill in the mounts `.box/mounts.json` still leave
   commits becomes a branch named by `claude -p`, and is dropped once that branch exists; a ref
   holding nothing new is dropped without one, since there is nothing to name.
 - Naming a branch is a courtesy, so every way it can fail -- no `claude` on `PATH`, a non-zero
-  exit, five seconds of silence, an empty answer, a name git refuses -- keeps the ref instead.
-  The work is already fetched, and a kept ref is what the user had before.
-- The branch name is whatever `claude` printed, kebab-cased and cut to five words, so a model
+  exit, ten seconds of silence, an empty answer, a name git refuses, a ref git cannot read --
+  keeps the ref instead. The work is already fetched, and a kept ref is what the user had before.
+- The branch name is the last line `claude` printed, kebab-cased and cut to five words, so a model
   that answers with a sentence still produces a name rather than an error. A name the repository
   already has takes a `-2`, `-3` suffix, since a fetched commit must never overwrite a branch.
 - Extra mounts are read-only unless the user appends `:rw`, so write access to the host is
   always something that was asked for.
+- A directory git does not read as a repository, or a repository with no commits, is an error
+  naming what to do about it. `sbx create --clone` clones the working directory, so neither gives
+  the agent anything to work from, and the second leaves every fetched ref with no HEAD to settle
+  against.
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
   unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
   install, which is not this host's.

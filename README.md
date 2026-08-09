@@ -45,11 +45,12 @@ with no commits yet.
 
 - point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token`, e.g.
   `export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token` in your shell profile, or per
-  project with `direnv`. box refuses to start without it
+  project with `direnv`. box refuses to start without it, or if the file it names is missing or
+  empty
 - **`box mount-prompt | claude`** — have an agent fill in the mounts this project needs on this
   machine. See [Filling them in with an agent](#filling-them-in-with-an-agent)
-- **`box config`** — confirm box's config files parse, and show the settings in effect without
-  running
+- **`box config`** — show the settings in effect, including the `CLAUDE_OAUTH_TOKEN_FILE` path,
+  and run every check `box run` makes before it starts anything
 - **`box run`** — start the sandbox. See [Settings](#settings) for flags
 
 ## Settings
@@ -70,7 +71,7 @@ prints what a run would end up with.
 
 | Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |
-| `--name NAME` | `name` | current directory name | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
+| `--name NAME` | `name` | directory name, kebab-cased (`box` if nothing survives) | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
 | `--memory SIZE` | `memory` | `4g` | Memory limit for the sandbox. |
 | `--cpus N` | `cpus` | `4` | CPUs allocated to the sandbox. |
 | `--root-size SIZE` | `root_size` | `10g` | Sandbox root filesystem size. |
@@ -79,7 +80,7 @@ prints what a run would end up with.
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
-| `--mount PATH` | `.box/mounts.json` | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
+| `--mount PATH` | — | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. So is a value
 that is not a string: write `"cpus": "4"`, not `"cpus": 4`, since box passes these to `sbx`
@@ -164,8 +165,8 @@ paths and check they exist rather than guess, and is told to say which it could 
 of inventing one. Where nothing on the machine fits — the sandbox runs Linux whatever you run —
 it downloads a suitable build into `.box/deps/` and points the mount there.
 
-It works straight after someone declares a new mount, and prints nothing once they all have
-paths, so you can re-run it after a partial fill.
+It works straight after someone declares a new mount, and prints nothing on stdout once they all
+have paths — it says so on stderr instead — so you can re-run it after a partial fill.
 
 Its output is only as good as your descriptions: `"go cache"` gives an agent nothing, while
 `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run.
@@ -185,13 +186,17 @@ A clean sandbox is settled and removed. Each of its refs is one of:
 - **nothing new** — the agent committed nothing, so the ref is dropped and no branch is made,
   rather than leaving an empty name behind
 
-Naming is best effort. If `claude` fails, answers with nothing, or takes longer than five seconds,
-the commits stay on their ref and box says so — the work is already fetched, and
+Naming is best effort. If `claude` fails, answers with nothing, takes longer than ten seconds, or
+git cannot read the ref or refuses the name, the commits stay on their ref and box says so — the work is already fetched, and
 `git log refs/sandboxes/<name>/<branch>` still reaches it.
 
 If the tree is dirty the sandbox is kept, its refs are left alone, and the recovery commands are
 printed — inspect it with `sbx exec`, copy files out with `sbx cp`, and remove it yourself with
-`sbx rm --force <name>`.
+`sbx rm --force <name>`. The same happens when box cannot tell: a fetch or a status check that
+fails is never read as "there is nothing here to lose".
+
+`box run` exits with the sandbox agent's own exit code, so a script can act on it. Every other
+refusal exits 1, and a Ctrl-C exits 130.
 
 ## Conservative by default
 
