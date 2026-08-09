@@ -87,8 +87,7 @@ something you did not choose.
 
 The kit carries the sandbox's network allowlist, and running without one would quietly give the
 agent whatever network access `sbx` grants by default. Point `kit` at the directory holding a
-`spec.yaml`, by convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`, since `sbx` reads
-anything that is not a directory as a zip artifact.
+`spec.yaml`, by convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`.
 
 The model must be named because the Claude CLI inside the sandbox is a different install from the
 one on your machine, possibly a different version, and an unset model means *its* default decides
