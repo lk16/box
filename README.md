@@ -13,7 +13,7 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 - Python 3.11 or newer — box says so and stops on an older one, rather than failing obscurely
   later. macOS's own `python3` is 3.9, so `~/.local/bin` may need a newer one ahead of it on `PATH`
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)), `git` and the `claude` CLI on
-  `PATH`
+  `PATH` — `box run` and `box config` name any that are missing before doing anything else
 - Linux or macOS
 
 ## Install

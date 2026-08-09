@@ -1038,6 +1038,41 @@ def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.Monk
     assert commands == [["sbx", "secret", "rm", "demo-1", "--host", box.SECRET_HOST, "-f"]]
 
 
+def test_every_command_box_shells_out_to_is_required() -> None:
+    assert set(box.REQUIRED_BINARIES) == {"sbx", "git", "claude"}
+
+
+def test_missing_binaries_is_empty_when_path_has_every_one() -> None:
+    assert box.missing_binaries(box.REQUIRED_BINARIES) == []
+
+
+def test_missing_binaries_names_what_path_lacks() -> None:
+    assert box.missing_binaries(("git", MISSING_BINARY)) == [MISSING_BINARY]
+
+
+def test_require_binaries_accepts_a_machine_that_has_them_all() -> None:
+    box.require_binaries()
+
+
+def test_require_binaries_names_every_command_that_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(box.ConfigError, match="sbx, git, claude") as refusal:
+        box.require_binaries()
+    assert "not on PATH" in str(refusal.value)
+
+
+def test_prepare_launch_refuses_a_machine_without_sbx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    with pytest.raises(box.ConfigError, match="not on PATH"):
+        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+
+
 def test_a_project_with_no_config_is_sent_to_gen(tmp_path: Path) -> None:
     with pytest.raises(box.ConfigError, match="Run box gen"):
         box.require_config_file(tmp_path)

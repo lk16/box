@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -75,6 +76,9 @@ SANDBOX_REFS = "refs/sandboxes"
 # What a command that never started exits with, which is what a shell reports for the same thing.
 NOT_RUN = 127
 
+# What box shells out to, checked once up front so a missing one is a message and not a failed run.
+REQUIRED_BINARIES = ("sbx", "git", "claude")
+
 # The shebang takes whatever python3 comes first, which on a stock macOS is Xcode's 3.9.
 PYTHON_MINIMUM = (3, 11)
 
@@ -87,6 +91,10 @@ Answer with the name and nothing else: kebab-case, at most {BRANCH_NAME_WORDS} w
 better.
 
 Commit subjects:"""
+
+MISSING_BINARIES_HELP = """these commands are not on PATH: {missing}.
+box shells out to sbx to create the sandbox, to git to fetch the sandbox's work back, and to claude
+to name the branch that work lands on, so all three have to be installed."""
 
 NO_CONFIG_HELP = f"""this project has no {CONFIG_FILE}, so box has no settings to run with.
 Run box gen to write a starter one, then name a model in it."""
@@ -801,6 +809,19 @@ def require_ignored_local_paths(working_directory: Path) -> None:
         raise ConfigError(help_text)
 
 
+def missing_binaries(names: tuple[str, ...]) -> list[str]:
+    """Name the commands PATH does not have, in the order box would need them."""
+    return [name for name in names if shutil.which(name) is None]
+
+
+def require_binaries() -> None:
+    """Refuse to run without the commands box shells out to, rather than failing at the first one."""
+    missing = missing_binaries(REQUIRED_BINARIES)
+    if not missing:
+        return
+    raise ConfigError(MISSING_BINARIES_HELP.format(missing=", ".join(missing)))
+
+
 def require_config_file(working_directory: Path) -> None:
     """Send a project with no box setup at all to the command that writes one."""
     if not (working_directory / CONFIG_FILE).is_file():
@@ -809,7 +830,9 @@ def require_config_file(working_directory: Path) -> None:
 
 def require_project(config: Config, working_directory: Path) -> None:
     """Run every check on the settings and the project that does not create anything."""
-    # A first-timer has no settings to be told about yet, so the missing file comes first.
+    # Nothing box does works without these, so they come before anything about this project.
+    require_binaries()
+    # A first-timer has no settings to be told about yet, so the missing file comes next.
     require_config_file(working_directory)
     require_settings(config)
     require_git_repository(working_directory)
