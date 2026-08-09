@@ -71,6 +71,9 @@ SANDBOX_REFS = "refs/sandboxes"
 # What a command that never started exits with, which is what a shell reports for the same thing.
 NOT_RUN = 127
 
+# The shebang takes whatever python3 comes first, which on a stock macOS is Xcode's 3.9.
+PYTHON_MINIMUM = (3, 11)
+
 # A branch name is a courtesy, so the agent naming it gets one turn and no more.
 BRANCH_NAME_TIMEOUT_SECONDS = 10
 BRANCH_NAME_WORDS = 5
@@ -1130,8 +1133,25 @@ def main() -> int:
         return 1
 
 
+def to_version(version: tuple[int, ...]) -> str:
+    """Spell a version the way a Python release is named, so a message can compare two of them."""
+    return ".".join(str(part) for part in version)
+
+
+def unsupported_python(version: tuple[int, ...]) -> str:
+    """Say what box needs when this Python is older, since running anyway breaks somewhere obscure."""
+    if version >= PYTHON_MINIMUM:
+        return ""
+    needed = to_version(PYTHON_MINIMUM)
+    return f"box needs Python {needed} or newer, but this python3 is {to_version(version)}."
+
+
 def run_box() -> int:
-    """Run box, turning a Ctrl-C into an exit code rather than a traceback."""
+    """Run box on a Python it supports, turning a Ctrl-C into an exit code rather than a traceback."""
+    too_old = unsupported_python(sys.version_info[:2])
+    if too_old:
+        print(f"box: {too_old}", file=sys.stderr)
+        return 1
     try:
         return main()
     except KeyboardInterrupt:

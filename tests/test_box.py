@@ -1928,6 +1928,30 @@ def test_run_box_passes_the_exit_code_through(monkeypatch: pytest.MonkeyPatch) -
     assert box.run_box() == 3
 
 
+def test_the_python_running_the_tests_is_supported() -> None:
+    assert box.unsupported_python(sys.version_info[:2]) == ""
+
+
+def test_the_oldest_supported_python_is_supported() -> None:
+    assert box.unsupported_python(box.PYTHON_MINIMUM) == ""
+
+
+def test_an_older_python_names_both_versions() -> None:
+    assert box.unsupported_python((3, 9)) == "box needs Python 3.11 or newer, but this python3 is 3.9."
+
+
+def test_run_box_refuses_an_older_python_before_doing_anything(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse_to_run() -> int:
+        raise AssertionError("box must not run on a Python it does not support")
+
+    monkeypatch.setattr(sys, "version_info", (3, 9, 6, "final", 0))
+    monkeypatch.setattr(box, "main", refuse_to_run)
+    assert box.run_box() == 1
+    assert "box: box needs Python 3.11 or newer" in capsys.readouterr().err
+
+
 def test_format_value_joins_mounts() -> None:
     assert box.format_value(("/a:ro", "/b")) == "/a:ro /b"
 

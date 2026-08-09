@@ -27,7 +27,10 @@ and `box self-update` writes the published `box.py` over the running one.
 
 ## Constraints
 
-- All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS.
+- All code lives in `box.py`. It runs standalone, with a shebang, on Linux and macOS. The shebang
+  takes whatever `python3` comes first, which on a stock macOS is Xcode's 3.9, so box names the
+  version it needs and stops rather than running on something older and breaking somewhere obscure.
+  Nothing in the file needs 3.11 syntax, which is what lets that message reach the reader at all.
 - One installed copy serves every project, so everything resolves relative to the current
   working directory and nothing relative to the script's own location. The update check is the
   one exception: it hashes the script's own file, which is the only thing it can compare.
