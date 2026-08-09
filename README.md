@@ -10,8 +10,8 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 
 ## Requirements
 
-- Python 3.11 or newer — box says so and stops on an older one, rather than failing obscurely
-  later. macOS's own `python3` is 3.9, so `~/.local/bin` may need a newer one ahead of it on `PATH`
+- Python 3.11 or newer — box names the version it needs and stops on an older one, rather than
+  failing obscurely later. macOS's own `python3` is 3.9, so put a newer one earlier on `PATH`
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)), `git` and the `claude` CLI on
   `PATH` — `box run` and `box config` name any that are missing before doing anything else
 - Linux or macOS
@@ -32,7 +32,7 @@ login bash:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-`box self-update` takes an update. box says one is there on stderr, at most once an hour, when the
+To update, run `box self-update`. box says one is waiting on stderr, at most once an hour, when the
 published copy differs from yours — in red on a terminal, as plain text into a pipe or with
 `NO_COLOR` set. A copy git tracks is left alone, and `self-update` refuses one outright, so working
 on box itself never overwrites your own changes. A fork points both at its own copy with
@@ -56,8 +56,8 @@ prompt. The built-in prompt tells the agent to make assumptions and keep going r
 a question, since you may well walk away — but the session is interactive, so you can watch what
 it does and step in.
 
-`box gen` and the config file are committed once for everyone. The token and the mount paths are
-per machine, so each clone does those two again.
+`.box/config.json` and the kit are committed once for everyone. The token and the mount paths are
+per machine, so every clone does those two again.
 
 ## Commands
 
