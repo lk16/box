@@ -8,105 +8,130 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 - on exit, committed work comes back on a named branch and the sandbox is removed
 - a sandbox holding uncommitted changes is kept, not removed
 
-Needs Python 3.11+, plus `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)),
-`git` and the `claude` CLI on `PATH`. Works on Linux and macOS.
+## Requirements
+
+- Python 3.11 or newer — box names the version it needs and stops on an older one, rather than
+  failing obscurely later. macOS's own `python3` is 3.9, so put a newer one earlier on `PATH`
+- `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)), `git` and the `claude` CLI on
+  `PATH` — `box run` and `box config` name any that are missing before doing anything else
+- Linux or macOS
 
 ## Install
 
 ```sh
 mkdir -p ~/.local/bin
-curl -fsSL -o ~/.local/bin/box.py https://raw.githubusercontent.com/lk16/box/main/box.py
-chmod +x ~/.local/bin/box.py
+curl -fsSL -o ~/.local/bin/box https://raw.githubusercontent.com/lk16/box/main/box.py
+chmod +x ~/.local/bin/box
 ```
 
-Then add the alias to `~/.bashrc` or `~/.zshrc`, and reload your shell config (or open a new
-terminal):
+Debian and Ubuntu put `~/.local/bin` on `PATH` for you; macOS does not. If `box` is not found, add
+it in your shell's startup file — `~/.zshrc` on macOS, `~/.bashrc` on Linux, `~/.bash_profile` for
+login bash:
 
 ```sh
-alias box='~/.local/bin/box.py'
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Re-run the same `curl` to update — box prints it in red on stderr, at most once an hour, when the
-published copy differs from yours.
+To update, run `box self-update`. box says one is waiting on stderr, at most once an hour, when the
+published copy differs from yours — in red on a terminal, as plain text into a pipe or with
+`NO_COLOR` set. A copy git tracks is left alone, and `self-update` refuses one outright, so working
+on box itself never overwrites your own changes. A fork points both at its own copy with
+`BOX_UPDATE_URL`, and setting that variable to nothing switches the check off.
 
-## Use
+## Quick start
 
-Every command runs from the root of the repository you want an agent to work on.
+Run everything from the root of the repository you want an agent to work on:
 
-### Adding box to a project, once for everyone
+```sh
+box gen                    # writes .box/ and the .gitignore lines box needs
+$EDITOR .box/config.json   # fill in model; gen wrote the kit it points at
+export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token
+box mount-prompt | claude  # only if the project declares required_mounts
+box config                 # the settings, plus every check a run makes
+box run                    # start the sandbox
+```
 
-- **`box gen`** — adds files in the `.box` folder and updates `.gitignore`
-- edit `.box/config.json` — fill in `kit`, `model` and any [`required_mounts`](#mounts) by hand
+`box run` drops you into an interactive Claude session inside the sandbox: type the task at its
+prompt. The built-in prompt tells the agent to make assumptions and keep going rather than stop on
+a question, since you may well walk away — but the session is interactive, so you can watch what
+it does and step in.
 
-### Setting up this machine, once per clone
+`.box/config.json` and the kit are committed once for everyone. The token and the mount paths are
+per machine, so every clone does those two again.
 
-- point `CLAUDE_OAUTH_TOKEN_FILE` at a file holding a token from `claude setup-token`, e.g.
-  `export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token` in your shell profile, or per
-  project with `direnv`. box refuses to start without it
-- **`box mount-prompt | claude`** — have an agent fill in the mounts this project needs on this
-  machine. See [Filling them in with an agent](#filling-them-in-with-an-agent)
-- **`box config`** — confirm box's config files parse, and show the settings in effect without
-  running
-- **`box run`** — start the sandbox. See [Settings](#settings) for flags
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` lines box needs, changing nothing already filled in |
+| `box config` | prints the settings in effect, the `CLAUDE_OAUTH_TOKEN_FILE` path included, then runs every check a run makes |
+| `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
+| `box run` | creates the sandbox and starts Claude in it |
+| `box self-update` | replaces this copy of box with the published one, in one move |
+
+`box run` hands the agent a clone of the current repository, so it refuses to start outside a git
+repository, or in one with no commits yet. `gen`, `mount-prompt` and `self-update` read no settings,
+so they reject every flag.
+
+`CLAUDE_OAUTH_TOKEN_FILE` names a file holding a token from `claude setup-token`, and is the one
+setting with no flag and no config key: a shared project file can never point at someone else's
+credentials. box refuses to start without it, or if the file it names is missing or empty.
 
 ## Settings
 
-Settings you use every run belong in `.box/config.json`, which is committed with the project:
+Settings you use every run belong in `.box/config.json`, which is committed with the project. box's
+own looks like this:
 
 ```json
 {
   "kit": ".sbx/kit",
   "model": "claude-opus-5",
-  "prompt_file": "docs/agent.md",
+  "prompt_file": "docs/sandbox.md",
   "memory": "8g"
 }
 ```
 
-A command line flag wins over that file, which wins over the built-in default. `box config`
-prints what a run would end up with.
+A command line flag wins over that file, which wins over the built-in default. `box config` prints
+what a run would end up with, showing `(unset)` where nothing was given.
 
 | Flag | `.box/config.json` key | Default | Meaning |
 | --- | --- | --- | --- |
-| `--name NAME` | `name` | current directory name | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
+| `--name NAME` | `name` | directory name, kebab-cased (`box` if nothing survives) | Sandbox base name; a `-1`, `-2`, … suffix is added per run. |
 | `--memory SIZE` | `memory` | `4g` | Memory limit for the sandbox. |
 | `--cpus N` | `cpus` | `4` | CPUs allocated to the sandbox. |
 | `--root-size SIZE` | `root_size` | `10g` | Sandbox root filesystem size. |
 | `--docker-size SIZE` | `docker_size` | `10g` | Sandbox Docker storage size. |
 | `--model MODEL` | `model` | — (required) | Model passed to the Claude CLI. |
-| `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt (see [The system prompt](#the-system-prompt)). |
+| `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt. |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
-| `--mount PATH` | `.box/mounts.json` | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
+| `--mount PATH` | — | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
-Anything unknown in `.box/config.json` is an error, so typos surface immediately.
+Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
+text: `"cpus": 4` and `"cpus": "4"` both work, since a number spells itself, but `null`, `true` and
+a list are errors naming the key. `required_mounts` is the one key holding an object.
 
-`kit` and `model` have no defaults: box refuses to start without them, rather than falling back to
-something you did not choose — see [Conservative by default](#conservative-by-default).
+`kit` and `model` are required rather than defaulted: an unset kit leaves the sandbox's network
+access to whatever `sbx` grants, and an unset model leaves the choice to the sandbox's own Claude
+install, which is not this host's.
 
-The kit carries the sandbox's network allowlist, and running without one would quietly give the
-agent whatever network access `sbx` grants by default. Point `kit` at the directory holding a
-`spec.yaml`, by convention `.sbx/kit` — the directory, not `.sbx/kit/spec.yaml`.
-
-The sandbox's Claude CLI is a different install from yours, so an unset model leaves what runs to
-*its* default rather than to you.
+`kit` names the directory holding a `spec.yaml`, not the file inside it. `box gen` writes a starter
+policy at `.box/kit/spec.yaml` — the agent's own API calls and nothing else — and points `kit` at
+it, so the only setting left to fill in is `model`. Widen the allowlist for whatever the project's
+checks fetch, or point `kit` at a policy you keep elsewhere; box's own lives in `.sbx/kit`, which is
+sbx's convention.
 
 ## The system prompt
 
-box always sends a built-in prompt describing what is true of every sandbox: that the agent runs
-unattended with nobody to answer follow-ups, that only committed work survives removal, that
-pre-commit's hook is not installed, that the sandbox runs as a different user so `PATH` and caches
-do not point at the host's, and that a 403 on a dependency download is the network allowlist
-rather than a bug. It lives in `box.py`, as `BASE_PROMPT`, so every project gets it without
-copying it around.
+box always prepends a built-in prompt covering what is true of every sandbox. It lives in `box.py`
+as `BASE_PROMPT` — read it there.
 
 `prompt_file` adds what is true of one project — its test command, its quirks — and is appended
 after the built-in prompt, so it can qualify anything above it.
 
 ## Mounts
 
-Mounts are the one part of a project's box setup that names paths on the machine box runs on: a
-toolchain sits somewhere else on another machine, and somewhere else again on another OS. So the
-project declares *what* it needs and each machine says *where*.
+Paths differ per machine, so the project declares *what* it needs and each machine says *where*.
 
 `required_mounts` in the committed `.box/config.json` is a name and a description of what belongs
 there:
@@ -125,24 +150,22 @@ The gitignored `.box/mounts.json` gives each of those names a path:
 ```json
 {
   "go_toolchain": "/usr/local/go",
-  "go_mod_cache": "~/.local/go/pkg/mod"
+  "go_mod_cache": "~/go/pkg/mod"
 }
 ```
 
-`box run` refuses to start unless the two match exactly: a declared name with no path, a name
-still holding the placeholder `box gen` writes, or a name the project never declared is an error
-naming the mount. It also refuses while `.box/mounts.json` or `.box/deps/` is not ignored by git — one
+`box run` refuses to start unless the two match exactly: a declared name with no path, a name still
+holding the placeholder `box gen` writes, or a name the project never declared is an error naming
+the mount. It also refuses while `.box/mounts.json` or `.box/deps/` is not ignored by git — one
 carries paths that exist only on your machine, the other binaries that belong in nobody's history.
 `box gen` writes both `.gitignore` entries for you. Ignore those two rather than the whole `.box/`
 directory, so `config.json` stays committed.
 
-Every mount is read-only unless you say otherwise, since the point of a sandbox is that the agent
-cannot write to your machine. `~/scratch:rw` opts one path out, and writing `:ro` is an error
-rather than a synonym for the default. The `:rw` goes on the path in `.box/mounts.json`, never in
-the declaration, so a shared file can never widen access to your disk — see [Conservative by
-default](#conservative-by-default). A leading `~` expands as it does in the shell. `--mount` adds
-an unnamed workspace for one run, for something genuinely one-off. `box config` shows the
-resulting `sbx` specs.
+Every mount is read-only unless you say otherwise: the point of a sandbox is that the agent cannot
+write to your machine. `~/scratch:rw` opts one path out, and `:ro` is an error rather than a synonym
+for the default. The `:rw` goes on the path in `.box/mounts.json`, never in the declaration, so a
+shared file can never widen access to your disk. A leading `~` expands as it does in the shell.
+`--mount` adds an unnamed workspace for one run. `box config` shows the resulting `sbx` specs.
 
 ### Filling them in with an agent
 
@@ -150,51 +173,56 @@ resulting `sbx` specs.
 box mount-prompt | claude
 ```
 
-This prints a prompt naming every declared mount that has no path yet, each with its description
-and the platform it is running on. Pipe it into an **interactive** session: this agent runs on
-your machine rather than in a sandbox, so it is deliberately the one place box puts a human in
-front of every command it runs and the diff it writes — see [Conservative by
-default](#conservative-by-default). It assumes a shell, so the agent can probe system specific
-paths and check they exist rather than guess, and is told to say which it could not find instead
-of inventing one. Where nothing on the machine fits — the sandbox runs Linux whatever you run —
-it downloads a suitable build into `.box/deps/` and points the mount there.
+The prompt names every declared mount that has no path yet, with its description and the platform
+and architecture a build has to match. Pipe it into an **interactive** session: this agent runs on
+your machine rather than in a sandbox, so its commands and its diff belong in front of you to approve.
+It is told to probe for each path and check it exists rather than guess, to say which it could not
+find, and — where nothing here fits, since the sandbox runs Linux whatever you run — to download a
+suitable build into `.box/deps/` and point the mount there.
 
-It works straight after someone declares a new mount, and prints nothing once they all have
-paths, so you can re-run it after a partial fill.
+Nothing is printed on stdout once every mount has a path, so a second run cannot ask for done work.
+It says so on stderr, which no pipe into `claude` carries.
 
 Its output is only as good as your descriptions: `"go cache"` gives an agent nothing, while
 `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run.
 
 ## What you get back
 
-Only committed work survives. On exit box fetches from the `sandbox-<name>` git remote, which
-lands the sandbox's commits on a `refs/sandboxes/<name>/<branch>` ref, then checks whether the
-sandbox has a dirty tree.
+Only committed work survives. On exit box fetches from the `sandbox-<name>` git remote, landing the
+sandbox's commits on a `refs/sandboxes/<name>/<branch>` ref, then checks the sandbox for a dirty
+tree.
 
 A clean sandbox is settled and removed. Each of its refs is one of:
 
-- **commits you do not have** — `claude -p` is given their subjects and asked for a kebab-case
-  name of at most five words, the commits are put on a branch under that name, and the ref is
-  dropped. `git switch <branch>` and the work is in front of you. A name the repository already
-  has takes a `-2`, `-3` suffix, so nothing is overwritten
-- **nothing new** — the agent committed nothing, so the ref is dropped and no branch is made,
-  rather than leaving an empty name behind
+- **commits you do not have** — `claude -p` names a branch after their subjects, the commits go on
+  it, and the ref is dropped. `git switch <branch>` and the work is in front of you. A name the
+  repository already has takes a `-2`, `-3` suffix, so nothing is overwritten
+- **nothing new** — the ref is dropped without a branch, rather than leaving an empty name behind
 
-Naming is best effort. If `claude` fails, answers with nothing, or takes longer than five seconds,
-the commits stay on their ref and box says so — the work is already fetched, and
-`git log refs/sandboxes/<name>/<branch>` still reaches it.
+Naming is best effort. If `claude` fails, answers with nothing, takes longer than ten seconds, or
+git cannot read the ref or refuses the name, the commits stay on their ref and box says so:
+`git log refs/sandboxes/<name>/<branch>` still reaches them.
 
-If the tree is dirty the sandbox is kept, its refs are left alone, and the recovery commands are
-printed — inspect it with `sbx exec`, copy files out with `sbx cp`, and remove it yourself with
-`sbx rm --force <name>`.
+A dirty sandbox is kept, its refs are left alone, and the recovery commands are printed. The same
+happens when box cannot tell — a fetch or a status check that fails is never read as "there is
+nothing here to lose".
 
-## Conservative by default
+`box run` exits with the sandbox agent's own exit code, so a script can act on it. Every other
+refusal exits 1, and a Ctrl-C exits 130.
 
-box would rather refuse to start, or hand the agent less, than let a run go wrong quietly. A
-missing setting is an error instead of a guess, network access is whatever the kit allows and
-nothing more, mounts are read-only until you say otherwise, the one agent that runs on your
-machine is interactive, and a sandbox with uncommitted work is never removed. Losing work, or an
-agent doing something you did not expect, is the thing box exists to prevent.
+## Troubleshooting
+
+box would rather refuse to start than let a run go wrong quietly, so a refusal names what to do.
+The ones you are most likely to meet:
+
+| Message | Fix |
+| --- | --- |
+| `this project has no .box/config.json` | run `box gen` |
+| `kit is not set` | point `kit` at a kit directory in `.box/config.json` |
+| `model is not set` | name a model in `.box/config.json` |
+| `CLAUDE_OAUTH_TOKEN_FILE is not set` | export it, pointing at a file holding a `claude setup-token` token |
+| `has no path on this machine for` | give the named mount a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
+| `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 
 ## Development
 

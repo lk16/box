@@ -1,5 +1,6 @@
 [project]
 name = "box"
+# box itself carries no version; uv requires this field to resolve the dev tooling.
 version = "0.1.0"
 description = "Run Claude Code inside a disposable Docker sandbox"
 requires-python = ">=3.11"
@@ -17,7 +18,15 @@ dev = [
 line-length = 110
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# D enforces the docstring rule in docs/style.md rather than leaving it to a reader.
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# Test names are the documentation, and a fake's class docstring covers its constructor.
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D103", "D107"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

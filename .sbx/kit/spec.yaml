@@ -1,3 +1,6 @@
+# box's own kit, not a template: it is built around this repository's mounted uv cache, so a project
+# that copies it gets a sandbox where every dependency download 403s. `box gen` writes a starter
+# policy at .box/kit/spec.yaml -- begin there instead.
 schemaVersion: "2"
 kind: mixin
 name: box-network-policy
