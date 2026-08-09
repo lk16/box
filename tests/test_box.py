@@ -24,7 +24,7 @@ def make_config() -> box.Config:
         root_size="20g",
         docker_size="30g",
         model="claude-opus-5",
-        prompt_file="docs/agent.md",
+        prompt_file="docs/project-prompt.md",
         kit="registry/kit",
         mounts=("/cache:ro",),
     )
