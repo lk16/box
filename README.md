@@ -55,8 +55,7 @@ Every run:
 - `box run` — start the sandbox
 
 `box config` prints the settings in effect and runs every check a run makes. Run it after either
-setup step, or when a run refuses and you want the whole picture — nothing to check again while
-nothing has changed.
+setup step, or when a run refuses and you want the whole picture.
 
 `box run` drops you into an interactive Claude session inside the sandbox: type the task at its
 prompt. The built-in prompt tells the agent to make assumptions and keep going rather than stop on
