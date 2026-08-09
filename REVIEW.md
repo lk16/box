@@ -55,7 +55,8 @@ directory name.
 `required_mounts` a dict — and raise a `ConfigError` naming the key. That also lets `build_config`
 drop all nine `str()` calls, so the fix shortens the file.
 
-**Done.**
+**Done** — with one deviation: a JSON number is still taken, since `"cpus": 4` is a natural thing
+to write and a number spells itself. `null`, a boolean and a container are the errors.
 
 ### 3
 **A missing `sbx` exits with a traceback.** `box.py:344-349`. `capture` catches a non-zero exit

@@ -229,14 +229,19 @@ def name_of_type(value: object) -> str:
     return JSON_TYPE_NAMES.get(type(value), type(value).__name__)
 
 
-def require_text_values(path: Path, values: dict[str, object]) -> dict[str, str]:
-    """Reject a value JSON allows but box would otherwise coerce into a string of itself."""
-    text = {}
-    for name, value in values.items():
-        if not isinstance(value, str):
-            raise ConfigError(f"{path} gives {name} {name_of_type(value)}, and it must be a string")
-        text[str(name)] = value
-    return text
+def to_text_value(path: Path, name: str, value: object) -> str:
+    """Take a JSON scalar as the string box passes on, rejecting what has no spelling as one."""
+    if isinstance(value, str):
+        return value
+    # A number spells itself; null, true and a container become "None", "True" and garbage.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{path} gives {name} {name_of_type(value)}, which is not text or a number")
+    return str(value)
+
+
+def as_text_values(path: Path, values: dict[str, object]) -> dict[str, str]:
+    """Take every value in a JSON object as the string box passes on."""
+    return {str(name): to_text_value(path, str(name), value) for name, value in values.items()}
 
 
 def read_config_file(path: Path) -> dict[str, object]:
@@ -249,10 +254,11 @@ def read_config_file(path: Path) -> dict[str, object]:
     unknown = sorted(set(loaded) - set(DEFAULTS))
     if unknown:
         raise ConfigError(f"{path} has unknown keys: {', '.join(unknown)}")
-    # Every setting is a string, so a number or a null must fail here rather than reach sbx as one.
     settings = {key: value for key, value in loaded.items() if key != REQUIRED_MOUNTS}
-    require_text_values(path, settings)
-    return loaded
+    values: dict[str, object] = dict(as_text_values(path, settings))
+    if REQUIRED_MOUNTS in loaded:
+        values[REQUIRED_MOUNTS] = loaded[REQUIRED_MOUNTS]
+    return values
 
 
 def read_mounts_file(path: Path) -> dict[str, str]:
@@ -262,14 +268,14 @@ def read_mounts_file(path: Path) -> dict[str, str]:
         return {}
     if not isinstance(loaded, dict):
         raise ConfigError(f"{path} must contain a JSON object of name to path")
-    return require_text_values(path, loaded)
+    return as_text_values(path, loaded)
 
 
 def as_descriptions(value: object) -> dict[str, str]:
     """Normalise the required_mounts value into name to description."""
     if not isinstance(value, dict):
         raise ConfigError(f"{REQUIRED_MOUNTS} must be a JSON object of name to description")
-    return require_text_values(Path(CONFIG_FILE), value)
+    return as_text_values(Path(CONFIG_FILE), value)
 
 
 def describe_mounts(required: dict[str, str], names: list[str]) -> str:
@@ -335,10 +341,10 @@ def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
 
 
 def setting(values: dict[str, object], key: str) -> str:
-    """Read one merged setting, which the config file and the command line both leave a string."""
+    """Read one merged setting, which reading the config file has already made a string."""
     value = values[key]
     if not isinstance(value, str):
-        raise ConfigError(f"{key} is {name_of_type(value)}, and it must be a string")
+        raise ConfigError(f"{key} is {name_of_type(value)}, which is not text")
     return value
 
 

@@ -82,9 +82,10 @@ prints what a run would end up with.
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | `--mount PATH` | — | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
-Anything unknown in `.box/config.json` is an error, so typos surface immediately. So is a value
-that is not a string: write `"cpus": "4"`, not `"cpus": 4`, since box passes these to `sbx`
-verbatim. `required_mounts` is the one key holding an object.
+Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
+text: `"cpus": 4` and `"cpus": "4"` both work, since a number spells itself, but `null`, `true`
+and a list are errors naming the key rather than the strings `None`, `True` and `[1, 2]` reaching
+`sbx`. `required_mounts` is the one key holding an object.
 
 `kit` and `model` have no defaults: box refuses to start without them, rather than falling back to
 something you did not choose — see [Conservative by default](#conservative-by-default).

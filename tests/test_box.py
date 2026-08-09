@@ -89,20 +89,25 @@ def test_read_config_file_rejects_broken_json(tmp_path: Path) -> None:
 
 def test_read_config_file_rejects_a_null_setting(tmp_path: Path) -> None:
     path = write_config(tmp_path, {"model": None})
-    with pytest.raises(box.ConfigError, match="gives model null, and it must be a string"):
+    with pytest.raises(box.ConfigError, match="gives model null, which is not text or a number"):
         box.read_config_file(path)
 
 
 def test_read_config_file_rejects_a_setting_that_is_a_list(tmp_path: Path) -> None:
     path = write_config(tmp_path, {"memory": [1, 2]})
-    with pytest.raises(box.ConfigError, match="gives memory a list, and it must be a string"):
+    with pytest.raises(box.ConfigError, match="gives memory a list, which is not text or a number"):
         box.read_config_file(path)
 
 
-def test_read_config_file_rejects_a_numeric_setting(tmp_path: Path) -> None:
+def test_read_config_file_rejects_a_setting_that_is_a_boolean(tmp_path: Path) -> None:
+    path = write_config(tmp_path, {"model": True})
+    with pytest.raises(box.ConfigError, match="gives model a boolean, which is not text or a number"):
+        box.read_config_file(path)
+
+
+def test_read_config_file_takes_a_number_as_the_string_it_spells(tmp_path: Path) -> None:
     path = write_config(tmp_path, {"cpus": 4})
-    with pytest.raises(box.ConfigError, match="gives cpus a number, and it must be a string"):
-        box.read_config_file(path)
+    assert box.read_config_file(path) == {"cpus": "4"}
 
 
 def test_read_config_file_keeps_required_mounts_an_object(tmp_path: Path) -> None:
@@ -131,9 +136,15 @@ def test_build_config_derives_name_from_directory() -> None:
     assert config.name == "my-repo"
 
 
-def test_build_config_rejects_a_setting_that_is_not_a_string() -> None:
-    with pytest.raises(box.ConfigError, match="cpus is a number, and it must be a string"):
+def test_build_config_rejects_a_value_that_never_went_through_the_config_file() -> None:
+    with pytest.raises(box.ConfigError, match="cpus is a number, which is not text"):
         config_from_values({"cpus": 6}, Path("/tmp/demo"))
+
+
+def test_load_config_takes_a_numeric_cpus_from_the_config_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"cpus": 6})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).cpus == "6"
 
 
 def test_a_bare_mount_is_read_only() -> None:
@@ -211,13 +222,13 @@ def test_read_mounts_file_rejects_broken_json(tmp_path: Path) -> None:
 
 def test_read_mounts_file_rejects_a_path_that_is_not_a_string(tmp_path: Path) -> None:
     path = write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": None})
-    with pytest.raises(box.ConfigError, match="gives cache null, and it must be a string"):
+    with pytest.raises(box.ConfigError, match="gives cache null, which is not text or a number"):
         box.read_mounts_file(path)
 
 
-def test_as_descriptions_rejects_a_description_that_is_not_a_string() -> None:
-    with pytest.raises(box.ConfigError, match="gives go a number, and it must be a string"):
-        box.as_descriptions({"go": 1})
+def test_as_descriptions_rejects_a_description_that_is_not_text() -> None:
+    with pytest.raises(box.ConfigError, match="gives go a list, which is not text or a number"):
+        box.as_descriptions({"go": ["the Go toolchain"]})
 
 
 def test_as_descriptions_rejects_a_json_array() -> None:
