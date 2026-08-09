@@ -1,7 +1,8 @@
-.box.json
 .claude-user/
 .venv/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.box/mounts.json
+.box/deps/

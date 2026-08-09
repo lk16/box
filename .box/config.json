@@ -1,0 +1,14 @@
+{
+  "name": "",
+  "memory": "4g",
+  "cpus": "4",
+  "root_size": "10g",
+  "docker_size": "10g",
+  "model": "claude-opus-5",
+  "prompt_file": "docs/sandbox.md",
+  "kit": ".sbx/kit",
+  "required_mounts": {
+    "uv_bin": "the directory holding the uv binary, what `dirname $(command -v uv)` prints -- it must be a Linux build for this machine's architecture, so on macOS put one in .box/deps/ and point here instead",
+    "uv_cache": "the uv cache, what `uv cache dir` prints -- read-only, the sandbox copies it and installs from it offline, so warm it for the sandbox's own Python once with `uv sync --python 3.14`"
+  }
+}
