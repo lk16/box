@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,30 @@ def test_read_config_file_rejects_broken_json(tmp_path: Path) -> None:
         box.read_config_file(path)
 
 
+def test_read_config_file_rejects_a_null_setting(tmp_path: Path) -> None:
+    path = write_config(tmp_path, {"model": None})
+    with pytest.raises(box.ConfigError, match="gives model null, and it must be a string"):
+        box.read_config_file(path)
+
+
+def test_read_config_file_rejects_a_setting_that_is_a_list(tmp_path: Path) -> None:
+    path = write_config(tmp_path, {"memory": [1, 2]})
+    with pytest.raises(box.ConfigError, match="gives memory a list, and it must be a string"):
+        box.read_config_file(path)
+
+
+def test_read_config_file_rejects_a_numeric_setting(tmp_path: Path) -> None:
+    path = write_config(tmp_path, {"cpus": 4})
+    with pytest.raises(box.ConfigError, match="gives cpus a number, and it must be a string"):
+        box.read_config_file(path)
+
+
+def test_read_config_file_keeps_required_mounts_an_object(tmp_path: Path) -> None:
+    declared = {"go": "the Go toolchain"}
+    path = write_config(tmp_path, {"required_mounts": declared})
+    assert box.read_config_file(path) == {"required_mounts": declared}
+
+
 def test_merge_values_prefers_cli_over_file() -> None:
     merged = box.merge_values({"memory": "16g", "cpus": "8"}, {"memory": "2g", "cpus": None})
     assert merged["memory"] == "2g"
@@ -93,9 +118,9 @@ def test_build_config_derives_name_from_directory() -> None:
     assert config.name == "my-repo"
 
 
-def test_build_config_coerces_numeric_cpus() -> None:
-    config = build_config({"cpus": 6}, Path("/tmp/demo"))
-    assert config.cpus == "6"
+def test_build_config_rejects_a_setting_that_is_not_a_string() -> None:
+    with pytest.raises(box.ConfigError, match="cpus is a number, and it must be a string"):
+        build_config({"cpus": 6}, Path("/tmp/demo"))
 
 
 def test_a_bare_mount_is_read_only() -> None:
@@ -114,6 +139,21 @@ def test_an_explicit_ro_suffix_is_rejected() -> None:
 def test_an_unknown_mount_suffix_is_rejected() -> None:
     with pytest.raises(box.ConfigError, match="unknown suffix"):
         box.to_workspace("/cache:rx")
+
+
+def test_an_empty_mount_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="a mount must name a path"):
+        box.to_workspace("")
+
+
+def test_a_mount_that_is_only_a_rw_suffix_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="a mount must name a path"):
+        box.to_workspace(":rw")
+
+
+def test_a_rw_mount_still_rejects_a_colon_in_its_path() -> None:
+    with pytest.raises(box.ConfigError, match="unknown suffix"):
+        box.to_workspace("/data/a:b:rw")
 
 
 def test_a_mount_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,6 +194,17 @@ def test_read_mounts_file_rejects_broken_json(tmp_path: Path) -> None:
     path.write_text("{")
     with pytest.raises(box.ConfigError, match="not valid JSON"):
         box.read_mounts_file(path)
+
+
+def test_read_mounts_file_rejects_a_path_that_is_not_a_string(tmp_path: Path) -> None:
+    path = write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": None})
+    with pytest.raises(box.ConfigError, match="gives cache null, and it must be a string"):
+        box.read_mounts_file(path)
+
+
+def test_as_descriptions_rejects_a_description_that_is_not_a_string() -> None:
+    with pytest.raises(box.ConfigError, match="gives go a number, and it must be a string"):
+        box.as_descriptions({"go": 1})
 
 
 def test_as_descriptions_rejects_a_json_array() -> None:
@@ -334,6 +385,26 @@ def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pyt
     assert repository.created == [("add-retry-logic-2", "abc123")]
 
 
+def test_settle_ref_says_where_the_work_ended_up(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository = FakeRepository("3", "add-retry-logic", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    printed = capsys.readouterr().err
+    assert "branch add-retry-logic holds 3 commits" in printed
+    assert SANDBOX_REF.ref_name in printed
+
+
+def test_settle_ref_counts_a_single_commit_in_the_singular(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository = FakeRepository("1", "add-retry-logic", set())
+    repository.install(monkeypatch)
+    box.settle_ref(SANDBOX_REF)
+    assert "holds 1 commit from" in capsys.readouterr().err
+
+
 def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = FakeRepository("0", "add-retry-logic", set())
     repository.install(monkeypatch)
@@ -420,11 +491,94 @@ def test_suggest_branch_name_is_empty_when_claude_is_not_installed(monkeypatch: 
     assert box.suggest_branch_name("Add retry logic") == ""
 
 
+MISSING_BINARY = "definitely-not-a-binary-on-this-machine"
+
+
+def test_capture_returns_what_the_command_printed() -> None:
+    assert box.capture([sys.executable, "-c", "print('hello')"]) == "hello\n"
+
+
+def test_capture_is_empty_when_the_command_exits_non_zero() -> None:
+    assert box.capture([sys.executable, "-c", "print('hello'); raise SystemExit(1)"]) == ""
+
+
+def test_capture_is_empty_when_the_command_is_not_installed() -> None:
+    assert box.capture([MISSING_BINARY]) == ""
+
+
+def test_succeeds_is_true_when_the_command_exits_zero() -> None:
+    assert box.succeeds([sys.executable, "-c", ""])
+
+
+def test_succeeds_is_false_when_the_command_exits_non_zero() -> None:
+    assert not box.succeeds([sys.executable, "-c", "raise SystemExit(1)"])
+
+
+def test_succeeds_is_false_when_the_command_is_not_installed() -> None:
+    assert not box.succeeds([MISSING_BINARY])
+
+
+def test_store_secret_never_puts_the_token_on_the_command_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+    stdin: list[object] = []
+
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        stdin.append(keywords["input"])
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    box.store_secret("demo-1", "sk-ant-secret")
+    assert stdin == ["sk-ant-secret"]
+    assert "sk-ant-secret" not in " ".join(commands[0])
+
+
+def test_store_secret_names_the_sandbox_the_host_and_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    box.store_secret("demo-1", "sk-ant-secret")
+    assert commands[0] == [
+        "sbx",
+        "secret",
+        "set-custom",
+        "demo-1",
+        "--host",
+        box.SECRET_HOST,
+        "--env",
+        box.SECRET_ENV,
+    ]
+
+
+def test_store_secret_reports_a_missing_sbx(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("sbx")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(box.ConfigError, match="could not run sbx"):
+        box.store_secret("demo-1", "sk-ant-secret")
+
+
+def test_store_secret_reports_an_sbx_that_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=command, returncode=1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(box.ConfigError, match="would not store the OAuth token for demo-1"):
+        box.store_secret("demo-1", "sk-ant-secret")
+
+
 class FakeSandbox:
     """Answer the commands cleanup runs, recording every one of them in the order it ran."""
 
-    def __init__(self, dirty: str) -> None:
+    def __init__(self, *, dirty: str, fetch_fails: bool, status_fails: bool) -> None:
         self.dirty = dirty
+        self.fetch_fails = fetch_fails
+        self.status_fails = status_fails
         self.commands: list[list[str]] = []
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -434,15 +588,27 @@ class FakeSandbox:
             self.commands.append(["settle", sandbox_name])
 
         monkeypatch.setattr(box, "capture", self.capture)
+        monkeypatch.setattr(box, "succeeds", self.succeeds)
+        monkeypatch.setattr(box, "run_quietly", self.run_quietly)
         monkeypatch.setattr(box, "settle_sandbox_refs", settle_sandbox_refs)
         monkeypatch.setattr(subprocess, "run", self.run)
 
     def capture(self, command: list[str]) -> str:
-        """Record a command, answering the dirty check with this sandbox's status."""
+        """Record a command whose output cleanup does not act on."""
         self.commands.append(command)
-        if "status" in command:
-            return self.dirty
         return ""
+
+    def succeeds(self, command: list[str]) -> bool:
+        """Record the fetch, which is the one command cleanup asks only for a verdict on."""
+        self.commands.append(command)
+        return not self.fetch_fails
+
+    def run_quietly(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record the dirty check, answering it with this sandbox's status."""
+        self.commands.append(command)
+        if self.status_fails:
+            return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="no sandbox")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=self.dirty, stderr="")
 
     def run(self, command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
         """Record a command that cleanup does not read the output of."""
@@ -450,23 +616,69 @@ class FakeSandbox:
         return subprocess.CompletedProcess(args=command, returncode=0)
 
 
+def clean_sandbox() -> FakeSandbox:
+    """Build a sandbox whose fetch and status check both work and report nothing to save."""
+    return FakeSandbox(dirty="", fetch_fails=False, status_fails=False)
+
+
 def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
-    sandbox = FakeSandbox("")
+    sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
     box.cleanup("demo-1")
     settled = sandbox.commands.index(["settle", "demo-1"])
     assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
 
 
+def test_cleanup_fetches_from_the_sandbox_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = clean_sandbox()
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    assert ["git", "fetch", "sandbox-demo-1"] in sandbox.commands
+
+
 def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    sandbox = FakeSandbox(" M box.py\n")
+    sandbox = FakeSandbox(dirty=" M box.py\n", fetch_fails=False, status_fails=False)
     sandbox.install(monkeypatch)
     box.cleanup("demo-1")
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "uncommitted changes" in capsys.readouterr().err
+
+
+def test_cleanup_keeps_the_sandbox_when_the_fetch_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    assert "git fetch sandbox-demo-1 failed" in capsys.readouterr().err
+
+
+def test_cleanup_keeps_the_sandbox_when_the_dirty_check_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=True)
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    assert "could not read the sandbox's git status" in capsys.readouterr().err
+
+
+def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
+    sandbox.install(monkeypatch)
+    box.cleanup("demo-1")
+    printed = capsys.readouterr().err
+    assert "sbx exec demo-1" in printed
+    assert "sbx cp demo-1:" in printed
+    assert "sbx rm --force demo-1" in printed
 
 
 def test_build_create_command_includes_mounts_and_kit() -> None:
@@ -555,11 +767,35 @@ def test_read_token_strips_newlines(tmp_path: Path) -> None:
     assert box.read_token(path) == "abc123"
 
 
+def test_read_token_strips_a_windows_line_ending(tmp_path: Path) -> None:
+    path = tmp_path / "token"
+    path.write_text("abc123\r\n")
+    assert box.read_token(path) == "abc123"
+
+
+def test_read_token_strips_surrounding_spaces(tmp_path: Path) -> None:
+    path = tmp_path / "token"
+    path.write_text("  abc123  ")
+    assert box.read_token(path) == "abc123"
+
+
 def test_read_token_rejects_empty_file(tmp_path: Path) -> None:
     path = tmp_path / "token"
     path.write_text("")
-    with pytest.raises(box.ConfigError, match="does not exist or is empty"):
+    with pytest.raises(box.ConfigError, match="is empty"):
         box.read_token(path)
+
+
+def test_read_token_rejects_a_whitespace_only_file(tmp_path: Path) -> None:
+    path = tmp_path / "token"
+    path.write_text("\n  \n")
+    with pytest.raises(box.ConfigError, match="is empty"):
+        box.read_token(path)
+
+
+def test_read_token_rejects_a_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="does not exist"):
+        box.read_token(tmp_path / "absent")
 
 
 def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
@@ -594,12 +830,51 @@ def test_load_config_has_no_mounts_without_a_mounts_file(tmp_path: Path) -> None
     assert box.load_config(arguments, tmp_path).mounts == ()
 
 
+def git_init(directory: Path) -> Path:
+    """Create a git repository with no commits in it."""
+    subprocess.run(["git", "init", "-q", str(directory)], check=True)
+    return directory
+
+
+def make_git_repository(directory: Path) -> Path:
+    """Create a git repository with the one commit box needs to have something to clone."""
+    git_init(directory)
+    author = ["-c", "user.name=box", "-c", "user.email=box@example.com"]
+    commit = ["commit", "-q", "--allow-empty", "-m", "first"]
+    subprocess.run(["git", "-C", str(directory), *author, *commit], check=True)
+    return directory
+
+
 def make_repository(directory: Path, gitignore: str) -> Path:
     """Create a git repository holding a mounts file and the given .gitignore."""
-    subprocess.run(["git", "init", "-q", str(directory)], check=True)
+    make_git_repository(directory)
     (directory / ".gitignore").write_text(gitignore)
     write_box_file(directory, box.MOUNTS_FILE, {"cache": "/cache"})
     return directory
+
+
+def test_a_directory_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="not a git repository"):
+        box.require_git_repository(tmp_path)
+
+
+def test_a_repository_with_no_commits_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="no commits"):
+        box.require_git_repository(git_init(tmp_path))
+
+
+def test_a_repository_with_a_commit_is_accepted(tmp_path: Path) -> None:
+    box.require_git_repository(make_git_repository(tmp_path))
+
+
+def test_prepare_launch_rejects_a_directory_that_is_not_a_repository(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="not a git repository"):
+        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+
+
+def test_prepare_launch_rejects_a_repository_with_no_commits(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="no commits"):
+        box.prepare_launch(make_config(), "/secrets/token", git_init(tmp_path))
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
@@ -774,6 +1049,34 @@ def test_the_update_message_names_this_script_and_the_url(tmp_path: Path) -> Non
     assert "curl" in message
 
 
+def test_the_update_message_quotes_a_path_holding_a_space(tmp_path: Path) -> None:
+    script = tmp_path / "my box.py"
+    script.write_text("print()")
+    message = box.update_message(script, "a-different-hash")
+    assert f"'{script}'" in message
+
+
+def test_the_update_message_says_when_the_script_cannot_be_written(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    script.chmod(0o444)
+    message = box.update_message(script, "a-different-hash")
+    assert "not writable by you" in message
+    assert "curl" not in message
+
+
+def test_a_cache_without_a_check_time_reads_as_never_checked(tmp_path: Path) -> None:
+    path = tmp_path / "update-check.json"
+    path.write_text(json.dumps({"checked": 1000.0}))
+    assert not box.checked_recently(path, 1000.0)
+
+
+def test_a_cache_holding_a_check_time_that_is_not_a_number_reads_as_never_checked(tmp_path: Path) -> None:
+    path = tmp_path / "update-check.json"
+    path.write_text(json.dumps({"checked_at": "yesterday"}))
+    assert not box.checked_recently(path, 1000.0)
+
+
 def test_the_update_message_is_red(tmp_path: Path) -> None:
     script = tmp_path / "box.py"
     script.write_text("print()")
@@ -782,18 +1085,74 @@ def test_the_update_message_is_red(tmp_path: Path) -> None:
     assert message.endswith(box.RESET)
 
 
+def use_an_installed_copy(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
+    """Make the update check see the copy it exists for: an installed one, with its own cache."""
+    monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+
+
 def test_warn_when_outdated_stays_silent_when_the_check_fails(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     def explode() -> str:
         raise OSError("no network")
 
+    use_an_installed_copy(monkeypatch, tmp_path)
     monkeypatch.setattr(box, "fetch_remote_hash", explode)
-    monkeypatch.setenv("XDG_CACHE_HOME", "/nonexistent/unwritable")
     box.warn_when_outdated()
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_warn_when_outdated_survives_a_cache_it_cannot_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    unwritable = tmp_path / "cache"
+    unwritable.write_text("not a directory")
+    use_an_installed_copy(monkeypatch, unwritable)
+    monkeypatch.setattr(box, "fetch_remote_hash", lambda: "a-different-hash")
+    box.warn_when_outdated()
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_when_outdated_records_a_check_that_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fetches: list[str] = []
+
+    def explode() -> str:
+        fetches.append("tried")
+        raise OSError("no network")
+
+    use_an_installed_copy(monkeypatch, tmp_path)
+    monkeypatch.setattr(box, "fetch_remote_hash", explode)
+    box.warn_when_outdated()
+    box.warn_when_outdated()
+    assert fetches == ["tried"]
+
+
+def test_warn_when_outdated_says_nothing_about_a_checked_out_box(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    def explode() -> str:
+        raise AssertionError("a checked out box.py must not be compared with the published one")
+
+    monkeypatch.setattr(box, "is_tracked_by_git", lambda script_path: True)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr(box, "fetch_remote_hash", explode)
+    box.warn_when_outdated()
+    assert capsys.readouterr().err == ""
+
+
+def test_box_py_in_this_repository_is_tracked_by_git() -> None:
+    assert box.is_tracked_by_git(Path(box.__file__).resolve())
+
+
+def test_an_installed_copy_is_not_tracked_by_git(tmp_path: Path) -> None:
+    script = tmp_path / "box.py"
+    script.write_text("print()")
+    assert not box.is_tracked_by_git(script)
 
 
 def test_warn_when_outdated_warns_at_most_once_an_hour(
@@ -805,8 +1164,8 @@ def test_warn_when_outdated_warns_at_most_once_an_hour(
         fetches.append("a-different-hash")
         return "a-different-hash"
 
+    use_an_installed_copy(monkeypatch, tmp_path)
     monkeypatch.setattr(box, "fetch_remote_hash", fetch)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     box.warn_when_outdated()
     assert box.UPDATE_URL in capsys.readouterr().err
     box.warn_when_outdated()
@@ -836,8 +1195,16 @@ def test_gen_rejects_a_setting_flag() -> None:
 
 def test_gen_rejects_a_mount_flag() -> None:
     arguments = box.build_parser().parse_args(["--mount", "/cache", "gen"])
-    with pytest.raises(box.ConfigError, match="--mounts"):
+    with pytest.raises(box.ConfigError, match=r"got --mount;"):
         box.require_no_flags(arguments)
+
+
+def test_to_flag_names_the_repeatable_flag_the_way_the_user_typed_it() -> None:
+    assert box.to_flag(box.MOUNT_DEST) == box.MOUNT_FLAG
+
+
+def test_to_flag_hyphenates_a_config_key() -> None:
+    assert box.to_flag("root_size") == "--root-size"
 
 
 def test_gen_names_every_flag_it_was_given() -> None:
@@ -1005,6 +1372,19 @@ def test_gen_creates_a_gitignore_holding_every_local_path(tmp_path: Path) -> Non
     assert written == f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n"
 
 
+def test_gen_writes_no_gitignore_outside_a_repository(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    box.generate(tmp_path)
+    assert not (tmp_path / box.GITIGNORE_FILE).exists()
+
+
+def test_gen_says_it_skipped_the_gitignore_outside_a_repository(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    box.generate(tmp_path)
+    assert "not a git repository" in capsys.readouterr().out
+
+
 def test_gen_keeps_what_the_gitignore_already_held(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / box.GITIGNORE_FILE).write_text("*.log\n")
@@ -1033,9 +1413,9 @@ def test_append_line_creates_the_file_when_absent(tmp_path: Path) -> None:
     assert path.read_text() == "build\n"
 
 
-def test_prepare_launch_requires_the_token_environment_variable() -> None:
+def test_prepare_launch_requires_the_token_environment_variable(tmp_path: Path) -> None:
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(make_config(), "", Path("/tmp/demo"))
+        box.prepare_launch(make_config(), "", make_git_repository(tmp_path))
 
 
 def test_prepare_launch_requires_a_kit() -> None:
@@ -1103,6 +1483,50 @@ def test_flags_use_the_config_keys_with_hyphens() -> None:
     arguments = box.build_parser().parse_args(["run", "--root-size", "20g", "--prompt-file", "p.md"])
     assert vars(arguments)["root_size"] == "20g"
     assert vars(arguments)["prompt_file"] == "p.md"
+
+
+def test_plural_keeps_one_singular() -> None:
+    assert box.plural("1", "commit") == "1 commit"
+
+
+def test_plural_makes_every_other_count_plural() -> None:
+    assert box.plural("2", "commit") == "2 commits"
+    assert box.plural("0", "commit") == "0 commits"
+
+
+def test_resolve_mounts_takes_the_extra_mounts_as_a_list(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
+    required = {"cache": "the build cache"}
+    assert box.resolve_mounts(["/other"], tmp_path, required) == ["/cache", "/other"]
+
+
+def test_resolve_mounts_needs_no_extra_mounts(tmp_path: Path) -> None:
+    assert box.resolve_mounts([], tmp_path, {}) == []
+
+
+def test_read_required_mounts_reads_the_declaration(tmp_path: Path) -> None:
+    write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+    assert box.read_required_mounts(tmp_path) == {"go": "the Go toolchain"}
+
+
+def test_read_required_mounts_is_empty_without_a_config(tmp_path: Path) -> None:
+    assert box.read_required_mounts(tmp_path) == {}
+
+
+def test_run_box_turns_a_ctrl_c_into_an_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupt() -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(box, "main", interrupt)
+    assert box.run_box() == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_run_box_passes_the_exit_code_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(box, "main", lambda: 3)
+    assert box.run_box() == 3
 
 
 def test_format_value_joins_mounts() -> None:

@@ -27,11 +27,14 @@ alias box='~/.local/bin/box.py'
 ```
 
 Re-run the same `curl` to update — box prints it in red on stderr, at most once an hour, when the
-published copy differs from yours.
+published copy differs from yours. A `box.py` that git tracks is left alone, so working on box
+itself never nags you to overwrite your own changes.
 
 ## Use
 
-Every command runs from the root of the repository you want an agent to work on.
+Every command runs from the root of the repository you want an agent to work on. `box run` hands
+the agent a clone of that repository, so it refuses to start outside a git repository, or in one
+with no commits yet.
 
 ### Adding box to a project, once for everyone
 
@@ -78,7 +81,9 @@ prints what a run would end up with.
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | `--mount PATH` | `.box/mounts.json` | `{}` | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
-Anything unknown in `.box/config.json` is an error, so typos surface immediately.
+Anything unknown in `.box/config.json` is an error, so typos surface immediately. So is a value
+that is not a string: write `"cpus": "4"`, not `"cpus": 4`, since box passes these to `sbx`
+verbatim. `required_mounts` is the one key holding an object.
 
 `kit` and `model` have no defaults: box refuses to start without them, rather than falling back to
 something you did not choose — see [Conservative by default](#conservative-by-default).

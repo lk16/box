@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -49,8 +50,15 @@ TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 # Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
 READ_WRITE_SUFFIX = ":rw"
 
+# The one flag whose argparse dest is not its own name, since it collects a list of paths.
+MOUNT_FLAG = "--mount"
+MOUNT_DEST = "mounts"
+
 # Where sbx's git daemon lands a sandbox's work: refs/sandboxes/<sandbox>/<branch>.
 SANDBOX_REFS = "refs/sandboxes"
+
+# What a command that never started exits with, which is what a shell reports for the same thing.
+NOT_RUN = 127
 
 # A branch name is a courtesy, so the agent naming it gets one turn and no more.
 BRANCH_NAME_TIMEOUT_SECONDS = 10
@@ -83,6 +91,14 @@ platform rather than this one, which belong in nobody's history. Add a {DEPS_DIR
 
 # What box writes that holds one machine's own files, and the reason each must stay uncommitted.
 LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP, f"{DEPS_DIR}/": DEPS_IGNORED_HELP}
+
+NOT_A_REPOSITORY_HELP = """this is not a git repository.
+box hands the agent a clone of this directory, so there has to be something here to clone. Run
+git init and commit, then try again."""
+
+NO_COMMITS_HELP = """this git repository has no commits.
+box hands the agent a clone of this directory, and a repository with no commits clones to nothing
+the agent can work from or branch off. Make at least one commit, then try again."""
 
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
@@ -117,6 +133,19 @@ allowed rather than working around it.
 If you cannot reasonably finish the task, stop, state concisely what is
 blocking you, and suggest a solution -- do not keep flailing."""
 
+# The one config key that is not a setting, so it is the one key whose value is not a string.
+REQUIRED_MOUNTS = "required_mounts"
+
+# How a rejected value is named, so the message spells the type the way the JSON file does.
+JSON_TYPE_NAMES: dict[type, str] = {
+    type(None): "null",
+    bool: "a boolean",
+    int: "a number",
+    float: "a number",
+    list: "a list",
+    dict: "an object",
+}
+
 # Config keys and their fallbacks, used for both the JSON file and the CLI.
 DEFAULTS: dict[str, object] = {
     "name": "",
@@ -127,7 +156,7 @@ DEFAULTS: dict[str, object] = {
     "model": "",
     "prompt_file": "",
     "kit": "",
-    "required_mounts": {},
+    REQUIRED_MOUNTS: {},
 }
 
 
@@ -195,6 +224,21 @@ def load_json(path: Path) -> object:
         raise ConfigError(f"{path} is not valid JSON: {error}") from error
 
 
+def name_of_type(value: object) -> str:
+    """Name a JSON value's type the way the file that holds it spells it."""
+    return JSON_TYPE_NAMES.get(type(value), type(value).__name__)
+
+
+def require_text_values(path: Path, values: dict[str, object]) -> dict[str, str]:
+    """Reject a value JSON allows but box would otherwise coerce into a string of itself."""
+    text = {}
+    for name, value in values.items():
+        if not isinstance(value, str):
+            raise ConfigError(f"{path} gives {name} {name_of_type(value)}, and it must be a string")
+        text[str(name)] = value
+    return text
+
+
 def read_config_file(path: Path) -> dict[str, object]:
     """Read config values from the JSON file, returning empty values when it is absent."""
     loaded = load_json(path)
@@ -205,6 +249,9 @@ def read_config_file(path: Path) -> dict[str, object]:
     unknown = sorted(set(loaded) - set(DEFAULTS))
     if unknown:
         raise ConfigError(f"{path} has unknown keys: {', '.join(unknown)}")
+    # Every setting is a string, so a number or a null must fail here rather than reach sbx as one.
+    settings = {key: value for key, value in loaded.items() if key != REQUIRED_MOUNTS}
+    require_text_values(path, settings)
     return loaded
 
 
@@ -215,14 +262,14 @@ def read_mounts_file(path: Path) -> dict[str, str]:
         return {}
     if not isinstance(loaded, dict):
         raise ConfigError(f"{path} must contain a JSON object of name to path")
-    return {str(name): str(mount) for name, mount in loaded.items()}
+    return require_text_values(path, loaded)
 
 
 def as_descriptions(value: object) -> dict[str, str]:
     """Normalise the required_mounts value into name to description."""
     if not isinstance(value, dict):
-        raise ConfigError("required_mounts must be a JSON object of name to description")
-    return {str(name): str(description) for name, description in value.items()}
+        raise ConfigError(f"{REQUIRED_MOUNTS} must be a JSON object of name to description")
+    return require_text_values(Path(CONFIG_FILE), value)
 
 
 def describe_mounts(required: dict[str, str], names: list[str]) -> str:
@@ -266,13 +313,20 @@ def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) 
     return merged
 
 
+def mount_path(path: str) -> str:
+    """Return the path a mount names, rejecting an empty one and any suffix box does not know."""
+    if not path:
+        raise ConfigError("a mount must name a path")
+    if ":" in path:
+        raise ConfigError(f"mount {path} has an unknown suffix; mounts are read-only unless you add :rw")
+    return path
+
+
 def to_workspace(mount: str) -> str:
     """Turn a configured mount into an sbx workspace spec, read-only unless :rw was asked for."""
     if mount.endswith(READ_WRITE_SUFFIX):
-        return str(resolve_path(mount[: -len(READ_WRITE_SUFFIX)]))
-    if ":" in mount:
-        raise ConfigError(f"mount {mount} has an unknown suffix; mounts are read-only unless you add :rw")
-    return f"{resolve_path(mount)}:ro"
+        return str(resolve_path(mount_path(mount[: -len(READ_WRITE_SUFFIX)])))
+    return f"{resolve_path(mount_path(mount))}:ro"
 
 
 def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
@@ -280,20 +334,28 @@ def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
     return tuple(to_workspace(mount) for mount in mounts)
 
 
+def setting(values: dict[str, object], key: str) -> str:
+    """Read one merged setting, which the config file and the command line both leave a string."""
+    value = values[key]
+    if not isinstance(value, str):
+        raise ConfigError(f"{key} is {name_of_type(value)}, and it must be a string")
+    return value
+
+
 def build_config(values: dict[str, object], mounts: list[str], working_directory: Path) -> Config:
     """Turn merged config values into a Config, filling in the derived sandbox name."""
-    name = str(values["name"])
+    name = setting(values, "name")
     if not name:
         name = default_base_name(working_directory)
     return Config(
         name=name,
-        memory=str(values["memory"]),
-        cpus=str(values["cpus"]),
-        root_size=str(values["root_size"]),
-        docker_size=str(values["docker_size"]),
-        model=str(values["model"]),
-        prompt_file=str(values["prompt_file"]),
-        kit=str(values["kit"]),
+        memory=setting(values, "memory"),
+        cpus=setting(values, "cpus"),
+        root_size=setting(values, "root_size"),
+        docker_size=setting(values, "docker_size"),
+        model=setting(values, "model"),
+        prompt_file=setting(values, "prompt_file"),
+        kit=setting(values, "kit"),
         mounts=to_workspaces(mounts),
     )
 
@@ -304,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="box",
         description="Run Claude Code inside a disposable Docker sandbox.",
     )
-    # Flag names match the config keys, so argparse derives every dest but the repeatable one.
+    # Flag names match the config keys, so argparse derives every dest but MOUNT_FLAG's.
     parser.add_argument("--name", metavar="NAME", help="sandbox base name")
     parser.add_argument("--memory", metavar="SIZE", help="memory limit, e.g. 4g")
     parser.add_argument("--cpus", metavar="N", help="number of CPUs")
@@ -314,7 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
     parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
     parser.add_argument(
-        "--mount", dest="mounts", metavar="PATH", action="append", help="read-only workspace, :rw to write"
+        MOUNT_FLAG, dest=MOUNT_DEST, metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
     parser.add_argument(
         "command",
@@ -341,12 +403,25 @@ def format_config(config: Config, token_file: str) -> str:
     return "\n".join(["config in effect:", *lines])
 
 
+def run_quietly(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a command without showing its output, reporting a missing binary as a non-zero exit."""
+    try:
+        return subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError as error:
+        return subprocess.CompletedProcess(args=command, returncode=NOT_RUN, stdout="", stderr=str(error))
+
+
 def capture(command: list[str]) -> str:
     """Run a command and return its stdout, or an empty string when it fails."""
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quietly(command)
     if result.returncode != 0:
         return ""
     return result.stdout
+
+
+def succeeds(command: list[str]) -> bool:
+    """Run a command and say only whether it worked, which is all some callers need to know."""
+    return run_quietly(command).returncode == 0
 
 
 def parse_ref_names(refs_output: str) -> set[str]:
@@ -376,10 +451,14 @@ def pick_name(base_name: str, used: set[str]) -> str:
 
 
 def read_token(path: Path) -> str:
-    """Read the OAuth token, stripped of newlines."""
-    if not path.is_file() or path.stat().st_size == 0:
-        raise ConfigError(f"token file {path} does not exist or is empty")
-    return path.read_text().replace("\n", "")
+    """Read the OAuth token, stripped of whatever whitespace the file was saved with."""
+    if not path.is_file():
+        raise ConfigError(f"token file {path} does not exist")
+    # A stray newline or space reaches the agent as part of the token and fails far from here.
+    token = path.read_text().strip()
+    if not token:
+        raise ConfigError(f"token file {path} is empty")
+    return token
 
 
 def read_system_prompt(prompt_file: str) -> str:
@@ -445,16 +524,40 @@ def drop_secret(sandbox_name: str) -> None:
 def store_secret(sandbox_name: str, token: str) -> None:
     """Hand the OAuth token to sbx over stdin so it never lands in the shell history."""
     command = ["sbx", "secret", "set-custom", sandbox_name, "--host", SECRET_HOST, "--env", SECRET_ENV]
-    subprocess.run(command, input=token, text=True, check=True)
+    try:
+        result = subprocess.run(command, input=token, text=True, check=False)
+    except OSError as error:
+        raise ConfigError(f"could not run sbx: {error}") from error
+    if result.returncode != 0:
+        raise ConfigError(f"sbx would not store the OAuth token for {sandbox_name}")
+
+
+def print_recovery(sandbox_name: str) -> None:
+    """Print how to look inside a sandbox box kept, take work out of it, and remove it by hand."""
+    print(f"Inspect:  sbx exec {sandbox_name} git -C {Path.cwd()} diff", file=sys.stderr)
+    print(f"Recover:  sbx cp {sandbox_name}:{Path.cwd()}/<file> .", file=sys.stderr)
+    print(f"Then remove manually once safe: sbx rm --force {sandbox_name}", file=sys.stderr)
 
 
 def warn_dirty(sandbox_name: str, dirty: str) -> None:
     """Tell the user how to recover uncommitted work left behind in a sandbox."""
     print(f"WARNING: sandbox {sandbox_name} has uncommitted changes -- not removing it.", file=sys.stderr)
     print(dirty, file=sys.stderr)
-    print(f"Inspect:  sbx exec {sandbox_name} git -C {Path.cwd()} diff", file=sys.stderr)
-    print(f"Recover:  sbx cp {sandbox_name}:{Path.cwd()}/<file> .", file=sys.stderr)
-    print(f"Then remove manually once safe: sbx rm --force {sandbox_name}", file=sys.stderr)
+    print_recovery(sandbox_name)
+
+
+def warn_unchecked(sandbox_name: str, reason: str) -> None:
+    """Tell the user box could not find out whether removing a sandbox would lose work."""
+    print(f"WARNING: {reason}.", file=sys.stderr)
+    print(f"box cannot tell whether sandbox {sandbox_name} holds work -- not removing it.", file=sys.stderr)
+    print_recovery(sandbox_name)
+
+
+def plural(count: str, noun: str) -> str:
+    """Render a count and what it counts, so a single commit does not read as "1 commits"."""
+    if count == "1":
+        return f"1 {noun}"
+    return f"{count} {noun}s"
 
 
 def to_branch_name(text: str) -> str:
@@ -532,8 +635,7 @@ def pick_branch_name(branch: str, used: set[str]) -> str:
 
 def create_branch(branch: str, commit: str) -> bool:
     """Point a new branch at the sandbox's commit, saying whether git accepted it."""
-    command = ["git", "branch", branch, commit]
-    return subprocess.run(command, capture_output=True, check=False).returncode == 0
+    return succeeds(["git", "branch", branch, commit])
 
 
 def delete_ref(ref_name: str) -> None:
@@ -560,7 +662,7 @@ def settle_ref(ref: SandboxRef) -> None:
         print(f"box: git refused branch {branch}, so the work stayed on {ref.ref_name}.", file=sys.stderr)
         return
     delete_ref(ref.ref_name)
-    print(f"box: {count} commits from {ref.ref_name} are on branch {branch}.", file=sys.stderr)
+    print(f"box: branch {branch} holds {plural(count, 'commit')} from {ref.ref_name}.", file=sys.stderr)
 
 
 def settle_sandbox_refs(sandbox_name: str) -> None:
@@ -571,25 +673,27 @@ def settle_sandbox_refs(sandbox_name: str) -> None:
 
 def cleanup(sandbox_name: str) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
-    capture(["git", "fetch", f"sandbox-{sandbox_name}"])
-    dirty = capture(["sbx", "exec", sandbox_name, "git", "-C", str(Path.cwd()), "status", "--porcelain"])
-    if dirty.strip():
-        warn_dirty(sandbox_name, dirty)
+    remote = f"sandbox-{sandbox_name}"
+    # Removal follows, so "I could not tell" must never be read as "there is nothing to lose".
+    if not succeeds(["git", "fetch", remote]):
+        warn_unchecked(sandbox_name, f"git fetch {remote} failed, so its commits are not here")
+        return
+    status = run_quietly(["sbx", "exec", sandbox_name, "git", "-C", str(Path.cwd()), "status", "--porcelain"])
+    if status.returncode != 0:
+        warn_unchecked(sandbox_name, "sbx exec could not read the sandbox's git status")
+        return
+    if status.stdout.strip():
+        warn_dirty(sandbox_name, status.stdout)
         return
     settle_sandbox_refs(sandbox_name)
     drop_secret(sandbox_name)
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
 
-def resolve_mounts(
-    arguments: argparse.Namespace, working_directory: Path, required: dict[str, str]
-) -> list[str]:
+def resolve_mounts(extra: list[str], working_directory: Path, required: dict[str, str]) -> list[str]:
     """Add the mounts given as flags to the named ones in the mounts file."""
     provided = read_mounts_file(working_directory / MOUNTS_FILE)
-    mounts = order_mounts(required, provided)
-    if not arguments.mounts:
-        return mounts
-    return mounts + list(arguments.mounts)
+    return order_mounts(required, provided) + extra
 
 
 def load_config(arguments: argparse.Namespace, working_directory: Path) -> Config:
@@ -597,7 +701,8 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
     cli_values = {key: value for key, value in vars(arguments).items() if key in DEFAULTS}
     file_values = read_config_file(working_directory / CONFIG_FILE)
     values = merge_values(file_values, cli_values)
-    mounts = resolve_mounts(arguments, working_directory, as_descriptions(values["required_mounts"]))
+    extra = list(arguments.mounts or [])
+    mounts = resolve_mounts(extra, working_directory, as_descriptions(values[REQUIRED_MOUNTS]))
     return build_config(values, mounts, working_directory)
 
 
@@ -617,10 +722,27 @@ def require_settings(config: Config) -> None:
         raise ConfigError(MODEL_HELP)
 
 
+def is_git_repository(working_directory: Path) -> bool:
+    """Whether git reads this directory as a working tree, which is what sbx --clone needs."""
+    return succeeds(["git", "-C", str(working_directory), "rev-parse", "--git-dir"])
+
+
+def has_commits(working_directory: Path) -> bool:
+    """Whether HEAD names a commit, which a repository nobody has committed to yet does not."""
+    return succeeds(["git", "-C", str(working_directory), "rev-parse", "--verify", "HEAD"])
+
+
+def require_git_repository(working_directory: Path) -> None:
+    """Refuse to run where sbx create --clone would have nothing to clone."""
+    if not is_git_repository(working_directory):
+        raise ConfigError(NOT_A_REPOSITORY_HELP)
+    if not has_commits(working_directory):
+        raise ConfigError(NO_COMMITS_HELP)
+
+
 def is_git_ignored(working_directory: Path, relative_path: str) -> bool:
     """Ask git whether a path is ignored; check-ignore exits 0 only when it is."""
-    command = ["git", "-C", str(working_directory), "check-ignore", "-q", relative_path]
-    return subprocess.run(command, capture_output=True, check=False).returncode == 0
+    return succeeds(["git", "-C", str(working_directory), "check-ignore", "-q", relative_path])
 
 
 def require_ignored_local_paths(working_directory: Path) -> None:
@@ -636,6 +758,7 @@ def require_ignored_local_paths(working_directory: Path) -> None:
 def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
     require_settings(config)
+    require_git_repository(working_directory)
     require_ignored_local_paths(working_directory)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
@@ -654,6 +777,8 @@ def run_session(config: Config, launch: Launch) -> int:
     create = build_create_command(config, launch.sandbox_name)
     # sbx has already said why it failed, and there is no sandbox to run in, clean up or keep.
     if subprocess.run(create, env=environment, check=False).returncode != 0:
+        # Two runs can pick one name and the loser drops the winner's secret, which sbx has
+        # already injected into the running sandbox, so the winner keeps working regardless.
         drop_secret(launch.sandbox_name)
         print(f"box: sbx create failed, so {launch.sandbox_name} was never started.", file=sys.stderr)
         return 1
@@ -667,15 +792,16 @@ def run_session(config: Config, launch: Launch) -> int:
 
 def to_flag(key: str) -> str:
     """Render an argparse dest the way the user typed it on the command line."""
+    if key == MOUNT_DEST:
+        return MOUNT_FLAG
     return "--" + key.replace("_", "-")
 
 
 def require_no_flags(arguments: argparse.Namespace) -> None:
     """Reject flags passed to a command, which reads the config rather than taking settings."""
-    # Parsing a command is the only way to reach the defaults, since command itself is required.
-    defaults = vars(build_parser().parse_args(["run"]))
+    # Every flag defaults to None, so a value at all is a value the user typed.
     given = sorted(
-        to_flag(key) for key, value in vars(arguments).items() if key != "command" and value != defaults[key]
+        to_flag(key) for key, value in vars(arguments).items() if key != "command" and value is not None
     )
     if not given:
         return
@@ -701,6 +827,10 @@ def append_line(path: Path, line: str) -> None:
 
 def ignore_local_paths(working_directory: Path) -> None:
     """Write the .gitignore entries box would otherwise refuse to run without."""
+    # Outside a repository check-ignore answers for nothing, so every gen would append the lines again.
+    if not is_git_repository(working_directory):
+        print(f"skipped {GITIGNORE_FILE}, since this is not a git repository")
+        return
     for relative_path in LOCAL_PATHS:
         if is_git_ignored(working_directory, relative_path):
             continue
@@ -771,8 +901,8 @@ def generate(working_directory: Path) -> int:
 
 def read_required_mounts(working_directory: Path) -> dict[str, str]:
     """Read what the project declares it needs mounted."""
-    values = merge_values(read_config_file(working_directory / CONFIG_FILE), {})
-    return as_descriptions(values["required_mounts"])
+    values = read_config_file(working_directory / CONFIG_FILE)
+    return as_descriptions(values.get(REQUIRED_MOUNTS, {}))
 
 
 def build_mount_prompt(required: dict[str, str], names: list[str], platform: str) -> str:
@@ -842,7 +972,7 @@ def checked_recently(path: Path, now: float) -> bool:
     """Whether the last check is fresh enough that this run has nothing to say."""
     try:
         checked_at = float(json.loads(path.read_text())["checked_at"])
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError):
         return False
     return now - checked_at <= UPDATE_INTERVAL_SECONDS
 
@@ -853,49 +983,75 @@ def store_check_time(path: Path, now: float) -> None:
     path.write_text(json.dumps({"checked_at": now}))
 
 
+def is_tracked_by_git(script_path: Path) -> bool:
+    """Whether this box.py is a file in a git repository, which an installed copy is not."""
+    command = ["git", "-C", str(script_path.parent), "ls-files", "--error-unmatch", str(script_path)]
+    return succeeds(command)
+
+
 def update_message(script_path: Path, remote_hash: str) -> str:
     """Say an update is available, and how to take it, when this copy is not the published one."""
     if remote_hash == file_hash(script_path):
         return ""
-    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {script_path} {UPDATE_URL}"
+    if not os.access(script_path, os.W_OK):
+        return f"{RED}An update to box is available, but {script_path} is not writable by you.{RESET}"
+    quoted = shlex.quote(str(script_path))
+    take_it = f"An update to box is available. Take it with:\n  curl -fsSL -o {quoted} {UPDATE_URL}"
     return f"{RED}{take_it}{RESET}"
 
 
 def warn_when_outdated() -> None:
     """Mention a newer box on stderr once an hour, staying silent about anything that goes wrong."""
     try:
+        script_path = Path(__file__).resolve()
+        # A checked out box.py is being worked on, and its own changes are what differ from main.
+        if is_tracked_by_git(script_path):
+            return
         path = cache_path()
         now = time.time()
         if checked_recently(path, now):
             return
-        remote_hash = fetch_remote_hash()
+        # A failed check is still a check, so the hour it buys must not depend on GitHub answering.
         store_check_time(path, now)
-        message = update_message(Path(__file__).resolve(), remote_hash)
+        message = update_message(script_path, fetch_remote_hash())
     except Exception:
         return
     if message:
         print(message, file=sys.stderr)
 
 
-def main() -> int:
-    """Entry point: run a setup command, or load config and hand off to a sandbox session."""
-    arguments = build_parser().parse_args()
-    working_directory = Path.cwd()
-    warn_when_outdated()
-    try:
-        if arguments.command in SETUP_COMMANDS:
-            require_no_flags(arguments)
-            return setup_command(arguments.command, working_directory)
-        config = load_config(arguments, working_directory)
-        token_file = token_file_from_environment()
-        if arguments.command == "config":
-            return show_config(config, token_file)
-        launch = prepare_launch(config, token_file, working_directory)
-    except ConfigError as error:
-        print(f"box: {error}", file=sys.stderr)
-        return 1
+def dispatch(arguments: argparse.Namespace, working_directory: Path) -> int:
+    """Run a setup command, or load config and hand off to a sandbox session."""
+    if arguments.command in SETUP_COMMANDS:
+        require_no_flags(arguments)
+        return setup_command(arguments.command, working_directory)
+    config = load_config(arguments, working_directory)
+    token_file = token_file_from_environment()
+    if arguments.command == "config":
+        return show_config(config, token_file)
+    launch = prepare_launch(config, token_file, working_directory)
     return run_session(config, launch)
 
 
+def main() -> int:
+    """Entry point: parse the command line and turn a rejected setup into one message."""
+    arguments = build_parser().parse_args()
+    warn_when_outdated()
+    try:
+        return dispatch(arguments, Path.cwd())
+    except ConfigError as error:
+        print(f"box: {error}", file=sys.stderr)
+        return 1
+
+
+def run_box() -> int:
+    """Run box, turning a Ctrl-C into an exit code rather than a traceback."""
+    try:
+        return main()
+    except KeyboardInterrupt:
+        print("box: interrupted.", file=sys.stderr)
+        return 130
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_box())
