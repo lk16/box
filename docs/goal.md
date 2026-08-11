@@ -73,13 +73,17 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   machine decides what the agent may write to; a description may ask for write access, but
   nothing enforces it. Read-only is the default everywhere, so write access to the host is always
   something that was asked for.
-- `.box/deps/` holds what this machine cannot supply, such as a Linux toolchain on macOS, since
-  the sandbox runs Linux whatever the host runs and there is nowhere natural on the host for a
-  build that exists only to be mounted. box creates and ignores it; box never downloads into it.
-  A dependency reaches the sandbox by being mounted, not by sitting in the project, because the
-  container gets a clone and a clone has no ignored files.
-- Refuse to run while `.box/mounts.json` or `.box/deps/` exists and `git check-ignore` says it is
-  not ignored. One carries a machine's paths into every clone, the other its binaries.
+- `~/.box/deps` — `$XDG_DATA_HOME/box/deps` when that is set, resolved by `deps_path()` — holds
+  what this machine cannot supply, such as a Linux toolchain on macOS, since the sandbox runs
+  Linux whatever the host runs and a build that exists only to be mounted belongs to the machine,
+  not to any project. It sits outside every repository deliberately: `sbx create --clone` wipes
+  the in-container workspace before cloning into it, and a mount nested inside the workspace
+  turns that wipe into a deadlock, EROFS on every file with a mountpoint that cannot be removed.
+  The agent answering `mount-prompt` creates it; box never downloads into it. A dependency
+  reaches the sandbox by being mounted, not by sitting in the project, because the container gets
+  a clone and a clone has no ignored files.
+- Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored,
+  since it would carry a machine's paths into every clone.
 - `box gen` writes a starter kit at `.box/kit/spec.yaml` and points `kit` at it, since a hand-written
   network policy is the biggest step in setting box up and "the agent's own API calls and nothing
   else" is where most projects start. It says in the file that it is a starting point, and holds only
@@ -94,13 +98,15 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   of box. `mount-prompt` writes for an agent with a shell on this host: it may run commands to
   find a path and must check it exists, never guess one, and never add `:rw` unless a description
   asked for it.
-- `mount-prompt` prints to stdout to feed an interactive agent session. The agent runs commands
-  on the host and edits a file that points at the user's own directories, so the tool calls and
-  the diff belong in front of them to approve. It offers `.box/deps/` as the third outcome, after
-  finding a path and giving up. It asks about every declared mount without a path,
-  whether the key is absent or holds the placeholder, so it follows a declaration directly.
-  Printing nothing on stdout when every mount has a path keeps a second run from asking for done
-  work; it says so on stderr, which no pipe into `claude` carries.
+- `mount-prompt` prints to stdout, and the user hands the prompt to an interactive agent session
+  themselves. The agent runs commands on the host and edits a file that points at the user's own
+  directories, so the tool calls and the diff belong in front of them to approve. It offers the
+  deps directory as the third outcome, after finding a path and giving up, and tells the agent
+  never to point a mount inside the project, since a mount nested in the workspace deadlocks the
+  clone's wipe. It asks about every declared mount without a path, whether the key is absent or
+  holds the placeholder, so it follows a declaration directly. Printing nothing on stdout when
+  every mount has a path keeps a second run from asking for done work; it says so on stderr, so
+  stdout stays nothing but a prompt to hand over.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.

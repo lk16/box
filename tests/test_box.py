@@ -1298,48 +1298,29 @@ def test_a_committable_mounts_file_is_rejected(tmp_path: Path) -> None:
         box.require_ignored_local_paths(repository)
 
 
-def test_the_deps_dir_lives_in_the_box_directory() -> None:
-    assert Path(box.DEPS_DIR) == Path(box.BOX_DIR) / "deps"
+def test_deps_path_follows_xdg_data_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg")
+    assert box.deps_path() == Path("/tmp/xdg/box/deps")
 
 
-def test_a_committable_deps_dir_is_rejected(tmp_path: Path) -> None:
-    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
-    (repository / box.DEPS_DIR).mkdir(parents=True)
-    with pytest.raises(box.ConfigError, match="deps/ is not ignored by git"):
-        box.require_ignored_local_paths(repository)
-
-
-def test_an_ignored_deps_dir_is_accepted(tmp_path: Path) -> None:
-    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n")
-    (repository / box.DEPS_DIR).mkdir(parents=True)
-    box.require_ignored_local_paths(repository)
-
-
-def test_an_absent_deps_dir_needs_no_gitignore_entry(tmp_path: Path) -> None:
-    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
-    assert not (repository / box.DEPS_DIR).exists()
-    box.require_ignored_local_paths(repository)
-
-
-def test_gen_creates_the_deps_dir(tmp_path: Path) -> None:
-    box.generate(tmp_path)
-    assert (tmp_path / box.DEPS_DIR).is_dir()
-
-
-def test_gen_leaves_an_existing_deps_dir_alone(tmp_path: Path) -> None:
-    kept = tmp_path / box.DEPS_DIR / "go"
-    kept.mkdir(parents=True)
-    box.generate(tmp_path)
-    assert kept.is_dir()
+def test_deps_path_falls_back_to_a_dot_box_in_the_home_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", "/home/someone")
+    assert box.deps_path() == Path("/home/someone/.box/deps")
 
 
 def test_the_prompt_offers_the_deps_dir_when_nothing_here_fits() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
-    assert f"{box.DEPS_DIR}/" in prompt
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64", "~/.box/deps")
+    assert "~/.box/deps/" in prompt
+
+
+def test_the_prompt_warns_against_a_path_inside_the_project() -> None:
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64", "~/.box/deps")
+    assert "Never give a mount a path inside this project directory" in prompt
 
 
 def test_the_prompt_says_the_sandbox_runs_linux_whatever_this_machine_runs() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64", "~/.box/deps")
     assert "The sandbox runs Linux" in prompt
 
 
@@ -1907,26 +1888,26 @@ def test_mount_prompt_takes_no_flags() -> None:
 
 def test_the_prompt_carries_the_names_and_descriptions() -> None:
     required = {"go": "the Go toolchain", "cargo": "the cargo home"}
-    prompt = box.build_mount_prompt(required, ["go", "cargo"], "darwin arm64")
+    prompt = box.build_mount_prompt(required, ["go", "cargo"], "darwin arm64", "~/.box/deps")
     assert "go: the Go toolchain" in prompt
     assert "cargo: the cargo home" in prompt
 
 
 def test_the_prompt_names_the_file_the_placeholder_and_the_host() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "darwin arm64", "~/.box/deps")
     assert box.MOUNTS_FILE in prompt
     assert box.MOUNT_PLACEHOLDER in prompt
     assert "darwin arm64" in prompt
 
 
 def test_the_prompt_holds_the_rules_box_enforces() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64", "~/.box/deps")
     assert ":rw" in prompt
     assert "Never guess" in prompt
 
 
 def test_the_prompt_covers_a_key_that_is_not_in_the_file_yet() -> None:
-    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64")
+    prompt = box.build_mount_prompt({"go": "the Go toolchain"}, ["go"], "linux x86_64", "~/.box/deps")
     assert "adding the key where it is missing" in prompt
 
 
@@ -2019,7 +2000,7 @@ def test_gen_creates_a_gitignore_holding_every_local_path(tmp_path: Path) -> Non
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
     written = (tmp_path / box.GITIGNORE_FILE).read_text()
-    assert written == f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n"
+    assert written == f"{box.MOUNTS_FILE}\n"
 
 
 def test_gen_writes_no_gitignore_outside_a_repository(tmp_path: Path) -> None:
@@ -2040,7 +2021,7 @@ def test_gen_keeps_what_the_gitignore_already_held(tmp_path: Path) -> None:
     (tmp_path / box.GITIGNORE_FILE).write_text("*.log\n")
     box.generate(tmp_path)
     written = (tmp_path / box.GITIGNORE_FILE).read_text()
-    assert written == f"*.log\n{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n"
+    assert written == f"*.log\n{box.MOUNTS_FILE}\n"
 
 
 def test_gen_leaves_an_already_ignored_gitignore_alone(tmp_path: Path) -> None:
@@ -2411,7 +2392,7 @@ def test_run_session_reports_a_failed_create_and_starts_nothing(
 def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Build a project that passes every check box makes before it starts a sandbox."""
     make_git_repository(directory)
-    (directory / box.GITIGNORE_FILE).write_text(f"{box.MOUNTS_FILE}\n{box.DEPS_DIR}/\n")
+    (directory / box.GITIGNORE_FILE).write_text(f"{box.MOUNTS_FILE}\n")
     write_config(directory, {"kit": "registry/kit", "model": "claude-opus-5"})
     token = directory / "token"
     token.write_text("sk-ant-secret\n")
