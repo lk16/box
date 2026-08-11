@@ -24,8 +24,6 @@ CONFIG_FILE = f"{BOX_DIR}/config.json"
 # Mounts name paths on one machine, so they live apart from the settings a project shares.
 MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
 
-# Where a dependency lands that this machine cannot supply, such as a Linux toolchain on macOS.
-DEPS_DIR = f"{BOX_DIR}/deps"
 GITIGNORE_FILE = ".gitignore"
 
 # The sandbox's network policy, which sbx reads from the directory holding a spec.yaml.
@@ -129,13 +127,8 @@ MOUNTS_IGNORED_HELP = f"""{MOUNTS_FILE} is not ignored by git.
 It names folders on this machine, so committing it would put paths that exist only here into
 everyone else's clone. Add a {MOUNTS_FILE} line to .gitignore."""
 
-DEPS_IGNORED_HELP = f"""{DEPS_DIR}/ is not ignored by git.
-It holds dependencies fetched for this machine, such as toolchains built for the sandbox's
-platform rather than this one, which belong in nobody's history. Add a {DEPS_DIR}/ line to
-.gitignore."""
-
-# What box writes that holds one machine's own files, and the reason each must stay uncommitted.
-LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP, f"{DEPS_DIR}/": DEPS_IGNORED_HELP}
+# What box writes that holds one machine's own files, and the reason it must stay uncommitted.
+LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP}
 
 NOT_A_REPOSITORY_HELP = """this is not a git repository.
 box hands the agent a clone of this directory, so there has to be something here to clone. Run
@@ -1056,7 +1049,7 @@ def warn_placeholders(required: dict[str, str], filled: dict[str, str]) -> None:
         return
     print(f"WARNING: replace {MOUNT_PLACEHOLDER} in {MOUNTS_FILE} for:", file=sys.stderr)
     print(describe_mounts(required, names), file=sys.stderr)
-    print("or have an agent do it: box mount-prompt | claude", file=sys.stderr)
+    print("or run box mount-prompt and give the prompt to an agent", file=sys.stderr)
 
 
 def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
@@ -1072,22 +1065,12 @@ def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
     warn_placeholders(required, filled)
 
 
-def make_deps_dir(working_directory: Path) -> None:
-    """Create the directory an agent puts dependencies in that this machine cannot supply."""
-    path = working_directory / DEPS_DIR
-    if path.is_dir():
-        return
-    path.mkdir(parents=True)
-    print(f"created {DEPS_DIR}/")
-
-
 def generate(working_directory: Path) -> int:
     """Write a starter .box directory, adding what is missing and keeping what is filled in."""
     (working_directory / BOX_DIR).mkdir(exist_ok=True)
     write_starter_config(working_directory / CONFIG_FILE)
     write_starter_kit(working_directory)
     write_mounts(working_directory, read_required_mounts(working_directory))
-    make_deps_dir(working_directory)
     ignore_local_paths(working_directory)
     return 0
 
@@ -1103,7 +1086,15 @@ def host_description() -> str:
     return f"{sys.platform} {platform.machine()}"
 
 
-def build_mount_prompt(required: dict[str, str], names: list[str], host: str) -> str:
+def deps_path() -> Path:
+    """Where a dependency lands that this machine cannot supply, following XDG_DATA_HOME."""
+    base = os.environ.get("XDG_DATA_HOME", "")
+    if base:
+        return Path(base) / "box" / "deps"
+    return Path.home() / ".box" / "deps"
+
+
+def build_mount_prompt(required: dict[str, str], names: list[str], host: str, deps: str) -> str:
     """Render the prompt that has an agent on this host fill in the mounts file."""
     return f"""Fill in {MOUNTS_FILE} for this machine, which runs {host}.
 
@@ -1116,8 +1107,13 @@ Run commands to find each path, and check it exists before writing it. Never gue
 
 The sandbox runs Linux, whatever this machine runs. Where nothing here fits -- a
 toolchain built for the wrong platform or architecture, or a dependency that is
-simply absent -- download a suitable one into {DEPS_DIR}/ and point the mount at
-it. Say which you could not find or fetch, and leave those as they were.
+simply absent -- download a suitable one into {deps}/, creating that directory if
+needed, and point the mount at it. Say which you could not find or fetch, and
+leave those as they were.
+
+Never give a mount a path inside this project directory. The sandbox wipes its
+copy of the project before cloning into it, and a mount nested inside deadlocks
+that wipe.
 
 Add :rw only where the description asks for write access. Change nothing else."""
 
@@ -1130,7 +1126,7 @@ def mount_prompt(working_directory: Path) -> int:
     if not names:
         print(f"every mount in {MOUNTS_FILE} already has a path", file=sys.stderr)
         return 0
-    print(build_mount_prompt(required, names, host_description()))
+    print(build_mount_prompt(required, names, host_description(), str(deps_path())))
     return 0
 
 

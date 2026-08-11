@@ -50,12 +50,13 @@ Once per machine:
 
 Once per project, committed for everyone:
 
-- `box gen` — writes `.box/` and the `.gitignore` lines box needs
+- `box gen` — writes `.box/` and the `.gitignore` line box needs
 - `$EDITOR .box/config.json` — fill in `model`; `gen` already wrote the kit it points at
 
 Once per machine per project, if `.box/config.json` declares `required_mounts`:
 
-- `box mount-prompt | claude` — fills in the gitignored `.box/mounts.json`
+- `box mount-prompt` — prints a prompt; give it to Claude to fill in the gitignored
+  `.box/mounts.json`
 
 Then, to start a sandbox:
 
@@ -73,7 +74,7 @@ watch what it does and step in.
 
 | Command | What it does |
 | --- | --- |
-| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` lines box needs, leaving anything already filled in alone |
+| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` line box needs, leaving anything already filled in alone |
 | `box config` | prints the settings in effect, including the `CLAUDE_OAUTH_TOKEN_FILE` path, then runs every check a run makes |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
 | `box run` | creates the sandbox and starts Claude in it |
@@ -167,10 +168,9 @@ The gitignored `.box/mounts.json` gives each of those names a path:
 
 `box run` refuses to start unless the two match exactly. A declared name with no path, a name still
 holding the placeholder `box gen` writes, or a name the project never declared is an error that says
-which mount is at fault. It also refuses while `.box/mounts.json` or `.box/deps/` is not ignored by
-git: one holds paths that exist only on your machine, the other binaries that should not be
-committed. `box gen` writes both `.gitignore` entries for you. Ignore those two entries only, not
-the whole `.box/` directory, so `config.json` stays committed.
+which mount is at fault. It also refuses while `.box/mounts.json` is not ignored by git, since it
+holds paths that exist only on your machine. `box gen` writes that `.gitignore` entry for you.
+Ignore that entry only, not the whole `.box/` directory, so `config.json` stays committed.
 
 Every mount is read-only unless you say otherwise, since the agent should not be able to write to
 your machine. `~/scratch:rw` opts one path out, and `:ro` is an error, not a synonym for the
@@ -181,18 +181,21 @@ adds an unnamed workspace for one run. `box config` shows the resulting `sbx` sp
 ### Filling them in with an agent
 
 ```sh
-box mount-prompt | claude
+box mount-prompt
 ```
 
 The prompt lists every declared mount that has no path yet, with its description and the platform
-and architecture a build has to match. Pipe it into an **interactive** session: this agent runs on
-your machine, not in a sandbox, so you should see its commands and its diff before approving them.
-It is told to probe for each path and check that it exists instead of guessing, to say which ones it
-could not find, and to download a suitable build into `.box/deps/` and point the mount there where
-nothing on this machine fits, since the sandbox runs Linux whatever you run.
+and architecture a build has to match. Paste it into an **interactive** `claude` session: this agent
+runs on your machine, not in a sandbox, so you should see its commands and its diff before approving
+them. It is told to probe for each path and check that it exists instead of guessing, and to say
+which ones it could not find. Where nothing on this machine fits — the sandbox runs Linux whatever
+you run — it downloads a suitable build into `~/.box/deps` (or `$XDG_DATA_HOME/box/deps` when that
+is set) and points the mount there. That directory sits outside the project on purpose: a mount
+nested inside the workspace deadlocks the sandbox's clone, so never point a mount at a path inside
+the repository.
 
-Once every mount has a path, nothing is printed on stdout, so running it again gives the agent no
-work to do. box says as much on stderr, which a pipe into `claude` does not carry.
+Once every mount has a path, nothing is printed on stdout, so running it again gives an agent no
+work to do; box says as much on stderr.
 
 Its output is only as good as your descriptions: `"go cache"` gives an agent nothing, while
 `"the Go module cache, what \`go env GOMODCACHE\` prints"` gives it a command to run.
