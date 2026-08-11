@@ -12,6 +12,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # The floor pyproject.toml declares, and the newest box is expected to run on.
+        python-version: ["3.11", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
