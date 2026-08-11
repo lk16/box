@@ -28,6 +28,7 @@ def make_config() -> box.Config:
         model="claude-opus-5",
         prompt_file="docs/project-prompt.md",
         kit="registry/kit",
+        template="frlg-sandbox:1",
         mounts=("/cache:ro",),
     )
 
@@ -749,12 +750,25 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
         "2",
         "--kit",
         "registry/kit",
+        "--template",
+        "frlg-sandbox:1",
     ]
 
 
 def test_build_create_command_omits_empty_kit(tmp_path: Path) -> None:
     command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
     assert "--kit" not in command
+
+
+def test_build_create_command_omits_an_unset_template(tmp_path: Path) -> None:
+    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    assert "--template" not in command
+
+
+def test_build_create_command_takes_the_template_from_the_config(tmp_path: Path) -> None:
+    config = config_from_values({"template": "frlg-sandbox:1"}, tmp_path)
+    command = box.build_create_command(config, "demo-1")
+    assert command[-2:] == ["--template", "frlg-sandbox:1"]
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
@@ -853,6 +867,28 @@ def test_load_config_lets_cli_win_over_file(tmp_path: Path) -> None:
     config = box.load_config(arguments, tmp_path)
     assert config.memory == "1g"
     assert config.cpus == "8"
+
+
+def test_load_config_takes_the_template_from_the_flag(tmp_path: Path) -> None:
+    arguments = box.build_parser().parse_args(["run", "--template", "frlg-sandbox:1"])
+    assert box.load_config(arguments, tmp_path).template == "frlg-sandbox:1"
+
+
+def test_load_config_takes_the_template_from_the_config_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"template": "frlg-sandbox:1"})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).template == "frlg-sandbox:1"
+
+
+def test_load_config_lets_the_template_flag_win_over_the_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"template": "frlg-sandbox:1"})
+    arguments = box.build_parser().parse_args(["run", "--template", "frlg-sandbox:2"])
+    assert box.load_config(arguments, tmp_path).template == "frlg-sandbox:2"
+
+
+def test_load_config_leaves_the_template_unset_by_default(tmp_path: Path) -> None:
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).template == ""
 
 
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
@@ -2210,6 +2246,16 @@ def test_format_config_shows_the_token_path_with_the_settings() -> None:
     assert box.TOKEN_FILE_ENV in rendered
     assert "/secrets/token" in rendered
     assert "8g" in rendered
+
+
+def test_format_config_prints_the_template() -> None:
+    rendered = box.format_config(make_config(), "/secrets/token")
+    assert re.search(r"^\s+template\s+frlg-sandbox:1$", rendered, re.MULTILINE)
+
+
+def test_format_config_names_an_unset_template(tmp_path: Path) -> None:
+    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    assert re.search(rf"^\s+template\s+{re.escape(box.UNSET)}$", rendered, re.MULTILINE)
 
 
 def test_format_config_aligns_every_value_in_one_column() -> None:
