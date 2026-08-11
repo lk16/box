@@ -116,6 +116,7 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | `--model MODEL` | `model` | — (required) | Model passed to the Claude CLI. |
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt. |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
+| `--template REF` | `template` | unset | `sbx` template the sandbox's container image comes from. |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
@@ -132,6 +133,14 @@ starter policy at `.box/kit/spec.yaml`, allowing the agent's own API calls and n
 points `kit` at it, so `model` is the only setting left to fill in. Widen the allowlist for whatever
 the project's checks fetch, or point `kit` at a policy you keep elsewhere. box's own kit lives in
 `.sbx/kit`, which is sbx's convention.
+
+`template` names the image the sandbox runs on. Unset, which is the default, leaves that to `sbx`,
+and its own agent image is what almost every project wants. Set it when the project needs something
+that image does not have — a compiler, say, which a kit allowing only `api.anthropic.com` gives the
+agent no way to install from inside. Producing that image is yours to do: `docker build` on the host
+from sbx's base plus whatever you need, then `docker save` and `sbx template load`, and put the tag
+`sbx template ls` shows here. box only passes the value on. An image the sandbox runtime does not
+hold is a pull error at create time that says nothing useful, so load it before you run.
 
 ## The system prompt
 

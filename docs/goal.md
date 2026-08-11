@@ -144,6 +144,15 @@ as a second copy of the mechanics, which is how the two came to disagree about a
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an
   unnamed model would otherwise be decided silently by `sbx` or by the sandbox's own Claude
   install, which is not this host's.
+- `template` is optional where those two are not, because what `sbx` picks unasked is an image for
+  the agent it is launching, which is neither a policy nobody chose nor a foreign model. So an
+  unset template passes no flag at all and the create command stays what it was. It is set when the
+  project needs a toolchain the agent image has no way to install under its own kit, and the answer
+  is a derived image rather than a mounted sysroot: one `apt-get` on sbx's own base matches its
+  glibc exactly and leaves `LD_LIBRARY_PATH` alone, where a mounted toolchain's library directory
+  shadows the image's OpenSSL and curl and breaks TLS for everything. box names the image and
+  nothing more -- it never builds or loads one, and never checks that one exists, since `sbx` owns
+  that and fails clearly at create time.
 - A failed `sbx create` is reported, not raised. `sbx` has already said why, there is no sandbox
   to clean up or keep, and the stored secret is dropped again, so a failure leaves nothing
   behind and no traceback in front of the reason.

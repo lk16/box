@@ -216,6 +216,7 @@ DEFAULTS: dict[str, object] = {
     "model": "",
     "prompt_file": "",
     "kit": "",
+    "template": "",
     REQUIRED_MOUNTS: {},
 }
 
@@ -239,6 +240,7 @@ class Config:
     model: str
     prompt_file: str
     kit: str
+    template: str
     mounts: tuple[str, ...]
 
 
@@ -425,6 +427,7 @@ def build_config(values: dict[str, object], mounts: list[str], working_directory
         model=setting(values, "model"),
         prompt_file=setting(values, "prompt_file"),
         kit=setting(values, "kit"),
+        template=setting(values, "template"),
         mounts=to_workspaces(mounts),
     )
 
@@ -444,6 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", metavar="MODEL", help="Claude model to run")
     parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
     parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
+    parser.add_argument("--template", metavar="REF", help="sbx template the sandbox image comes from")
     parser.add_argument(
         MOUNT_FLAG, dest=MOUNT_DEST, metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
@@ -571,6 +575,9 @@ def build_create_command(config: Config, sandbox_name: str) -> list[str]:
     command.extend(["--memory", config.memory, "--cpus", config.cpus])
     if config.kit:
         command.extend(["--kit", config.kit])
+    # An unset template leaves the image to sbx, which is what almost every project wants.
+    if config.template:
+        command.extend(["--template", config.template])
     return command
 
 
