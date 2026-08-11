@@ -82,6 +82,12 @@ NOT_RUN = 127
 # What box shells out to, checked once up front so a missing one is a message and not a failed run.
 REQUIRED_BINARIES = ("sbx", "git", "claude")
 
+# The sbx release box is written against, whose spec layout older ones reject.
+SBX_MINIMUM = (0, 38, 0)
+
+# The release number in what sbx version prints: "sbx version: v0.38.0 <commit>".
+SBX_VERSION_PATTERN = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
 # The sbx diagnose check that compares the CLI with the daemon it talks to.
 VERSION_MATCH_CHECK = "Version match"
 
@@ -138,6 +144,10 @@ git init and commit, then try again."""
 NO_COMMITS_HELP = """this git repository has no commits.
 box hands the agent a clone of this directory, and a repository with no commits clones to nothing
 the agent can work from or branch off. Make at least one commit, then try again."""
+
+SBX_TOO_OLD_HELP = """this sbx is v{found}, and box needs v{minimum} or newer.
+The kits box writes use the spec layout that release introduced, which older ones reject. Upgrade
+sbx, then try again."""
 
 VERSION_MISMATCH_HELP = """the sbx client and its daemon are different versions: {message}.
 The daemon keeps running across an sbx upgrade, so the old one keeps answering until it is
@@ -834,6 +844,33 @@ def missing_binaries(names: tuple[str, ...]) -> list[str]:
     return [name for name in names if shutil.which(name) is None]
 
 
+def build_sbx_version_command() -> list[str]:
+    """Assemble the sbx version invocation, whose line names the release box is talking to."""
+    return ["sbx", "version"]
+
+
+def parse_sbx_version(version_output: str) -> tuple[int, ...]:
+    """Pull the release number out of sbx version's line, or nothing when it holds none."""
+    match = SBX_VERSION_PATTERN.search(version_output)
+    if match is None:
+        return ()
+    return tuple(int(part) for part in match.groups())
+
+
+def require_supported_sbx() -> None:
+    """Refuse to run on an sbx older than the release box's kits and commands are written against."""
+    # No sbx means nothing to read, and the commands that need it reject its absence themselves.
+    if shutil.which("sbx") is None:
+        return
+    found = parse_sbx_version(capture(build_sbx_version_command()))
+    # A line box cannot read is no evidence of an old sbx, so it must not stop a working command.
+    if not found:
+        return
+    if found >= SBX_MINIMUM:
+        return
+    raise ConfigError(SBX_TOO_OLD_HELP.format(found=to_version(found), minimum=to_version(SBX_MINIMUM)))
+
+
 def build_diagnose_command() -> list[str]:
     """Assemble the sbx diagnose invocation, whose JSON compares the CLI with its daemon."""
     return ["sbx", "diagnose", "-o", "json"]
@@ -1243,6 +1280,8 @@ def warn_when_outdated() -> None:
 
 def dispatch(arguments: argparse.Namespace, working_directory: Path) -> int:
     """Run a setup command, or load config and hand off to a sandbox session."""
+    # An sbx too old to run comes first: it need not have the diagnose output the next check reads.
+    require_supported_sbx()
     require_matching_versions()
     if arguments.command in SETUP_COMMANDS:
         require_no_flags(arguments)
@@ -1267,7 +1306,7 @@ def main() -> int:
 
 
 def to_version(version: tuple[int, ...]) -> str:
-    """Spell a version the way a Python release is named, so a message can compare two of them."""
+    """Spell a version the way a release is named, so a message can compare two of them."""
     return ".".join(str(part) for part in version)
 
 
