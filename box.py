@@ -82,6 +82,12 @@ NOT_RUN = 127
 # What box shells out to, checked once up front so a missing one is a message and not a failed run.
 REQUIRED_BINARIES = ("sbx", "git", "claude")
 
+# The sbx diagnose check that compares the CLI with the daemon it talks to.
+VERSION_MATCH_CHECK = "Version match"
+
+# What a diagnose check reports when what it looked at is as it should be.
+CHECK_PASSED = "pass"
+
 # The shebang takes whatever python3 comes first, which on a stock macOS is Xcode's 3.9.
 PYTHON_MINIMUM = (3, 11)
 
@@ -133,6 +139,10 @@ NO_COMMITS_HELP = """this git repository has no commits.
 box hands the agent a clone of this directory, and a repository with no commits clones to nothing
 the agent can work from or branch off. Make at least one commit, then try again."""
 
+VERSION_MISMATCH_HELP = """the sbx client and its daemon are different versions: {message}.
+The daemon keeps running across an sbx upgrade, so the old one keeps answering until it is
+restarted. Run sbx daemon restart, then try again."""
+
 TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   1. Run: claude setup-token
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
@@ -174,7 +184,7 @@ name: {name}-network-policy
 displayName: {name} network policy
 description: The agent's own API calls and nothing else
 
-caps:
+permissions:
   network:
     allow:
       - api.anthropic.com:443
@@ -824,6 +834,43 @@ def missing_binaries(names: tuple[str, ...]) -> list[str]:
     return [name for name in names if shutil.which(name) is None]
 
 
+def build_diagnose_command() -> list[str]:
+    """Assemble the sbx diagnose invocation, whose JSON compares the CLI with its daemon."""
+    return ["sbx", "diagnose", "-o", "json"]
+
+
+def parse_version_mismatch(diagnose_output: str) -> str:
+    """Pull a failed version check's message out of diagnose JSON, or nothing when versions agree."""
+    try:
+        checks = json.loads(diagnose_output)["checks"]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return ""
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("name") != VERSION_MATCH_CHECK:
+            continue
+        if check.get("status") == CHECK_PASSED:
+            return ""
+        message = str(check.get("message", ""))
+        if not message:
+            return "sbx did not say which versions"
+        return message
+    return ""
+
+
+def require_matching_versions() -> None:
+    """Refuse to run when the sbx CLI and the daemon it talks to come from different releases."""
+    # No sbx means nothing to compare, and the commands that need it reject its absence themselves.
+    if shutil.which("sbx") is None:
+        return
+    # A daemon that is not running is no mismatch: sbx starts its own version when it needs one.
+    mismatch = parse_version_mismatch(run_quietly(build_diagnose_command()).stdout)
+    if not mismatch:
+        return
+    raise ConfigError(VERSION_MISMATCH_HELP.format(message=mismatch))
+
+
 def require_binaries() -> None:
     """Refuse to run without the commands box shells out to, rather than failing at the first one."""
     missing = missing_binaries(REQUIRED_BINARIES)
@@ -1196,6 +1243,7 @@ def warn_when_outdated() -> None:
 
 def dispatch(arguments: argparse.Namespace, working_directory: Path) -> int:
     """Run a setup command, or load config and hand off to a sandbox session."""
+    require_matching_versions()
     if arguments.command in SETUP_COMMANDS:
         require_no_flags(arguments)
         return setup_command(arguments.command, working_directory)

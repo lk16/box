@@ -49,5 +49,6 @@ uv run pytest -q
 
 Both must pass, and both run again once the change is finished. `pre-commit` covers ruff,
 `mypy --strict` and a set of whitespace and syntax hooks. CI runs the first three on Linux and
-macOS, so the whitespace hooks are caught by a local run and nowhere else. Inside a box sandbox
-`pre-commit` cannot run at all -- [sandbox.md](sandbox.md) gives the commands that replace it.
+macOS, against both ends of the Python range `pyproject.toml` allows, so the whitespace hooks are
+caught by a local run and nowhere else. Inside a box sandbox `pre-commit` cannot run at all --
+[sandbox.md](sandbox.md) gives the commands that replace it.

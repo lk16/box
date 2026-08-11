@@ -12,6 +12,11 @@ uv run pytest -q
 Inside a box sandbox `pre-commit` cannot run at all — [docs/sandbox.md](docs/sandbox.md) gives the
 commands that replace it there.
 
+The toolchain is uv, ruff, `mypy --strict` and pytest, and nothing else: there is no
+`requirements.txt` to install, and no black, autopep8, pylint or flake8 to run. Generic Python
+guidance from a `CLAUDE.md` further up the tree does not describe this repository. `box.py` itself
+must run on the oldest Python `pyproject.toml` allows, which is what pins the floor CI tests.
+
 - [docs/goal.md](docs/goal.md) — what box is for and the constraints it must keep
 - [docs/style.md](docs/style.md) — code style rules for `box.py` and its tests
 - [docs/sandbox.md](docs/sandbox.md) — what is true of this repository inside a box sandbox, and
