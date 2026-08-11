@@ -1781,6 +1781,13 @@ def test_the_starter_kit_is_named_after_the_project() -> None:
     assert "name: my-repo-network-policy" in box.build_kit_spec("my-repo")
 
 
+def test_the_starter_kit_uses_the_v2_block_names() -> None:
+    spec = box.build_kit_spec("demo")
+    # sbx v0.38.0 renamed caps to permissions, and its strict loader rejects the old name.
+    assert "permissions:" in spec
+    assert "caps:" not in spec
+
+
 def test_the_starter_kit_says_it_is_a_starting_point() -> None:
     assert "starting point" in box.build_kit_spec("demo")
 

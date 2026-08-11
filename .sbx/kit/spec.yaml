@@ -7,7 +7,7 @@ name: box-network-policy
 displayName: box network policy
 description: The agent's own API calls and nothing else; every dependency comes off a mounted cache
 
-caps:
+permissions:
   network:
     allow:
       - api.anthropic.com:443   # the agent's own API calls (not auto-included by the claude kit)
@@ -20,7 +20,7 @@ caps:
       # here: its upstream hook repo would be cloned from github and given an environment built
       # from PyPI. docs/sandbox.md has the checks to run instead. Run pre-commit on the host.
 
-commands:
+setup:
   startup:
     - command: ["sudo", "rm", "-f", "/usr/local/bin/clipboard-bridge", "/usr/local/bin/sbx-clipboard"]
       description: Remove the clipboard bridge binaries (no documented off-switch exists)

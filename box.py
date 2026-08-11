@@ -184,7 +184,7 @@ name: {name}-network-policy
 displayName: {name} network policy
 description: The agent's own API calls and nothing else
 
-caps:
+permissions:
   network:
     allow:
       - api.anthropic.com:443
