@@ -1063,6 +1063,86 @@ def test_require_binaries_names_every_command_that_is_missing(
     assert "not on PATH" in str(refusal.value)
 
 
+def make_diagnose_report(checks: list[dict[str, str]]) -> str:
+    """Render diagnose JSON the way sbx prints it, holding the given checks."""
+    return json.dumps({"version": "1.0", "checks": checks})
+
+
+def make_version_check(status: str, message: str) -> dict[str, str]:
+    """Build the one diagnose check that compares the CLI with its daemon."""
+    return {"name": box.VERSION_MATCH_CHECK, "status": status, "message": message}
+
+
+def install_diagnose(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
+    """Answer the diagnose invocation with canned output, and refuse any other command."""
+
+    def run_quietly(command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert command == box.build_diagnose_command()
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(box, "run_quietly", run_quietly)
+
+
+def test_the_diagnose_command_asks_for_json() -> None:
+    assert box.build_diagnose_command() == ["sbx", "diagnose", "-o", "json"]
+
+
+def test_parse_version_mismatch_is_quiet_when_the_versions_agree() -> None:
+    report = make_diagnose_report([make_version_check("pass", "v0.38.0")])
+    assert box.parse_version_mismatch(report) == ""
+
+
+def test_parse_version_mismatch_returns_the_failed_check_message() -> None:
+    report = make_diagnose_report([make_version_check("fail", "client v0.38.0, daemon v0.37.0")])
+    assert box.parse_version_mismatch(report) == "client v0.38.0, daemon v0.37.0"
+
+
+def test_parse_version_mismatch_says_something_when_the_check_says_nothing() -> None:
+    report = make_diagnose_report([make_version_check("fail", "")])
+    assert box.parse_version_mismatch(report) == "sbx did not say which versions"
+
+
+def test_parse_version_mismatch_is_quiet_when_the_check_is_absent() -> None:
+    report = make_diagnose_report([{"name": "Daemon", "status": "fail", "message": "not running"}])
+    assert box.parse_version_mismatch(report) == ""
+
+
+def test_parse_version_mismatch_is_quiet_on_output_that_is_not_diagnose_json() -> None:
+    assert box.parse_version_mismatch("") == ""
+    assert box.parse_version_mismatch("not json") == ""
+    assert box.parse_version_mismatch(json.dumps({"summary": {}})) == ""
+    assert box.parse_version_mismatch(json.dumps({"checks": ["not a check"]})) == ""
+
+
+def test_require_matching_versions_accepts_agreeing_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_diagnose(monkeypatch, make_diagnose_report([make_version_check("pass", "v0.38.0")]))
+    box.require_matching_versions()
+
+
+def test_require_matching_versions_refuses_a_daemon_from_another_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = make_diagnose_report([make_version_check("fail", "client v0.38.0, daemon v0.37.0")])
+    install_diagnose(monkeypatch, report)
+    with pytest.raises(box.ConfigError, match="daemon v0.37.0") as refusal:
+        box.require_matching_versions()
+    assert "sbx daemon restart" in str(refusal.value)
+
+
+def test_require_matching_versions_accepts_a_diagnose_that_answered_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_diagnose(monkeypatch, "")
+    box.require_matching_versions()
+
+
+def test_require_matching_versions_skips_a_machine_without_sbx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+    box.require_matching_versions()
+
+
 def test_prepare_launch_refuses_a_machine_without_sbx(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2264,9 +2344,10 @@ def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 def call_main(monkeypatch: pytest.MonkeyPatch, directory: Path, argument_list: list[str]) -> int:
-    """Run main the way the command line would, with the update check kept off the network."""
+    """Run main the way the command line would, with the update and version checks kept local."""
     monkeypatch.setattr(sys, "argv", ["box", *argument_list])
     monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.setattr(box, "require_matching_versions", lambda: None)
     monkeypatch.chdir(directory)
     return box.main()
 
@@ -2330,6 +2411,22 @@ def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: 
     assert call_main(monkeypatch, tmp_path, ["run"]) == 7
     assert launched[0].token == "sk-ant-secret"
     assert launched[0].agent_args[-2:] == ["--model", "claude-opus-5"]
+
+
+def test_main_checks_the_sbx_versions_before_any_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def mismatch() -> None:
+        raise box.ConfigError("the sbx client and its daemon are different versions")
+
+    monkeypatch.setattr(sys, "argv", ["box", "gen"])
+    monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.setattr(box, "require_matching_versions", mismatch)
+    monkeypatch.chdir(tmp_path)
+    assert box.main() == 1
+    assert "different versions" in capsys.readouterr().err
+    # gen is the command that needs no settings at all, so it shows the check guards every command.
+    assert not (tmp_path / box.BOX_DIR).exists()
 
 
 def test_main_checks_for_an_update_even_when_the_command_fails(

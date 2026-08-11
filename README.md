@@ -13,7 +13,9 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 - Python 3.11 or newer. box checks the version at startup and stops with a clear message on an
   older one. macOS ships 3.9 as its `python3`, so put a newer one earlier on `PATH`
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)), `git` and the `claude` CLI on
-  `PATH`. `box run` and `box config` list any that are missing before doing anything else
+  `PATH`. `box run` and `box config` list any that are missing before doing anything else. When
+  the `sbx` CLI and its daemon are different versions — the daemon keeps running across an
+  upgrade — every box command stops and says to run `sbx daemon restart`
 - Linux or macOS
 
 ## Install
