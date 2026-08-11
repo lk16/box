@@ -129,6 +129,10 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   against.
 - `sbx`, `git` and `claude` are checked on `PATH` before anything else, since nothing box does works
   without them and a missing one would otherwise surface as whichever call reached it first.
+- The `sbx` on `PATH` must be 0.38.0 or newer, read from `sbx version` before a command creates or
+  writes anything, since the kits box writes use the spec layout that release introduced. A version
+  line box cannot read is left alone: it is no evidence of an old sbx, and stopping on it would
+  break a working machine over a change in how `sbx` spells its release.
 - A project with no `.box/config.json` at all is an error naming `box gen`, before any setting is
   mentioned. "kit is not set" answers the wrong question for someone who has not set box up yet.
 - `kit` and `model` have no defaults and are errors when missing. A missing network policy or an

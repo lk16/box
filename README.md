@@ -15,8 +15,9 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) 0.38.0 or newer, `git` and the
   `claude` CLI on `PATH`. `box run` and `box config` list any that are missing before doing
   anything else. The kits box writes use the spec layout sbx 0.38.0 introduced, which older
-  releases reject. When the `sbx` CLI and its daemon are different versions — the daemon keeps
-  running across an upgrade — every box command stops and says to run `sbx daemon restart`
+  releases reject, so every box command reads `sbx version` first and stops on an older one. When
+  the `sbx` CLI and its daemon are different versions — the daemon keeps running across an
+  upgrade — every box command stops and says to run `sbx daemon restart`
 - Linux or macOS
 
 ## Install

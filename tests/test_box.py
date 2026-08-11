@@ -1063,6 +1063,75 @@ def test_require_binaries_names_every_command_that_is_missing(
     assert "not on PATH" in str(refusal.value)
 
 
+def install_sbx_version(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
+    """Answer the sbx version invocation with canned output, and refuse any other command."""
+
+    def run_quietly(command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert command == box.build_sbx_version_command()
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(box, "run_quietly", run_quietly)
+
+
+def test_the_sbx_version_command_asks_sbx_for_its_version() -> None:
+    assert box.build_sbx_version_command() == ["sbx", "version"]
+
+
+def test_parse_sbx_version_reads_the_release_out_of_the_printed_line() -> None:
+    printed = "sbx version: v0.38.0 c022b14634c4bea846ca12870d1d5e97d5868b54\n"
+    assert box.parse_sbx_version(printed) == (0, 38, 0)
+
+
+def test_parse_sbx_version_reads_a_release_printed_without_a_v() -> None:
+    assert box.parse_sbx_version("sbx version: 1.2.3\n") == (1, 2, 3)
+
+
+def test_parse_sbx_version_returns_nothing_for_a_line_holding_no_release() -> None:
+    assert box.parse_sbx_version("") == ()
+    assert box.parse_sbx_version("sbx version: unknown\n") == ()
+
+
+def test_require_supported_sbx_accepts_the_release_box_is_written_against(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_sbx_version(monkeypatch, "sbx version: v0.38.0 c022b146\n")
+    box.require_supported_sbx()
+
+
+def test_require_supported_sbx_accepts_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_sbx_version(monkeypatch, "sbx version: v0.39.1 c022b146\n")
+    box.require_supported_sbx()
+
+
+def test_require_supported_sbx_refuses_an_older_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_sbx_version(monkeypatch, "sbx version: v0.37.9 c022b146\n")
+    with pytest.raises(box.ConfigError, match="this sbx is v0.37.9") as refusal:
+        box.require_supported_sbx()
+    assert "v0.38.0 or newer" in str(refusal.value)
+
+
+def test_require_supported_sbx_refuses_a_release_older_in_its_first_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_sbx_version(monkeypatch, "sbx version: v0.9.0 c022b146\n")
+    with pytest.raises(box.ConfigError, match="this sbx is v0.9.0"):
+        box.require_supported_sbx()
+
+
+def test_require_supported_sbx_accepts_a_version_line_it_cannot_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_sbx_version(monkeypatch, "")
+    box.require_supported_sbx()
+
+
+def test_require_supported_sbx_skips_a_machine_without_sbx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+    box.require_supported_sbx()
+
+
 def make_diagnose_report(checks: list[dict[str, str]]) -> str:
     """Render diagnose JSON the way sbx prints it, holding the given checks."""
     return json.dumps({"version": "1.0", "checks": checks})
@@ -2354,6 +2423,7 @@ def call_main(monkeypatch: pytest.MonkeyPatch, directory: Path, argument_list: l
     """Run main the way the command line would, with the update and version checks kept local."""
     monkeypatch.setattr(sys, "argv", ["box", *argument_list])
     monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.setattr(box, "require_supported_sbx", lambda: None)
     monkeypatch.setattr(box, "require_matching_versions", lambda: None)
     monkeypatch.chdir(directory)
     return box.main()
@@ -2418,6 +2488,41 @@ def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: 
     assert call_main(monkeypatch, tmp_path, ["run"]) == 7
     assert launched[0].token == "sk-ant-secret"
     assert launched[0].agent_args[-2:] == ["--model", "claude-opus-5"]
+
+
+def test_main_checks_the_sbx_release_before_any_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def too_old() -> None:
+        raise box.ConfigError("this sbx is v0.37.0, and box needs v0.38.0 or newer")
+
+    monkeypatch.setattr(sys, "argv", ["box", "gen"])
+    monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.setattr(box, "require_supported_sbx", too_old)
+    monkeypatch.chdir(tmp_path)
+    assert box.main() == 1
+    assert "v0.38.0 or newer" in capsys.readouterr().err
+    # gen is the command that needs no settings at all, so it shows the check guards every command.
+    assert not (tmp_path / box.BOX_DIR).exists()
+
+
+def test_main_checks_the_sbx_release_before_the_daemon_it_talks_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked: list[str] = []
+
+    def too_old() -> None:
+        checked.append("release")
+        raise box.ConfigError("this sbx is v0.37.0, and box needs v0.38.0 or newer")
+
+    monkeypatch.setattr(sys, "argv", ["box", "gen"])
+    monkeypatch.setattr(box, "warn_when_outdated", lambda: None)
+    monkeypatch.setattr(box, "require_supported_sbx", too_old)
+    monkeypatch.setattr(box, "require_matching_versions", lambda: checked.append("daemon"))
+    monkeypatch.chdir(tmp_path)
+    assert box.main() == 1
+    # An old sbx need not print the diagnose JSON the daemon check reads, so it is answered first.
+    assert checked == ["release"]
 
 
 def test_main_checks_the_sbx_versions_before_any_command(
