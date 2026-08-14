@@ -93,7 +93,7 @@ VERSION_MATCH_CHECK = "Version match"
 CHECK_PASSED = "pass"
 
 # The shebang takes whatever python3 comes first, which on a stock macOS is Xcode's 3.9.
-PYTHON_MINIMUM = (3, 11)
+PYTHON_MINIMUM = (3, 9)
 
 # A branch name is a courtesy, so the agent naming it gets one turn and no more.
 BRANCH_NAME_TIMEOUT_SECONDS = 10

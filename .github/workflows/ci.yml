@@ -13,7 +13,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         # The floor pyproject.toml declares, and the newest box is expected to run on.
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.9", "3.14"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:

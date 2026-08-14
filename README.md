@@ -10,8 +10,8 @@ box runs Claude Code inside a disposable Docker sandbox (`sbx`).
 
 ## Requirements
 
-- Python 3.11 or newer. box checks the version at startup and stops with a clear message on an
-  older one. macOS ships 3.9 as its `python3`, so put a newer one earlier on `PATH`
+- Python 3.9 or newer, which the `python3` a stock macOS ships already satisfies. box checks the
+  version at startup and stops with a clear message on an older one
 - `sbx` ([Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)) 0.38.0 or newer, `git` and the
   `claude` CLI on `PATH`. `box run` and `box config` list any that are missing before doing
   anything else. The kits box writes use the spec layout sbx 0.38.0 introduced, which older

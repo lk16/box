@@ -2208,7 +2208,7 @@ def test_the_oldest_supported_python_is_supported() -> None:
 
 
 def test_an_older_python_names_both_versions() -> None:
-    assert box.unsupported_python((3, 9)) == "box needs Python 3.11 or newer, but this python3 is 3.9."
+    assert box.unsupported_python((3, 8)) == "box needs Python 3.9 or newer, but this python3 is 3.8."
 
 
 def test_run_box_refuses_an_older_python_before_doing_anything(
@@ -2217,10 +2217,10 @@ def test_run_box_refuses_an_older_python_before_doing_anything(
     def refuse_to_run() -> int:
         raise AssertionError("box must not run on a Python it does not support")
 
-    monkeypatch.setattr(sys, "version_info", (3, 9, 6, "final", 0))
+    monkeypatch.setattr(sys, "version_info", (3, 8, 18, "final", 0))
     monkeypatch.setattr(box, "main", refuse_to_run)
     assert box.run_box() == 1
-    assert "box: box needs Python 3.11 or newer" in capsys.readouterr().err
+    assert "box: box needs Python 3.9 or newer" in capsys.readouterr().err
 
 
 def test_format_value_joins_mounts() -> None:
