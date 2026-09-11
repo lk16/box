@@ -380,7 +380,8 @@ The refusals you are most likely to meet, and what to do about each:
 | `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |
 | `quotes its value` | drop the quotes around the value: docker would keep them, so box refuses the line |
 | `has no path on this machine for` | give the mount it lists a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
-| `is not a git repository` | check the path under `repos`; a member has to be a git repository with an `origin` remote |
+| `is no directory on this machine` | fix the path under `repos`; it is relative to the folder box runs in |
+| `is not a git repository` | a member has to be a git repository with an `origin` remote |
 | `has no branch <name> on origin` | name a branch `origin` really has under `repos` |
 | `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 

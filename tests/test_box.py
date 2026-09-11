@@ -560,10 +560,17 @@ def test_a_member_beside_the_repository_is_accepted(tmp_path: Path) -> None:
     box.require_members(make_group_config(tmp_path / "boxes", {"../billing-api": "develop"}), project)
 
 
+def test_a_member_that_is_not_there_is_rejected(tmp_path: Path) -> None:
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    with pytest.raises(box.ConfigError, match="no directory on this machine"):
+        box.require_members(make_group_config(tmp_path / "boxes", {"../nothing": "main"}), project)
+
+
 def test_a_member_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "billing-api").mkdir()
     project = make_project(make_git_repository(tmp_path / "boxes"))
     with pytest.raises(box.ConfigError, match="not a git repository"):
-        box.require_members(make_group_config(tmp_path / "boxes", {"../nothing": "main"}), project)
+        box.require_members(make_group_config(tmp_path / "boxes", {"../billing-api": "develop"}), project)
 
 
 def test_a_member_without_an_origin_remote_is_rejected(tmp_path: Path) -> None:

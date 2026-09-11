@@ -1470,6 +1470,8 @@ def require_members(config: Config, project: Project) -> None:
     seen: dict[Path, str] = {}
     for member in config.repos:
         path = member_path(project.working_directory, member)
+        if not path.is_dir():
+            raise ConfigError(f"{REPOS} names {member.path}, which is no directory on this machine")
         if not is_git_repository(path):
             raise ConfigError(f"{REPOS} names {member.path}, which is not a git repository")
         if not has_origin(path):
