@@ -196,6 +196,9 @@ permissions:
 # The one config key that is not a setting, so it is the one key whose value is not a string.
 REQUIRED_MOUNTS = "required_mounts"
 
+# What a group of repositories adds to a config, which box gen writes only when asked for a group.
+GROUP_SETTINGS = ("mcp",)
+
 # How a rejected value is named, so the message spells the type the way the JSON file does.
 JSON_TYPE_NAMES: dict[type, str] = {
     type(None): "null",
@@ -217,11 +220,15 @@ DEFAULTS: dict[str, object] = {
     "prompt_file": "",
     "kit": "",
     "template": "",
+    "mcp": "",
     REQUIRED_MOUNTS: {},
 }
 
-# What box gen writes: every default, with kit pointed at the policy it writes alongside.
-STARTER_CONFIG: dict[str, object] = {**DEFAULTS, "kit": KIT_DIR}
+# What box gen writes for one project: today's settings, so a config it writes runs on an older box.
+STARTER_CONFIG: dict[str, object] = {
+    **{key: value for key, value in DEFAULTS.items() if key not in GROUP_SETTINGS},
+    "kit": KIT_DIR,
+}
 
 
 class ConfigError(Exception):
@@ -241,6 +248,7 @@ class Config:
     prompt_file: str
     kit: str
     template: str
+    mcp: str
     mounts: tuple[str, ...]
 
 
@@ -428,6 +436,7 @@ def build_config(values: dict[str, object], mounts: list[str], working_directory
         prompt_file=setting(values, "prompt_file"),
         kit=setting(values, "kit"),
         template=setting(values, "template"),
+        mcp=setting(values, "mcp"),
         mounts=to_workspaces(mounts),
     )
 
@@ -448,6 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
     parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
     parser.add_argument("--template", metavar="REF", help="sbx template the sandbox image comes from")
+    parser.add_argument("--mcp", metavar="NAMES", help="MCP servers sbx mcp add registered, comma-separated")
     parser.add_argument(
         MOUNT_FLAG, dest=MOUNT_DEST, metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
@@ -578,6 +588,9 @@ def build_create_command(config: Config, sandbox_name: str) -> list[str]:
     # An unset template leaves the image to sbx, which is what almost every project wants.
     if config.template:
         command.extend(["--template", config.template])
+    # The names are the user's own registered servers, so an unset mcp asks sbx for none of them.
+    if config.mcp:
+        command.extend(["--static-mcp", config.mcp])
     return command
 
 

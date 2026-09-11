@@ -117,6 +117,7 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt. |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | `--template REF` | `template` | unset | `sbx` template the sandbox's container image comes from. |
+| `--mcp NAMES` | `mcp` | unset | MCP servers the sandbox may use, comma-separated (see [Read-only tools](#read-only-tools)). |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
@@ -141,6 +142,22 @@ agent no way to install from inside. Producing that image is yours to do: `docke
 from sbx's base plus whatever you need, then `docker save` and `sbx template load`, and put the tag
 `sbx template ls` shows here. box only passes the value on. An image the sandbox runtime does not
 hold is a pull error at create time that says nothing useful, so load it before you run.
+
+## Read-only tools
+
+An agent often needs to look something up that lives outside the repository: a database, a
+Kubernetes cluster, an error tracker. `sbx mcp add` registers an MCP server on your machine, and
+`mcp` names the ones this project's sandboxes may use:
+
+```json
+{
+  "mcp": "postgres,kubernetes"
+}
+```
+
+The server runs on the host, under your own access, so registering one is yours to do and box only
+passes the names on to `sbx create --static-mcp`. `sbx mcp ls` shows what this machine has. A name
+`sbx` does not know is a failed create that says so.
 
 ## The system prompt
 

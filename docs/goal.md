@@ -154,6 +154,13 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   shadows the image's OpenSSL and curl and breaks TLS for everything. box names the image and
   nothing more -- it never builds or loads one, and never checks that one exists, since `sbx` owns
   that and fails clearly at create time.
+- `mcp` names servers the user registered with `sbx mcp add`, and box passes the names on as
+  `--static-mcp` and nothing more, the way it names a template. Registering one starts a process on
+  this host holding the user's own access to a database or a cluster, which is the machine owner's
+  call rather than a project's, and box neither registers, checks nor starts one: an unknown name is
+  a failed create, which box already reports.
+- `box gen` writes a single project's settings and never the keys only a group needs, so a config it
+  writes today still runs on a box from before groups existed.
 - A failed `sbx create` is reported, not raised. `sbx` has already said why, there is no sandbox
   to clean up or keep, and the stored secret is dropped again, so a failure leaves nothing
   behind and no traceback in front of the reason.

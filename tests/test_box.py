@@ -29,6 +29,7 @@ def make_config() -> box.Config:
         prompt_file="docs/project-prompt.md",
         kit="registry/kit",
         template="frlg-sandbox:1",
+        mcp="postgres,kubernetes",
         mounts=("/cache:ro",),
     )
 
@@ -753,6 +754,8 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
         "registry/kit",
         "--template",
         "frlg-sandbox:1",
+        "--static-mcp",
+        "postgres,kubernetes",
     ]
 
 
@@ -770,6 +773,16 @@ def test_build_create_command_takes_the_template_from_the_config(tmp_path: Path)
     config = config_from_values({"template": "frlg-sandbox:1"}, tmp_path)
     command = box.build_create_command(config, "demo-1")
     assert command[-2:] == ["--template", "frlg-sandbox:1"]
+
+
+def test_build_create_command_names_the_mcp_servers_sbx_should_start(tmp_path: Path) -> None:
+    config = config_from_values({"mcp": "postgres,kubernetes"}, tmp_path)
+    command = box.build_create_command(config, "demo-1")
+    assert command[-2:] == ["--static-mcp", "postgres,kubernetes"]
+
+
+def test_build_create_command_omits_an_unset_mcp(tmp_path: Path) -> None:
+    assert "--static-mcp" not in box.build_create_command(config_from_values({}, tmp_path), "demo-1")
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
@@ -890,6 +903,28 @@ def test_load_config_lets_the_template_flag_win_over_the_file(tmp_path: Path) ->
 def test_load_config_leaves_the_template_unset_by_default(tmp_path: Path) -> None:
     arguments = box.build_parser().parse_args(["run"])
     assert box.load_config(arguments, tmp_path).template == ""
+
+
+def test_load_config_takes_the_mcp_servers_from_the_config_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"mcp": "postgres"})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).mcp == "postgres"
+
+
+def test_load_config_lets_the_mcp_flag_win_over_the_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"mcp": "postgres"})
+    arguments = box.build_parser().parse_args(["run", "--mcp", "kubernetes"])
+    assert box.load_config(arguments, tmp_path).mcp == "kubernetes"
+
+
+def test_load_config_leaves_the_mcp_servers_unset_by_default(tmp_path: Path) -> None:
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).mcp == ""
+
+
+def test_format_config_prints_the_mcp_servers() -> None:
+    rendered = box.format_config(make_config(), "/secrets/token")
+    assert re.search(r"^\s+mcp\s+postgres,kubernetes$", rendered, re.MULTILINE)
 
 
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
@@ -1854,7 +1889,13 @@ def test_gen_writes_a_config_box_can_read_back(tmp_path: Path) -> None:
 
 
 def test_the_starter_config_is_every_default_but_the_kit_gen_writes() -> None:
-    assert box.STARTER_CONFIG == {**box.DEFAULTS, "kit": box.KIT_DIR}
+    single = {key: value for key, value in box.DEFAULTS.items() if key not in box.GROUP_SETTINGS}
+    single["kit"] = box.KIT_DIR
+    assert single == box.STARTER_CONFIG
+
+
+def test_the_starter_config_holds_nothing_only_a_group_needs() -> None:
+    assert not set(box.STARTER_CONFIG) & set(box.GROUP_SETTINGS)
 
 
 def test_gen_writes_a_starter_kit(tmp_path: Path) -> None:
