@@ -161,6 +161,9 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   as a zip artifact and fails with a message about zip files. A `kit` that is not on disk is a
   reference `sbx` resolves itself and is left alone.
 - Never put the token on a command line; it goes to `sbx secret set-custom` over stdin.
+- The sandbox scope reaches `sbx secret` as `--sandbox`, never as a positional argument. sbx 0.38
+  deprecates the positional form, and `drop_secret` throws its output away, so the day sbx removes
+  it a token would outlive its sandbox without a word, scoped to a name `pick_name` hands out again.
 - Store the secret *before* `sbx create`. `sbx` injects the placeholder env var into the sandbox
   at creation time, so a secret stored afterwards leaves `CLAUDE_CODE_OAUTH_TOKEN` unset and the
   agent starts logged out.

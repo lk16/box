@@ -598,6 +598,7 @@ def test_store_secret_names_the_sandbox_the_host_and_the_variable(monkeypatch: p
         "sbx",
         "secret",
         "set-custom",
+        "--sandbox",
         "demo-1",
         "--host",
         box.SECRET_HOST,
@@ -1071,7 +1072,7 @@ def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(box, "capture", capture)
     box.drop_secret("demo-1")
-    assert commands == [["sbx", "secret", "rm", "demo-1", "--host", box.SECRET_HOST, "-f"]]
+    assert commands == [["sbx", "secret", "rm", "--sandbox", "demo-1", "--host", box.SECRET_HOST, "-f"]]
 
 
 def test_every_command_box_shells_out_to_is_required() -> None:
