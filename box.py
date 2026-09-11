@@ -57,16 +57,6 @@ RESET = "\033[0m"
 NO_COLOUR_ENV = "NO_COLOR"
 
 SECRET_HOST = "api.anthropic.com"
-
-# Who sbx exec runs as unless it is told otherwise, and who a member's clone has to belong to.
-SANDBOX_USER = "agent"
-
-# Where a bundle lands on its way in or out, which is the one directory both sides can write.
-SANDBOX_TEMP = "/tmp"
-
-# What a repository already holds, which new work is counted against.
-MAIN_KNOWN = "HEAD"
-MEMBER_KNOWN = "--remotes=origin"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 # The token path is deliberately the one setting that is not a flag or a config file key.
@@ -94,6 +84,16 @@ MOUNT_DEST = "mounts"
 
 # Where sbx's git daemon lands a sandbox's work: refs/sandboxes/<sandbox>/<branch>.
 SANDBOX_REFS = "refs/sandboxes"
+
+# Who sbx exec runs as unless it is told otherwise, and who a member's clone has to belong to.
+SANDBOX_USER = "agent"
+
+# Where a bundle lands on its way in or out, which is the one directory both sides can write.
+SANDBOX_TEMP = "/tmp"
+
+# What a repository already holds, which is what new work is counted against.
+MAIN_KNOWN = "HEAD"
+MEMBER_KNOWN = "--remotes=origin"
 
 # What a command that never started exits with, which is what a shell reports for the same thing.
 NOT_RUN = 127
@@ -250,9 +250,9 @@ its host copy just now:
 
 {members}
 
-Each clone starts on the branch named after it, and every origin/* branch is there too. Nothing can
-be pushed anywhere. Commit on a branch, and every branch holding new commits comes back to the host
-as a branch in that repository."""
+Each one sits at the path it has on the host, on the branch named beside it, with every origin/*
+branch there too. Nothing can be pushed anywhere. Commit on a branch, and every branch holding new
+commits comes back to the host as a branch in that repository."""
 
 # The network policy box gen writes, kept here with BASE_PROMPT so one script stays the whole of box.
 STARTER_KIT_SPEC = """# A starting point rather than a finished policy: the agent's own API calls,
@@ -710,6 +710,18 @@ def format_member(member: Member) -> str:
     return f"{member.path}@{member.base}"
 
 
+def format_member_settings(settings: MemberSettings) -> str:
+    """Name what one member's own .box/ adds to this run, which for most members is nothing."""
+    added = list(settings.mounts)
+    if settings.kit:
+        added.append(f"kit={settings.kit}")
+    if settings.prompt_file:
+        added.append(f"prompt_file={settings.prompt_file}")
+    if not added:
+        return f"{settings.member.path}: nothing"
+    return f"{settings.member.path}: {' '.join(added)}"
+
+
 def format_config(config: Config, token_file: str, secrets_file: str) -> str:
     """Render the settings in effect, the secret paths included, as aligned key/value lines."""
     items: dict[str, object] = {
@@ -718,6 +730,7 @@ def format_config(config: Config, token_file: str, secrets_file: str) -> str:
         **asdict(config),
         SECRET_HOSTS: tuple(format_secret(secret) for secret in config.secret_hosts),
         REPOS: tuple(format_member(member) for member in config.repos),
+        "members": tuple(format_member_settings(settings) for settings in config.members),
     }
     width = max(len(key) for key in items)
     lines = [f"  {key.ljust(width)}  {format_value(value)}" for key, value in items.items()]
@@ -1235,13 +1248,23 @@ def build_status_command(path: Path, sandbox_name: str) -> list[str]:
     return ["sbx", "exec", sandbox_name, "git", "-C", str(path), "status", "--porcelain"]
 
 
-def build_checkouts(config: Config, project: Project) -> list[Checkout]:
-    """List every repository a sandbox's work comes back to: the one box runs in, then the members."""
-    checkouts = [Checkout(path=project.root, known_commits=MAIN_KNOWN)]
+def main_checkout(project: Project) -> Checkout:
+    """The repository box runs in, whose work is what its own checkout does not already hold."""
+    return Checkout(path=project.root, known_commits=MAIN_KNOWN)
+
+
+def member_checkouts(config: Config, project: Project) -> list[Checkout]:
+    """The members, whose work is what none of their origin branches hold."""
+    checkouts = []
     for member in config.repos:
         path = member_path(project.working_directory, member)
         checkouts.append(Checkout(path=path, known_commits=MEMBER_KNOWN))
     return checkouts
+
+
+def build_checkouts(config: Config, project: Project) -> list[Checkout]:
+    """List every repository a sandbox's work comes back to: the one box runs in, then the members."""
+    return [main_checkout(project), *member_checkouts(config, project)]
 
 
 def fetch_member_work(checkout: Checkout, sandbox_name: str, directory: Path) -> bool:
@@ -1286,18 +1309,19 @@ def clones_are_committed(checkouts: list[Checkout], sandbox_name: str) -> bool:
 def cleanup(config: Config, launch: Launch) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
     sandbox_name = launch.sandbox_name
-    checkouts = build_checkouts(config, launch.project)
-    main = checkouts[0]
+    main = main_checkout(launch.project)
+    members = member_checkouts(config, launch.project)
     remote = f"sandbox-{sandbox_name}"
     # Removal follows, so "I could not tell" must never be read as "there is nothing to lose".
     if not succeeds(["git", "fetch", remote]):
         warn_unchecked(main.path, sandbox_name, f"git fetch {remote} failed, so its commits are not here")
         return
-    unfetched = fetch_committed_work(checkouts[1:], sandbox_name)
+    unfetched = fetch_committed_work(members, sandbox_name)
     if unfetched is not None:
         reason = f"the sandbox's commits in {unfetched.path} are not here"
         warn_unchecked(unfetched.path, sandbox_name, reason)
         return
+    checkouts = [main, *members]
     if not clones_are_committed(checkouts, sandbox_name):
         return
     for checkout in checkouts:
@@ -1320,7 +1344,7 @@ def member_setting(values: dict[str, object], key: str) -> str:
 
 
 def member_kit(directory: Path, kit: str) -> str:
-    """Resolve a member's kit against the member when it names a directory here, not this run's."""
+    """Resolve a member's kit against the member itself, since its path is written relative to it."""
     if not kit:
         return ""
     path = directory / resolve_path(kit)

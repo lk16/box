@@ -3244,6 +3244,17 @@ def test_format_config_names_each_declared_secret_and_where_it_may_go(tmp_path: 
     assert re.search(rf"^\s+{box.SECRETS_FILE_ENV}\s+/secrets/box.env$", rendered, re.MULTILINE)
 
 
+def test_format_config_names_what_a_member_brings_of_its_own() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=("/usr/local/go",), kit="", prompt_file="")
+    rendered = box.format_config(config_with_member(settings), "", "")
+    assert "../billing-api: /usr/local/go" in rendered
+
+
+def test_format_config_says_when_a_member_brings_nothing() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+    assert "../billing-api: nothing" in box.format_config(config_with_member(settings), "", "")
+
+
 def test_format_config_aligns_every_value_in_one_column() -> None:
     lines = box.format_config(make_config(), "/secrets/token", "/secrets/box.env").splitlines()[1:]
     columns = {len(line) - len(line.lstrip().split(" ", 1)[-1].lstrip()) for line in lines}
