@@ -50,7 +50,8 @@ Once per machine:
 
 Once per project, committed for everyone:
 
-- `box gen` — writes `.box/` and the `.gitignore` line box needs
+- `box gen` — writes `.box/` and the `.gitignore` line box needs. In a folder with no config yet it
+  asks whether this is one project or a [group](#groups); pressing Enter takes one project
 - `$EDITOR .box/config.json` — fill in `model`; `gen` already wrote the kit it points at
 
 Once per machine per project, if `.box/config.json` declares `required_mounts`:
@@ -74,7 +75,7 @@ watch what it does and step in.
 
 | Command | What it does |
 | --- | --- |
-| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` line box needs, leaving anything already filled in alone |
+| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` line box needs, leaving anything already filled in alone. Asks whether the folder is one project or a group, unless it already has a config or nobody is at the terminal |
 | `box config` | prints the settings in effect, including the `CLAUDE_OAUTH_TOKEN_FILE` path, then runs every check a run makes |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
 | `box run` | creates the sandbox and starts Claude in it |
@@ -181,8 +182,10 @@ folder of box setups next to the repositories themselves, one subfolder per grou
   kubernetes/
 ```
 
-`cd ~/work/boxes/billing && box run` starts a sandbox named after the folder it ran in. `repos` lists
-the members and the branch each clone starts from:
+`box gen` in `~/work/boxes/billing` asks whether the folder is one project or a group; answering `2`
+writes a config with the group keys already in it. `cd ~/work/boxes/billing && box run` then starts a
+sandbox named after the folder it ran in. `repos` lists the members and the branch each clone
+starts from:
 
 ```json
 {

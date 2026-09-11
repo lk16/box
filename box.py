@@ -185,7 +185,7 @@ REPOS = "repos"
 OBJECT_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS, REPOS)
 
 # What a group of repositories adds to a config, which box gen writes only when asked for a group.
-GROUP_SETTINGS = ("mcp", SECRET_HOSTS, REPOS)
+GROUP_SETTINGS = (REPOS, SECRET_HOSTS, "mcp")
 
 SECRETS_FILE_HELP = f"""{{config_file}} declares {SECRET_HOSTS}, but {SECRETS_FILE_ENV} is not set.
 Set it up once:
@@ -206,6 +206,14 @@ track can go with it."""
 
 SECRET_INSIDE_HELP = """{variable} points at {path}, which is inside {directory}.
 The sandbox can read everything there, so the file holding secrets has to sit somewhere else."""
+
+GROUP_QUESTION = """Is this for one project, or for a group of projects?
+  1  one project: the code in this folder
+  2  a group: several projects next to this folder
+Type 1 or 2 (Enter means 1): """
+
+GROUP_NEXT_STEP = f"""Next: list each project under "{REPOS}" in {CONFIG_FILE}, like "../api": "main",
+where main is the branch to start from."""
 
 # Sandbox facts that hold for every project, always sent ahead of the project's own prompt file.
 BASE_PROMPT = """You are running unattended in a network-restricted sandbox. Treat the next
@@ -294,6 +302,9 @@ STARTER_CONFIG: dict[str, object] = {
     **{key: value for key, value in DEFAULTS.items() if key not in GROUP_SETTINGS},
     "kit": KIT_DIR,
 }
+
+# What box gen writes for a group: the same starter, plus the keys only a group has anything to say for.
+GROUP_CONFIG: dict[str, object] = {**STARTER_CONFIG, **{key: DEFAULTS[key] for key in GROUP_SETTINGS}}
 
 
 class ConfigError(Exception):
@@ -1725,13 +1736,36 @@ def ignore_local_paths(working_directory: Path) -> None:
         print(f"ignored {relative_path} in {GITIGNORE_FILE}")
 
 
-def write_starter_config(path: Path) -> None:
+def write_starter_config(path: Path, starter: dict[str, object]) -> None:
     """Write every setting at its default, unless the project already has a config."""
     if path.exists():
         print(f"kept    {CONFIG_FILE}")
         return
-    path.write_text(to_json(STARTER_CONFIG))
+    path.write_text(to_json(starter))
     print(f"written {CONFIG_FILE}")
+
+
+def ask_what_this_is_for() -> dict[str, object] | None:
+    """Ask which defaults to write until the answer is one of the two, or the input ends."""
+    while True:
+        try:
+            answer = input(GROUP_QUESTION).strip()
+        except EOFError:
+            return None
+        if answer in ("", "1"):
+            return STARTER_CONFIG
+        if answer == "2":
+            return GROUP_CONFIG
+
+
+def choose_starter_config(working_directory: Path) -> dict[str, object] | None:
+    """Pick the defaults box gen writes, asking only where there is someone to answer."""
+    # A config that is already there is kept whatever the answer would have been, so nobody is asked.
+    if (working_directory / CONFIG_FILE).is_file():
+        return STARTER_CONFIG
+    if not sys.stdin.isatty():
+        return STARTER_CONFIG
+    return ask_what_this_is_for()
 
 
 def build_kit_spec(base_name: str) -> str:
@@ -1785,11 +1819,17 @@ def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
 
 def generate(working_directory: Path) -> int:
     """Write a starter .box directory, adding what is missing and keeping what is filled in."""
+    starter = choose_starter_config(working_directory)
+    if starter is None:
+        print("box: nothing was answered, so nothing was written.", file=sys.stderr)
+        return 1
     (working_directory / BOX_DIR).mkdir(exist_ok=True)
-    write_starter_config(working_directory / CONFIG_FILE)
+    write_starter_config(working_directory / CONFIG_FILE, starter)
     write_starter_kit(working_directory)
     write_mounts(working_directory, read_required_mounts(working_directory))
     ignore_local_paths(working_directory)
+    if REPOS in starter:
+        print(GROUP_NEXT_STEP)
     return 0
 
 

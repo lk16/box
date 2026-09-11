@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
@@ -2800,6 +2801,94 @@ def test_gen_keeps_an_existing_mounts_file(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     box.generate(tmp_path)
     assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"cache": "/cache"}
+
+
+class FakeTerminal:
+    """Stand in for the terminal box gen asks its question at, answering from a fixed list."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self.answers = answers
+        self.questions: list[str] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make stdin a terminal, and answer whatever is asked at it."""
+        monkeypatch.setattr(sys, "stdin", self)
+        monkeypatch.setattr(builtins, "input", self.ask)
+
+    def isatty(self) -> bool:
+        """Say there is someone here to ask, which is what box gen goes by."""
+        return True
+
+    def ask(self, question: str) -> str:
+        """Answer the next question, or end the input when there is nothing left to say."""
+        self.questions.append(question)
+        if not self.answers:
+            raise EOFError
+        return self.answers.pop(0)
+
+
+def test_the_group_starter_is_the_starter_plus_what_only_a_group_needs() -> None:
+    assert box.GROUP_CONFIG == {**box.STARTER_CONFIG, "repos": {}, "secret_hosts": {}, "mcp": ""}
+
+
+def test_gen_writes_a_group_config_box_can_read_back(tmp_path: Path) -> None:
+    (tmp_path / box.BOX_DIR).mkdir()
+    box.write_starter_config(tmp_path / box.CONFIG_FILE, box.GROUP_CONFIG)
+    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == box.GROUP_CONFIG
+
+
+def test_gen_asks_nothing_where_there_is_nobody_to_ask(tmp_path: Path) -> None:
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+
+
+def test_gen_writes_the_starter_for_one_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    terminal = FakeTerminal(["1"])
+    terminal.install(monkeypatch)
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+    assert "one project" in terminal.questions[0]
+
+
+def test_an_empty_answer_means_one_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeTerminal([""]).install(monkeypatch)
+    box.generate(tmp_path)
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+
+
+def test_gen_writes_the_group_starter_for_a_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeTerminal(["2"]).install(monkeypatch)
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.GROUP_CONFIG
+    assert "Next:" in capsys.readouterr().out
+
+
+def test_an_answer_box_does_not_know_is_asked_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    terminal = FakeTerminal(["yes", "2"])
+    terminal.install(monkeypatch)
+    box.generate(tmp_path)
+    assert len(terminal.questions) == 2
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.GROUP_CONFIG
+
+
+def test_gen_writes_nothing_when_the_question_is_never_answered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    FakeTerminal([]).install(monkeypatch)
+    assert box.generate(tmp_path) == 1
+    assert not (tmp_path / box.BOX_DIR).exists()
+
+
+def test_gen_asks_nothing_about_a_project_that_already_has_a_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = FakeTerminal([])
+    terminal.install(monkeypatch)
+    write_config(tmp_path, {"memory": "16g"})
+    assert box.generate(tmp_path) == 0
+    assert terminal.questions == []
 
 
 def test_mount_prompt_is_a_command() -> None:

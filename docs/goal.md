@@ -220,7 +220,12 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   call rather than a project's, and box neither registers, checks nor starts one: an unknown name is
   a failed create, which box already reports.
 - `box gen` writes a single project's settings and never the keys only a group needs, so a config it
-  writes today still runs on a box from before groups existed.
+  writes today still runs on a box from before groups existed. It asks one question first -- one
+  project or a group -- and only where a config is missing and stdin is a terminal, so it still
+  takes no flags and a script still gets today's defaults without answering anything. The question
+  picks which defaults to write and nothing else; a group's members are still typed into the file
+  afterwards, which is what the line gen prints says. An input that ends without an answer writes
+  nothing at all, since guessing at that point is how a folder ends up set up as the wrong thing.
 - Settings come from the working directory's `.box/`, but `sbx create --clone` is given the
   repository root, since it refuses a path that is not a repository of its own. So a folder below
   the root is a place to keep settings, and the sandbox still gets the whole repository. The
