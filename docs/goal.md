@@ -19,6 +19,10 @@ One run does this:
    and remove the sandbox — unless the sandbox still has uncommitted changes, in which case it is
    kept and recovery steps are printed.
 
+A group session does the same for several repositories at once: `repos` names the members, each one
+is fetched and bundled into the sandbox as a clone of its own before the agent starts, and each one
+gets its committed work back at the end.
+
 `box run` does that. Every command starts with a word, so nothing happens by accident when a flag
 is mistyped. The others all exit without creating a sandbox: `box config` prints the settings in
 effect, `box gen` writes a starter `.box/` directory, `box mount-prompt` prints the prompt
@@ -173,6 +177,29 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   shadows the image's OpenSSL and curl and breaks TLS for everything. box names the image and
   nothing more -- it never builds or loads one, and never checks that one exists, since `sbx` owns
   that and fails clearly at create time.
+- A group session is one sandbox working on several repositories: the one box runs in, plus the
+  members `repos` names. The constraints that shape it:
+  - Members reach the sandbox as bundles. `sbx create --clone` clones the first path it is given
+    and mounts every other one as it is, and a mount would hand over everything a member holds,
+    ignored files included. A bundle carries committed history and nothing else, which is exactly
+    what a clone is made from, so a member is never mounted and a mount holding one is refused.
+  - box fetches every member before it bundles one, with the terminal attached so ssh can ask for
+    a passphrase, and refuses a base the fetch did not produce. Current data is the whole point of
+    the session, and a fetch writes the `origin/*` refs and nothing else, so the user's own
+    checkout, index and branches are left exactly as they were.
+  - Each member names the branch its clone starts from, because `origin/HEAD` is written when a
+    clone is made and goes stale, and guessing `main` for a repository living on `develop` would
+    start every session in the wrong place.
+  - A member counts new commits against every `origin/*` branch, where the repository box runs in
+    keeps counting against `HEAD`. The host checkout of a member is whatever the user left it on,
+    so `HEAD..` there would name commits the sandbox never made; the repository box runs in is
+    cloned from that same checkout, so comparing with `HEAD` is what keeps unpushed local commits
+    from getting a branch of their own.
+  - A member's clone sits at the member's own host path inside the sandbox, so a tool that prints
+    a path names something the user recognises, and so two members can never collide.
+  - Every repository a run can leave work in is read when a sandbox name is picked, and every one
+    of them is fetched, checked for uncommitted work and settled before anything is removed. A
+    sandbox is only ever removed when all of them came back clean.
 - `mcp` names servers the user registered with `sbx mcp add`, and box passes the names on as
   `--static-mcp` and nothing more, the way it names a template. Registering one starts a process on
   this host holding the user's own access to a database or a cluster, which is the machine owner's

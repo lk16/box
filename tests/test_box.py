@@ -32,6 +32,7 @@ def make_config() -> box.Config:
         mcp="postgres,kubernetes",
         mounts=("/cache:ro",),
         secret_hosts=(),
+        repos=(),
     )
 
 
@@ -49,6 +50,11 @@ def make_subfolder_project() -> box.Project:
     return box.Project(
         working_directory=Path("/work/boxes/billing"), root=Path("/work/boxes"), started_in="billing"
     )
+
+
+def make_checkout(directory: Path) -> box.Checkout:
+    """Build the checkout the repository box runs in resolves to."""
+    return box.Checkout(path=directory, known_commits=box.MAIN_KNOWN)
 
 
 def make_project(directory: Path) -> box.Project:
@@ -480,6 +486,121 @@ def test_a_symlink_into_the_repository_is_rejected(tmp_path: Path) -> None:
         box.require_secret_outside(box.SECRETS_FILE_ENV, str(link), [inside])
 
 
+MEMBER = box.Member(path="../billing-api", base="develop")
+
+
+def make_member(directory: Path, name: str) -> Path:
+    """Create a repository with an origin remote, the way a member repository sits on a host."""
+    path = directory / name
+    make_git_repository(path)
+    git(path, ["remote", "add", "origin", f"https://example.com/{name}.git"])
+    return path
+
+
+def make_group_config(directory: Path, repos: dict[str, str]) -> box.Config:
+    """Build the config of a group working on the given member repositories."""
+    return config_from_values({"repos": repos}, directory)
+
+
+def test_a_member_names_a_path_and_the_branch_to_start_from() -> None:
+    assert box.to_members({"../billing-api": "develop"}) == (MEMBER,)
+
+
+def test_members_keep_the_order_they_were_declared_in() -> None:
+    members = box.to_members({"../b": "main", "../a": "main"})
+    assert [member.path for member in members] == ["../b", "../a"]
+
+
+def test_a_member_without_a_branch_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="no branch to start from"):
+        box.to_members({"../billing-api": ""})
+
+
+def test_a_member_without_a_path_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="no path"):
+        box.to_members({"": "main"})
+
+
+def test_repos_must_be_an_object() -> None:
+    with pytest.raises(box.ConfigError, match="must be a JSON object"):
+        box.to_members(["../billing-api"])
+
+
+def test_load_config_reads_the_members(tmp_path: Path) -> None:
+    write_config(tmp_path, {"repos": {"../billing-api": "develop"}})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).repos == (MEMBER,)
+
+
+def test_repos_is_not_a_flag() -> None:
+    assert "repos" not in vars(box.build_parser().parse_args(["run"]))
+
+
+def test_format_config_names_each_member_and_where_its_clone_starts(tmp_path: Path) -> None:
+    config = make_group_config(tmp_path, {"../billing-api": "develop"})
+    assert "../billing-api@develop" in box.format_config(config, "", "")
+
+
+def test_a_member_sits_where_the_working_directory_says_it_does(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    assert box.member_path(project, MEMBER) == (tmp_path / "billing-api").resolve()
+
+
+def test_a_member_path_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    member = box.Member(path="~/billing-api", base="develop")
+    assert box.member_path(make_project(tmp_path), member) == (tmp_path / "billing-api").resolve()
+
+
+def test_a_member_beside_the_repository_is_accepted(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    box.require_members(make_group_config(tmp_path / "boxes", {"../billing-api": "develop"}), project)
+
+
+def test_a_member_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    with pytest.raises(box.ConfigError, match="not a git repository"):
+        box.require_members(make_group_config(tmp_path / "boxes", {"../nothing": "main"}), project)
+
+
+def test_a_member_without_an_origin_remote_is_rejected(tmp_path: Path) -> None:
+    make_git_repository(tmp_path / "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    with pytest.raises(box.ConfigError, match="no origin remote"):
+        box.require_members(make_group_config(tmp_path / "boxes", {"../billing-api": "develop"}), project)
+
+
+def test_a_member_inside_the_repository_box_runs_in_is_rejected(tmp_path: Path) -> None:
+    boxes = make_git_repository(tmp_path / "boxes")
+    make_member(boxes, "billing-api")
+    with pytest.raises(box.ConfigError, match="would sit inside"):
+        box.require_members(make_group_config(boxes, {"./billing-api": "develop"}), make_project(boxes))
+
+
+def test_the_same_member_twice_is_rejected(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    repos = {"../billing-api": "develop", "../boxes/../billing-api": "main"}
+    with pytest.raises(box.ConfigError, match="one repository twice"):
+        box.require_members(make_group_config(tmp_path / "boxes", repos), project)
+
+
+def test_a_mount_holding_a_member_is_rejected(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    values = box.merge_values({"repos": {"../billing-api": "develop"}}, {})
+    config = box.build_config(values, [str(tmp_path)], tmp_path / "boxes")
+    with pytest.raises(box.ConfigError, match="would hand over whole"):
+        box.require_members(config, project)
+
+
+def test_the_sandbox_reads_every_member_too(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    assert (tmp_path / "billing-api").resolve() in box.reachable_paths(config, project)
+
+
 def test_parse_ref_names_extracts_sandbox_names() -> None:
     refs = "refs/sandboxes/demo-1/main\nrefs/sandboxes/demo-2/wip\nrefs/heads/main\n"
     assert box.parse_ref_names(refs) == {"demo-1", "demo-2"}
@@ -559,13 +680,13 @@ class FakeRepository:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for everything settle_ref runs against git and Claude."""
 
-        def count_new_commits(commit: str) -> str:
+        def count_new_commits(checkout: box.Checkout, commit: str) -> str:
             return self.count
 
-        def new_commit_subjects(commit: str) -> str:
+        def new_commit_subjects(checkout: box.Checkout, commit: str) -> str:
             return "Add retry logic\n"
 
-        def local_branch_names() -> set[str]:
+        def local_branch_names(checkout: box.Checkout) -> set[str]:
             return self.branches
 
         monkeypatch.setattr(box, "count_new_commits", count_new_commits)
@@ -573,14 +694,18 @@ class FakeRepository:
         monkeypatch.setattr(box, "suggest_branch_name", self.suggest)
         monkeypatch.setattr(box, "local_branch_names", local_branch_names)
         monkeypatch.setattr(box, "create_branch", self.create)
-        monkeypatch.setattr(box, "delete_ref", self.deleted.append)
+
+        def delete_ref(checkout: box.Checkout, ref_name: str) -> None:
+            self.deleted.append(ref_name)
+
+        monkeypatch.setattr(box, "delete_ref", delete_ref)
 
     def suggest(self, subjects: str) -> str:
         """Record what the branch was named after, and answer with the fixed suggestion."""
         self.named_after = subjects
         return self.suggestion
 
-    def create(self, branch: str, commit: str) -> bool:
+    def create(self, checkout: box.Checkout, branch: str, commit: str) -> bool:
         """Create a branch unless this repository was set up to refuse one."""
         if self.refuse_branch:
             return False
@@ -593,7 +718,7 @@ def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.Monk
         count="3", suggestion="add-retry-logic", branches={"main"}, refuse_branch=False
     )
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == [("add-retry-logic", "abc123")]
     assert repository.deleted == [SANDBOX_REF.ref_name]
 
@@ -601,7 +726,7 @@ def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.Monk
 def test_settle_ref_names_the_branch_after_the_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.named_after == "Add retry logic\n"
 
 
@@ -610,7 +735,7 @@ def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pyt
         count="1", suggestion="add-retry-logic", branches={"add-retry-logic"}, refuse_branch=False
     )
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == [("add-retry-logic-2", "abc123")]
 
 
@@ -619,7 +744,7 @@ def test_settle_ref_says_where_the_work_ended_up(
 ) -> None:
     repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     printed = capsys.readouterr().err
     assert "branch add-retry-logic holds 3 commits" in printed
     assert SANDBOX_REF.ref_name in printed
@@ -630,14 +755,14 @@ def test_settle_ref_counts_a_single_commit_in_the_singular(
 ) -> None:
     repository = FakeRepository(count="1", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert "holds 1 commit from" in capsys.readouterr().err
 
 
 def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = FakeRepository(count="0", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == [SANDBOX_REF.ref_name]
 
@@ -647,7 +772,7 @@ def test_settle_ref_keeps_the_ref_when_naming_fails(
 ) -> None:
     repository = FakeRepository(count="2", suggestion="", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == []
     assert SANDBOX_REF.ref_name in capsys.readouterr().err
@@ -657,7 +782,7 @@ def test_settle_ref_keeps_the_ref_when_git_refuses_the_branch(monkeypatch: pytes
     repository = FakeRepository(count="2", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.refuse_branch = True
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.deleted == []
 
 
@@ -666,7 +791,7 @@ def test_settle_ref_keeps_the_ref_when_git_cannot_count_the_commits(
 ) -> None:
     repository = FakeRepository(count="", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == []
 
@@ -835,8 +960,8 @@ class FakeSandbox:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for everything cleanup runs against git, sbx and the refs."""
 
-        def settle_sandbox_refs(sandbox_name: str) -> None:
-            self.commands.append(["settle", sandbox_name])
+        def settle_sandbox_refs(checkout: box.Checkout, sandbox_name: str) -> None:
+            self.commands.append(["settle", str(checkout.path), sandbox_name])
 
         monkeypatch.setattr(box, "capture", self.capture)
         monkeypatch.setattr(box, "succeeds", self.succeeds)
@@ -876,7 +1001,7 @@ def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytes
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
     box.cleanup(make_config(), make_launch())
-    settled = sandbox.commands.index(["settle", "demo-1"])
+    settled = sandbox.commands.index(["settle", "/work/demo", "demo-1"])
     assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
 
 
@@ -893,7 +1018,7 @@ def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
     sandbox = FakeSandbox(dirty=" M box.py\n", fetch_fails=False, status_fails=False)
     sandbox.install(monkeypatch)
     box.cleanup(make_config(), make_launch())
-    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "uncommitted changes" in capsys.readouterr().err
 
@@ -904,7 +1029,7 @@ def test_cleanup_keeps_the_sandbox_when_the_fetch_fails(
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
     box.cleanup(make_config(), make_launch())
-    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "git fetch sandbox-demo-1 failed" in capsys.readouterr().err
 
@@ -915,7 +1040,7 @@ def test_cleanup_keeps_the_sandbox_when_the_dirty_check_fails(
     sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=True)
     sandbox.install(monkeypatch)
     box.cleanup(make_config(), make_launch())
-    assert ["settle", "demo-1"] not in sandbox.commands
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "could not read the sandbox's git status" in capsys.readouterr().err
 
@@ -930,6 +1055,72 @@ def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
     assert "sbx exec demo-1" in printed
     assert "sbx cp demo-1:" in printed
     assert "sbx rm --force demo-1" in printed
+
+
+def make_group_launch(tmp_path: Path) -> box.Launch:
+    """Build the launch of a group session, whose one member sits beside the repository."""
+    return box.Launch(
+        project=make_project(tmp_path / "boxes"),
+        sandbox_name="demo-1",
+        secrets=(box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),),
+        agent_args=[],
+    )
+
+
+def test_cleanup_brings_every_members_work_back_before_anything_is_removed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sandbox = clean_sandbox()
+    sandbox.install(monkeypatch)
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    box.cleanup(config, make_group_launch(tmp_path))
+    member = str((tmp_path / "billing-api").resolve())
+    bundled = [command for command in sandbox.commands if "bundle" in command]
+    assert bundled[0][:3] == ["sbx", "exec", "demo-1"]
+    assert member in bundled[0]
+    assert ["settle", member, "demo-1"] in sandbox.commands
+    assert sandbox.commands[-1] == ["sbx", "rm", "--force", "demo-1"]
+
+
+def test_cleanup_keeps_the_sandbox_when_a_members_work_cannot_come_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=False)
+    sandbox.install(monkeypatch)
+    # The main repository's fetch is the one succeeds() call cleanup makes before the members.
+    monkeypatch.setattr(box, "fetch_member_work", lambda checkout, sandbox_name, directory: False)
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    box.cleanup(config, make_group_launch(tmp_path))
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    printed = capsys.readouterr().err
+    assert str((tmp_path / "billing-api").resolve()) in printed
+
+
+def test_cleanup_checks_every_clone_for_uncommitted_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty=" M main.go\n", fetch_fails=False, status_fails=False)
+    sandbox.install(monkeypatch)
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    box.cleanup(config, make_group_launch(tmp_path))
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    assert str(tmp_path / "boxes") in capsys.readouterr().err
+
+
+def test_taken_names_reads_the_refs_waiting_in_a_member(monkeypatch: pytest.MonkeyPatch) -> None:
+    def capture(command: list[str]) -> str:
+        if command[0] == "sbx":
+            return ""
+        if command[2] == "/work/billing-api":
+            return f"{box.SANDBOX_REFS}/demo-2/wip\n"
+        return ""
+
+    monkeypatch.setattr(box, "capture", capture)
+    checkouts = [
+        make_checkout(Path("/work/boxes")),
+        box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN),
+    ]
+    assert box.taken_names(checkouts) == {"demo-2"}
 
 
 def test_build_create_command_includes_mounts_and_kit() -> None:
@@ -1215,7 +1406,7 @@ def test_count_new_commits_counts_what_this_checkout_lacks(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.count_new_commits(work) == "2"
+    assert box.count_new_commits(make_checkout(tmp_path), work) == "2"
 
 
 def test_count_new_commits_is_empty_when_git_cannot_read_the_commit(
@@ -1223,7 +1414,7 @@ def test_count_new_commits_is_empty_when_git_cannot_read_the_commit(
 ) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.count_new_commits("no-such-commit") == ""
+    assert box.count_new_commits(make_checkout(tmp_path), "no-such-commit") == ""
 
 
 def test_new_commit_subjects_reads_the_subjects_of_what_this_checkout_lacks(
@@ -1231,13 +1422,13 @@ def test_new_commit_subjects_reads_the_subjects_of_what_this_checkout_lacks(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.new_commit_subjects(work) == "Add two\nAdd one\n"
+    assert box.new_commit_subjects(make_checkout(tmp_path), work) == "Add two\nAdd one\n"
 
 
 def test_sandbox_refs_finds_what_the_fetch_left(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.sandbox_refs("demo-1") == [
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == [
         box.SandboxRef(ref_name=f"{box.SANDBOX_REFS}/demo-1/main", commit=work)
     ]
 
@@ -1245,7 +1436,7 @@ def test_sandbox_refs_finds_what_the_fetch_left(tmp_path: Path, monkeypatch: pyt
 def test_sandbox_refs_ignores_another_sandboxs_refs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.sandbox_refs("demo-2") == []
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-2") == []
 
 
 def test_create_branch_points_a_branch_at_the_sandboxs_commit(
@@ -1253,14 +1444,14 @@ def test_create_branch_points_a_branch_at_the_sandboxs_commit(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.create_branch("add-retry-logic", work)
+    assert box.create_branch(make_checkout(tmp_path), "add-retry-logic", work)
     assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
 
 
 def test_create_branch_says_no_to_a_name_git_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert not box.create_branch("a name with spaces", work)
+    assert not box.create_branch(make_checkout(tmp_path), "a name with spaces", work)
 
 
 def test_local_branch_names_reads_the_branches_this_repository_has(
@@ -1268,15 +1459,15 @@ def test_local_branch_names_reads_the_branches_this_repository_has(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    box.create_branch("add-retry-logic", work)
-    assert "add-retry-logic" in box.local_branch_names()
+    box.create_branch(make_checkout(tmp_path), "add-retry-logic", work)
+    assert "add-retry-logic" in box.local_branch_names(make_checkout(tmp_path))
 
 
 def test_delete_ref_drops_the_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    box.delete_ref(f"{box.SANDBOX_REFS}/demo-1/main")
-    assert box.sandbox_refs("demo-1") == []
+    box.delete_ref(make_checkout(tmp_path), f"{box.SANDBOX_REFS}/demo-1/main")
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == []
 
 
 def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
@@ -1285,9 +1476,165 @@ def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(box, "suggest_branch_name", lambda subjects: "add-retry-logic")
-    box.settle_sandbox_refs("demo-1")
+    box.settle_sandbox_refs(make_checkout(tmp_path), "demo-1")
     assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
-    assert box.sandbox_refs("demo-1") == []
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == []
+
+
+def make_cloned_member(directory: Path, name: str) -> Path:
+    """Create a repository box can really fetch from, by cloning one next to it."""
+    origin = make_git_repository(directory / f"{name}-origin")
+    git(origin, ["branch", "-M", "develop"])
+    path = directory / name
+    subprocess.run(["git", "clone", "-q", str(origin), str(path)], check=True)
+    return path
+
+
+def make_bundle(directory: Path) -> box.Bundle:
+    """Build what a fetched and packed member hands to the commands that clone it."""
+    return box.Bundle(
+        member=MEMBER,
+        path=Path("/work/billing-api"),
+        origin="https://example.com/billing-api.git",
+        bundle_file=directory / "1-billing-api.bundle",
+    )
+
+
+def test_bundle_member_packs_what_the_clone_is_made_from(tmp_path: Path) -> None:
+    make_cloned_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    bundles = box.bundle_members(
+        make_group_config(tmp_path / "boxes", {"../billing-api": "develop"}), project, tmp_path
+    )
+    assert bundles[0].path == (tmp_path / "billing-api").resolve()
+    assert bundles[0].origin == str(tmp_path / "billing-api-origin")
+    assert bundles[0].bundle_file.is_file()
+    assert "refs/remotes/origin/develop" in git(
+        tmp_path, ["bundle", "list-heads", str(bundles[0].bundle_file)]
+    )
+
+
+def test_a_member_whose_origin_lacks_the_base_is_rejected(tmp_path: Path) -> None:
+    make_cloned_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "nope"})
+    with pytest.raises(box.ConfigError, match="no branch nope on origin"):
+        box.bundle_members(config, project, tmp_path)
+
+
+def test_a_member_box_cannot_fetch_stops_the_run(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    git(path, ["remote", "set-url", "origin", str(tmp_path / "gone")])
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    with pytest.raises(box.ConfigError, match="git fetch origin failed"):
+        box.bundle_members(config, project, tmp_path)
+
+
+def test_nothing_is_fetched_without_members(tmp_path: Path) -> None:
+    assert box.bundle_members(make_config(), make_project(tmp_path), tmp_path) == []
+
+
+def test_the_clone_commands_copy_the_bundle_and_build_a_clone_from_it(tmp_path: Path) -> None:
+    commands = box.build_clone_commands(make_bundle(tmp_path), "demo-1")
+    inside = "/tmp/1-billing-api.bundle"
+    assert commands[0] == ["sbx", "cp", str(tmp_path / "1-billing-api.bundle"), f"demo-1:{inside}"]
+    assert commands[1] == ["sbx", "exec", "-u", "root", "demo-1", "mkdir", "-p", "/work/billing-api"]
+    assert commands[2][-2:] == ["agent:agent", "/work/billing-api"]
+    assert commands[3] == ["sbx", "exec", "demo-1", "git", "init", "-q", "/work/billing-api"]
+    assert commands[4][-2:] == ["origin", "https://example.com/billing-api.git"]
+    assert commands[5][-2:] == [inside, "refs/remotes/origin/*:refs/remotes/origin/*"]
+    assert commands[6][-4:] == ["-c", "develop", "--track", "origin/develop"]
+
+
+def test_every_path_reaches_sbx_exec_as_an_argument_of_its_own(tmp_path: Path) -> None:
+    for command in box.build_clone_commands(make_bundle(tmp_path), "demo-1"):
+        assert [word for word in command if " " in word] == []
+
+
+def test_clone_member_says_no_when_a_step_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tried: list[list[str]] = []
+
+    def succeeds(command: list[str]) -> bool:
+        tried.append(command)
+        return "mkdir" not in command
+
+    monkeypatch.setattr(box, "succeeds", succeeds)
+    assert not box.clone_member(make_bundle(tmp_path), "demo-1")
+    # The steps after the one that failed are never run, since there is nothing to run them on.
+    assert len(tried) == 2
+
+
+def test_clone_member_says_yes_when_every_step_works(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(box, "succeeds", lambda command: True)
+    assert box.clone_member(make_bundle(tmp_path), "demo-1")
+
+
+def test_the_prompt_says_nothing_about_members_without_any(tmp_path: Path) -> None:
+    assert box.build_members_prompt(make_config(), make_project(tmp_path)) == ""
+
+
+def test_the_prompt_names_each_member_and_what_it_starts_on(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    prompt = box.build_members_prompt(config, project)
+    assert f"{(tmp_path / 'billing-api').resolve()} on develop" in prompt
+    assert "comes back to the host" in prompt
+
+
+def test_the_checkouts_are_the_repository_box_runs_in_and_then_its_members(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", {"../billing-api": "develop"})
+    checkouts = box.build_checkouts(config, project)
+    assert checkouts[0] == box.Checkout(path=(tmp_path / "boxes"), known_commits=box.MAIN_KNOWN)
+    assert checkouts[1].path == (tmp_path / "billing-api").resolve()
+    assert checkouts[1].known_commits == box.MEMBER_KNOWN
+
+
+def test_the_repository_box_runs_in_counts_what_its_checkout_lacks() -> None:
+    assert box.new_commits(make_checkout(Path("/work/demo")), "abc123") == ["abc123", "--not", "HEAD"]
+
+
+def test_a_member_counts_what_none_of_its_origin_branches_hold() -> None:
+    checkout = box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN)
+    assert box.new_commits(checkout, "abc123") == ["abc123", "--not", "--remotes=origin"]
+
+
+def test_a_member_counts_a_commit_its_origin_branches_do_not_hold(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    work = commit_file(path, "one.txt", "Add one")
+    checkout = box.Checkout(path=path, known_commits=box.MEMBER_KNOWN)
+    assert box.count_new_commits(checkout, work) == "1"
+    assert box.new_commit_subjects(checkout, work) == "Add one\n"
+
+
+def test_fetching_a_members_work_bundles_it_inside_and_fetches_it_here(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands: list[list[str]] = []
+
+    def succeeds(command: list[str]) -> bool:
+        commands.append(command)
+        return True
+
+    monkeypatch.setattr(box, "succeeds", succeeds)
+    checkout = box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN)
+    assert box.fetch_member_work(checkout, "demo-1", tmp_path)
+    inside = "/tmp/demo-1-billing-api.bundle"
+    assert commands[0][:4] == ["sbx", "exec", "demo-1", "git"]
+    assert commands[0][-4:] == ["bundle", "create", inside, "--branches"]
+    assert commands[1] == ["sbx", "cp", f"demo-1:{inside}", str(tmp_path / "demo-1-billing-api.bundle")]
+    assert commands[2][-1] == f"+refs/heads/*:{box.SANDBOX_REFS}/demo-1/*"
+
+
+def test_a_members_work_comes_back_to_the_member_itself(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    work = commit_file(path, "one.txt", "Add one")
+    bundle = tmp_path / "work.bundle"
+    git(path, ["bundle", "create", str(bundle), "--branches"])
+    git(path, ["fetch", str(bundle), f"+refs/heads/*:{box.SANDBOX_REFS}/demo-1/*"])
+    checkout = box.Checkout(path=path, known_commits=box.MEMBER_KNOWN)
+    assert box.sandbox_refs(checkout, "demo-1")[0].commit == work
 
 
 def test_taken_names_asks_both_sbx_and_git(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1300,10 +1647,10 @@ def test_taken_names_asks_both_sbx_and_git(monkeypatch: pytest.MonkeyPatch) -> N
         return f"{box.SANDBOX_REFS}/demo-2/main\n"
 
     monkeypatch.setattr(box, "capture", capture)
-    assert box.taken_names() == {"demo-1", "demo-2"}
+    assert box.taken_names([make_checkout(Path("/work/demo"))]) == {"demo-1", "demo-2"}
     assert commands == [
         ["sbx", "ls", "-q"],
-        ["git", "for-each-ref", "--format=%(refname)", box.SANDBOX_REFS],
+        ["git", "-C", "/work/demo", "for-each-ref", "--format=%(refname)", box.SANDBOX_REFS],
     ]
 
 
@@ -1627,7 +1974,7 @@ def test_the_prompt_names_the_folder_a_subfolder_session_started_in() -> None:
 
 def test_the_status_check_reads_the_clone_at_the_root() -> None:
     project = make_subfolder_project()
-    assert box.build_status_command(project, "demo-1") == [
+    assert box.build_status_command(project.root, "demo-1") == [
         "sbx",
         "exec",
         "demo-1",
@@ -1647,7 +1994,7 @@ def test_prepare_launch_tells_a_subfolder_session_where_it_started(
     subfolder.mkdir()
     write_config(subfolder, {})
     token = write_token(tmp_path)
-    monkeypatch.setattr(box, "taken_names", set)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
     config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, subfolder)
     launch = box.prepare_launch(config, box.build_project(subfolder), str(token))
     assert launch.project.root == tmp_path.resolve()
@@ -1661,7 +2008,7 @@ def test_prepare_launch_reads_a_value_for_every_declared_secret(
     token = write_token(tmp_path)
     secrets = write_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\n")
     monkeypatch.setenv(box.SECRETS_FILE_ENV, str(secrets))
-    monkeypatch.setattr(box, "taken_names", set)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
     config = config_from_values(
         {"kit": "registry/kit", "model": "claude-opus-5", "secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}},
         tmp_path,
@@ -1698,7 +2045,7 @@ def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
 ) -> None:
     repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
     token = write_token(tmp_path)
-    monkeypatch.setattr(box, "taken_names", lambda: {"demo-1"})
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: {"demo-1"})
     prompt = tmp_path / "agent.md"
     prompt.write_text("project rules")
     config = config_from_values(
@@ -2699,7 +3046,7 @@ def test_build_environment_keeps_the_environment_box_was_run_with(
 
 
 def test_warn_dirty_says_how_to_inspect_recover_and_remove(capsys: pytest.CaptureFixture[str]) -> None:
-    box.warn_dirty(make_project(Path("/work/demo")), "demo-1", " M box.py\n")
+    box.warn_dirty(Path("/work/demo"), "demo-1", " M box.py\n")
     printed = capsys.readouterr().err
     assert " M box.py" in printed
     assert "Inspect:  sbx exec demo-1 git -C /work/demo diff" in printed
@@ -2874,6 +3221,37 @@ def test_run_session_reports_a_failed_create_and_starts_nothing(
     assert "never started" in capsys.readouterr().err
 
 
+def test_run_session_clones_every_member_into_the_fresh_sandbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    cloned: list[str] = []
+
+    def clone_member(bundle: box.Bundle, sandbox_name: str) -> bool:
+        cloned.append(bundle.member.path)
+        return True
+
+    monkeypatch.setattr(box, "bundle_members", lambda config, project, directory: [make_bundle(tmp_path)])
+    monkeypatch.setattr(box, "clone_member", clone_member)
+    assert box.run_session(make_config(), make_launch()) == 0
+    assert cloned == [MEMBER.path]
+    assert session.steps == ["drop-secret", "store-secret", "sbx create", "sbx run", "cleanup"]
+
+
+def test_run_session_takes_the_sandbox_back_when_a_member_cannot_be_cloned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    monkeypatch.setattr(box, "bundle_members", lambda config, project, directory: [make_bundle(tmp_path)])
+    monkeypatch.setattr(box, "clone_member", lambda bundle, sandbox_name: False)
+    assert box.run_session(make_config(), make_launch()) == 1
+    assert "cleanup" not in session.steps
+    assert ["sbx", "rm", "--force", "demo-1"] in session.commands
+    assert MEMBER.path in capsys.readouterr().err
+
+
 def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Build a project that passes every check box makes before it starts a sandbox."""
     make_git_repository(directory)
@@ -2947,7 +3325,7 @@ def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: 
         return 7
 
     make_runnable_project(tmp_path, monkeypatch)
-    monkeypatch.setattr(box, "taken_names", set)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
     monkeypatch.setattr(box, "run_session", run_session)
     assert call_main(monkeypatch, tmp_path, ["run"]) == 7
     assert launched[0].secrets[0].value == "sk-ant-secret"

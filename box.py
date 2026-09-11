@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -56,6 +57,16 @@ RESET = "\033[0m"
 NO_COLOUR_ENV = "NO_COLOR"
 
 SECRET_HOST = "api.anthropic.com"
+
+# Who sbx exec runs as unless it is told otherwise, and who a member's clone has to belong to.
+SANDBOX_USER = "agent"
+
+# Where a bundle lands on its way in or out, which is the one directory both sides can write.
+SANDBOX_TEMP = "/tmp"
+
+# What a repository already holds, which new work is counted against.
+MAIN_KNOWN = "HEAD"
+MEMBER_KNOWN = "--remotes=origin"
 SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 # The token path is deliberately the one setting that is not a flag or a config file key.
@@ -161,11 +172,34 @@ TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
   3. Export {TOKEN_FILE_ENV} to point at that file, e.g. via direnv."""
 
-SECRETS_FILE_HELP = f"""{{config_file}} declares secret_hosts, but {SECRETS_FILE_ENV} is not set.
+# The one config key that is not a setting, so it is the one key whose value is not a string.
+REQUIRED_MOUNTS = "required_mounts"
+
+# What every environment variable the sandbox gets a value for may be sent to, as name to host.
+SECRET_HOSTS = "secret_hosts"
+
+# The repositories a group works on besides the one box runs in, as path to the branch to start from.
+REPOS = "repos"
+
+# The config keys holding an object rather than the text of a setting.
+OBJECT_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS, REPOS)
+
+# What a group of repositories adds to a config, which box gen writes only when asked for a group.
+GROUP_SETTINGS = ("mcp", SECRET_HOSTS, REPOS)
+
+SECRETS_FILE_HELP = f"""{{config_file}} declares {SECRET_HOSTS}, but {SECRETS_FILE_ENV} is not set.
 Set it up once:
   1. Write a file holding one NAME=value line per secret, e.g. ~/.secrets/box.env
   2. Export {SECRETS_FILE_ENV} to point at that file, e.g. via direnv.
 Keep that file outside every repository and every mount, since the sandbox can read those."""
+
+MEMBER_INSIDE_HELP = f"""{REPOS} names {{path}}, which is inside {{directory}}.
+Its clone would sit inside the sandbox's own clone and leave it dirty, so a member has to live
+outside the repository box runs in."""
+
+MEMBER_MOUNTED_HELP = f"""{REPOS} names {{path}}, which the mount {{directory}} would hand over whole.
+A member reaches the sandbox as a bundle of its commits, never as a mount, so nothing it does not
+track can go with it."""
 
 SECRET_INSIDE_HELP = """{variable} points at {path}, which is inside {directory}.
 The sandbox can read everything there, so the file holding secrets has to sit somewhere else."""
@@ -199,6 +233,16 @@ blocking you, and suggest a solution -- do not keep flailing."""
 # The agent starts at the repository root, so a session started below it is told where that was.
 STARTED_IN_PROMPT = "You start at the repository root; this session was started from {started_in} inside it."
 
+# What the agent is told about the other repositories a group session works on.
+MEMBERS_PROMPT = """This sandbox also holds a clone of each repository below, made from a fetch of
+its host copy just now:
+
+{members}
+
+Each clone starts on the branch named after it, and every origin/* branch is there too. Nothing can
+be pushed anywhere. Commit on a branch, and every branch holding new commits comes back to the host
+as a branch in that repository."""
+
 # The network policy box gen writes, kept here with BASE_PROMPT so one script stays the whole of box.
 STARTER_KIT_SPEC = """# A starting point rather than a finished policy: the agent's own API calls,
 # and nothing else. Add a host for every dependency the project's checks fetch, or mount a warmed
@@ -214,18 +258,6 @@ permissions:
     allow:
       - api.anthropic.com:443
 """
-
-# The one config key that is not a setting, so it is the one key whose value is not a string.
-REQUIRED_MOUNTS = "required_mounts"
-
-# What every environment variable the sandbox gets a value for may be sent to, as name to host.
-SECRET_HOSTS = "secret_hosts"
-
-# The config keys holding an object rather than the text of a setting.
-OBJECT_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS)
-
-# What a group of repositories adds to a config, which box gen writes only when asked for a group.
-GROUP_SETTINGS = ("mcp", SECRET_HOSTS)
 
 # How a rejected value is named, so the message spells the type the way the JSON file does.
 JSON_TYPE_NAMES: dict[type, str] = {
@@ -251,6 +283,7 @@ DEFAULTS: dict[str, object] = {
     "mcp": "",
     REQUIRED_MOUNTS: {},
     SECRET_HOSTS: {},
+    REPOS: {},
 }
 
 # What box gen writes for one project: today's settings, so a config it writes runs on an older box.
@@ -280,6 +313,15 @@ class Config:
     mcp: str
     mounts: tuple[str, ...]
     secret_hosts: tuple[Secret, ...]
+    repos: tuple[Member, ...]
+
+
+@dataclass(frozen=True)
+class Member:
+    """One repository a group works on besides the one box runs in, and where its clone starts."""
+
+    path: str
+    base: str
 
 
 @dataclass(frozen=True)
@@ -327,6 +369,24 @@ class SandboxRef:
 
     ref_name: str
     commit: str
+
+
+@dataclass(frozen=True)
+class Checkout:
+    """A repository a sandbox's work comes back to, and what it already holds."""
+
+    path: Path
+    known_commits: str
+
+
+@dataclass(frozen=True)
+class Bundle:
+    """One member's committed history on its way into the sandbox, and where its clone belongs."""
+
+    member: Member
+    path: Path
+    origin: str
+    bundle_file: Path
 
 
 def to_kebab_case(text: str) -> str:
@@ -464,6 +524,24 @@ def to_secrets(value: object) -> tuple[Secret, ...]:
     return tuple(to_secret(name, host) for name, host in declared.items())
 
 
+def to_member(path: str, base: str) -> Member:
+    """Take one member repository, rejecting a clone box would not know where to start."""
+    if not path:
+        raise ConfigError(f"{REPOS} names a repository with no path")
+    # origin/HEAD is written when a clone is made and goes stale, so the branch is named here.
+    if not base:
+        raise ConfigError(f"{REPOS} gives {path} no branch to start from")
+    return Member(path=path, base=base)
+
+
+def to_members(value: object) -> tuple[Member, ...]:
+    """Normalise the repos value into the members of this group, in the order they were declared."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{REPOS} must be a JSON object of path to branch")
+    declared = as_text_values(Path(CONFIG_FILE), value)
+    return tuple(to_member(path, base) for path, base in declared.items())
+
+
 def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) -> dict[str, object]:
     """Layer CLI values over file values over defaults; CLI wins."""
     merged = dict(DEFAULTS)
@@ -522,6 +600,7 @@ def build_config(values: dict[str, object], mounts: list[str], working_directory
         mcp=setting(values, "mcp"),
         mounts=to_workspaces(mounts),
         secret_hosts=to_secrets(values[SECRET_HOSTS]),
+        repos=to_members(values[REPOS]),
     )
 
 
@@ -575,6 +654,11 @@ def format_secret(secret: Secret) -> str:
     return f"{secret.name}->{secret.host}"
 
 
+def format_member(member: Member) -> str:
+    """Name one member repository and the branch its clone starts from."""
+    return f"{member.path}@{member.base}"
+
+
 def format_config(config: Config, token_file: str, secrets_file: str) -> str:
     """Render the settings in effect, the secret paths included, as aligned key/value lines."""
     items: dict[str, object] = {
@@ -582,6 +666,7 @@ def format_config(config: Config, token_file: str, secrets_file: str) -> str:
         SECRETS_FILE_ENV: secrets_file,
         **asdict(config),
         SECRET_HOSTS: tuple(format_secret(secret) for secret in config.secret_hosts),
+        REPOS: tuple(format_member(member) for member in config.repos),
     }
     width = max(len(key) for key in items)
     lines = [f"  {key.ljust(width)}  {format_value(value)}" for key, value in items.items()]
@@ -620,11 +705,13 @@ def parse_ref_names(refs_output: str) -> set[str]:
     return names
 
 
-def taken_names() -> set[str]:
-    """Collect sandbox names that are either running or still hold git refs."""
-    running = set(capture(["sbx", "ls", "-q"]).split())
-    refs = parse_ref_names(capture(["git", "for-each-ref", "--format=%(refname)", "refs/sandboxes"]))
-    return running | refs
+def taken_names(checkouts: list[Checkout]) -> set[str]:
+    """Collect sandbox names that are either running or still hold git refs in any repository."""
+    names = set(capture(["sbx", "ls", "-q"]).split())
+    for checkout in checkouts:
+        command = ["git", "-C", str(checkout.path), "for-each-ref", "--format=%(refname)", SANDBOX_REFS]
+        names |= parse_ref_names(capture(command))
+    return names
 
 
 def pick_name(base_name: str, used: set[str]) -> str:
@@ -717,6 +804,14 @@ def build_started_in_prompt(project: Project) -> str:
     if not project.started_in:
         return ""
     return STARTED_IN_PROMPT.format(started_in=project.started_in)
+
+
+def build_members_prompt(config: Config, project: Project) -> str:
+    """Say where each member's clone is, what it starts on, and how its commits come back."""
+    if not config.repos:
+        return ""
+    members = "\n".join(f"  {member_path(project, member)} on {member.base}" for member in config.repos)
+    return MEMBERS_PROMPT.format(members=members)
 
 
 def build_environment(config: Config) -> dict[str, str]:
@@ -840,25 +935,26 @@ def store_secret(sandbox_name: str, stored: SecretValue) -> None:
         raise ConfigError(f"sbx would not store {stored.secret.name} for {sandbox_name}")
 
 
-def print_recovery(project: Project, sandbox_name: str) -> None:
+def print_recovery(path: Path, sandbox_name: str) -> None:
     """Print how to look inside a sandbox box kept, take work out of it, and remove it by hand."""
-    print(f"Inspect:  sbx exec {sandbox_name} git -C {project.root} diff", file=sys.stderr)
-    print(f"Recover:  sbx cp {sandbox_name}:{project.root}/<file> .", file=sys.stderr)
+    print(f"Inspect:  sbx exec {sandbox_name} git -C {path} diff", file=sys.stderr)
+    print(f"Recover:  sbx cp {sandbox_name}:{path}/<file> .", file=sys.stderr)
     print(f"Then remove manually once safe: sbx rm --force {sandbox_name}", file=sys.stderr)
 
 
-def warn_dirty(project: Project, sandbox_name: str, dirty: str) -> None:
+def warn_dirty(path: Path, sandbox_name: str, dirty: str) -> None:
     """Tell the user how to recover uncommitted work left behind in a sandbox."""
-    print(f"WARNING: sandbox {sandbox_name} has uncommitted changes -- not removing it.", file=sys.stderr)
+    warning = f"WARNING: {path} in sandbox {sandbox_name} has uncommitted changes -- not removing it."
+    print(warning, file=sys.stderr)
     print(dirty, file=sys.stderr)
-    print_recovery(project, sandbox_name)
+    print_recovery(path, sandbox_name)
 
 
-def warn_unchecked(project: Project, sandbox_name: str, reason: str) -> None:
+def warn_unchecked(path: Path, sandbox_name: str, reason: str) -> None:
     """Tell the user box could not find out whether removing a sandbox would lose work."""
     print(f"WARNING: {reason}.", file=sys.stderr)
     print(f"box cannot tell whether sandbox {sandbox_name} holds work -- not removing it.", file=sys.stderr)
-    print_recovery(project, sandbox_name)
+    print_recovery(path, sandbox_name)
 
 
 def plural(count: str, noun: str) -> str:
@@ -910,25 +1006,39 @@ def parse_sandbox_refs(refs_output: str) -> list[SandboxRef]:
     return refs
 
 
-def sandbox_refs(sandbox_name: str) -> list[SandboxRef]:
+def sandbox_refs(checkout: Checkout, sandbox_name: str) -> list[SandboxRef]:
     """Read the refs this sandbox's work was fetched into."""
-    command = ["git", "for-each-ref", "--format=%(refname) %(objectname)", f"{SANDBOX_REFS}/{sandbox_name}"]
+    command = [
+        "git",
+        "-C",
+        str(checkout.path),
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        f"{SANDBOX_REFS}/{sandbox_name}",
+    ]
     return parse_sandbox_refs(capture(command))
 
 
-def count_new_commits(commit: str) -> str:
-    """Count the sandbox's commits this checkout lacks, returning nothing when git could not say."""
-    return capture(["git", "rev-list", "--count", f"HEAD..{commit}"]).strip()
+def new_commits(checkout: Checkout, commit: str) -> list[str]:
+    """Name the commits a ref holds that its repository does not, the way git spells a range."""
+    return [commit, "--not", checkout.known_commits]
 
 
-def new_commit_subjects(commit: str) -> str:
+def count_new_commits(checkout: Checkout, commit: str) -> str:
+    """Count the sandbox's commits this repository lacks, returning nothing when git could not say."""
+    command = ["git", "-C", str(checkout.path), "rev-list", "--count", *new_commits(checkout, commit)]
+    return capture(command).strip()
+
+
+def new_commit_subjects(checkout: Checkout, commit: str) -> str:
     """Read the subjects of the sandbox's commits, which are what a branch gets named after."""
-    return capture(["git", "log", "--format=%s", f"HEAD..{commit}"])
+    return capture(["git", "-C", str(checkout.path), "log", "--format=%s", *new_commits(checkout, commit)])
 
 
-def local_branch_names() -> set[str]:
+def local_branch_names(checkout: Checkout) -> set[str]:
     """Collect the branch names this repository already has."""
-    return set(capture(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"]).split())
+    command = ["git", "-C", str(checkout.path), "for-each-ref", "--format=%(refname:short)", "refs/heads"]
+    return set(capture(command).split())
 
 
 def pick_branch_name(branch: str, used: set[str]) -> str:
@@ -941,66 +1051,182 @@ def pick_branch_name(branch: str, used: set[str]) -> str:
     return f"{branch}-{number}"
 
 
-def create_branch(branch: str, commit: str) -> bool:
+def create_branch(checkout: Checkout, branch: str, commit: str) -> bool:
     """Point a new branch at the sandbox's commit, saying whether git accepted it."""
-    return succeeds(["git", "branch", branch, commit])
+    return succeeds(["git", "-C", str(checkout.path), "branch", branch, commit])
 
 
-def delete_ref(ref_name: str) -> None:
+def delete_ref(checkout: Checkout, ref_name: str) -> None:
     """Drop a ref, which is safe to leave behind when it fails."""
-    capture(["git", "update-ref", "-d", ref_name])
+    capture(["git", "-C", str(checkout.path), "update-ref", "-d", ref_name])
 
 
-def settle_ref(ref: SandboxRef) -> None:
+def settle_ref(checkout: Checkout, ref: SandboxRef) -> None:
     """Turn one sandbox ref into a branch, drop it when it holds nothing, and keep it otherwise."""
-    count = count_new_commits(ref.commit)
+    count = count_new_commits(checkout, ref.commit)
     if not count:
         print(f"box: git could not read {ref.ref_name}, so it was kept.", file=sys.stderr)
         return
     if count == "0":
-        delete_ref(ref.ref_name)
+        delete_ref(checkout, ref.ref_name)
         print(f"box: {ref.ref_name} held no commits, so it was dropped.", file=sys.stderr)
         return
-    suggested = suggest_branch_name(new_commit_subjects(ref.commit))
+    suggested = suggest_branch_name(new_commit_subjects(checkout, ref.commit))
     if not suggested:
         print(f"box: naming a branch failed, so the work stayed on {ref.ref_name}.", file=sys.stderr)
         return
-    branch = pick_branch_name(suggested, local_branch_names())
-    if not create_branch(branch, ref.commit):
+    branch = pick_branch_name(suggested, local_branch_names(checkout))
+    if not create_branch(checkout, branch, ref.commit):
         print(f"box: git refused branch {branch}, so the work stayed on {ref.ref_name}.", file=sys.stderr)
         return
-    delete_ref(ref.ref_name)
+    delete_ref(checkout, ref.ref_name)
     print(f"box: branch {branch} holds {plural(count, 'commit')} from {ref.ref_name}.", file=sys.stderr)
 
 
-def settle_sandbox_refs(sandbox_name: str) -> None:
+def settle_sandbox_refs(checkout: Checkout, sandbox_name: str) -> None:
     """Give the sandbox's committed work a branch, so nothing is left addressable only by ref."""
-    for ref in sandbox_refs(sandbox_name):
-        settle_ref(ref)
+    for ref in sandbox_refs(checkout, sandbox_name):
+        settle_ref(checkout, ref)
 
 
-def build_status_command(project: Project, sandbox_name: str) -> list[str]:
-    """Assemble the sbx exec that asks the sandbox whether its clone holds uncommitted work."""
-    return ["sbx", "exec", sandbox_name, "git", "-C", str(project.root), "status", "--porcelain"]
+def member_origin(path: Path) -> str:
+    """Read a member's origin URL, so its clone names the same project the host copy does."""
+    return capture(["git", "-C", str(path), "remote", "get-url", "origin"]).strip()
+
+
+def fetch_member(path: Path) -> None:
+    """Bring a member's origin refs up to date, with the terminal attached so ssh can ask for a key."""
+    print(f"box: fetching {path}", file=sys.stderr)
+    # A fetch writes the origin/* refs and their objects and nothing else, so the checkout is untouched.
+    if subprocess.run(["git", "-C", str(path), "fetch", "origin"], check=False).returncode != 0:
+        raise ConfigError(f"git fetch origin failed in {path}")
+
+
+def has_base(path: Path, base: str) -> bool:
+    """Whether the branch a member's clone starts from is one origin has."""
+    return succeeds(["git", "-C", str(path), "rev-parse", "--verify", f"refs/remotes/origin/{base}"])
+
+
+def bundle_member(project: Project, member: Member, number: int, directory: Path) -> Bundle:
+    """Fetch one member and pack the history its clone is made from into the bundle directory."""
+    path = member_path(project, member)
+    fetch_member(path)
+    if not has_base(path, member.base):
+        raise ConfigError(f"{member.path} has no branch {member.base} on origin")
+    bundle_file = directory / f"{number}-{path.name}.bundle"
+    command = ["git", "-C", str(path), "bundle", "create", str(bundle_file), "--remotes=origin"]
+    if not succeeds(command):
+        raise ConfigError(f"git could not bundle {member.path}")
+    return Bundle(member=member, path=path, origin=member_origin(path), bundle_file=bundle_file)
+
+
+def bundle_members(config: Config, project: Project, directory: Path) -> list[Bundle]:
+    """Fetch every member one at a time, and pack what each clone is made from."""
+    return [
+        bundle_member(project, member, number, directory)
+        for number, member in enumerate(config.repos, start=1)
+    ]
+
+
+def build_clone_commands(bundle: Bundle, sandbox_name: str) -> list[list[str]]:
+    """Assemble what turns a copied bundle into a clone on the member's own host path."""
+    inside = f"{SANDBOX_TEMP}/{bundle.bundle_file.name}"
+    path = str(bundle.path)
+    base = bundle.member.base
+    root = ["sbx", "exec", "-u", "root", sandbox_name]
+    user = ["sbx", "exec", sandbox_name]
+    return [
+        ["sbx", "cp", str(bundle.bundle_file), f"{sandbox_name}:{inside}"],
+        # A member's parent need not belong to the default user, and git init would fail there.
+        [*root, "mkdir", "-p", path],
+        [*root, "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path],
+        [*user, "git", "init", "-q", path],
+        [*user, "git", "-C", path, "remote", "add", "origin", bundle.origin],
+        [*user, "git", "-C", path, "fetch", "-q", inside, "refs/remotes/origin/*:refs/remotes/origin/*"],
+        [*user, "git", "-C", path, "switch", "-q", "-c", base, "--track", f"origin/{base}"],
+    ]
+
+
+def clone_member(bundle: Bundle, sandbox_name: str) -> bool:
+    """Put one member's clone in the sandbox, saying whether every step of it worked."""
+    for command in build_clone_commands(bundle, sandbox_name):
+        if succeeds(command):
+            continue
+        return False
+    return True
+
+
+def build_status_command(path: Path, sandbox_name: str) -> list[str]:
+    """Assemble the sbx exec that asks the sandbox whether one clone holds uncommitted work."""
+    return ["sbx", "exec", sandbox_name, "git", "-C", str(path), "status", "--porcelain"]
+
+
+def build_checkouts(config: Config, project: Project) -> list[Checkout]:
+    """List every repository a sandbox's work comes back to: the one box runs in, then the members."""
+    checkouts = [Checkout(path=project.root, known_commits=MAIN_KNOWN)]
+    for member in config.repos:
+        checkouts.append(Checkout(path=member_path(project, member), known_commits=MEMBER_KNOWN))
+    return checkouts
+
+
+def fetch_member_work(checkout: Checkout, sandbox_name: str, directory: Path) -> bool:
+    """Bundle one member's branches inside the sandbox and fetch them into the member on this host."""
+    name = f"{sandbox_name}-{checkout.path.name}.bundle"
+    inside = f"{SANDBOX_TEMP}/{name}"
+    path = str(checkout.path)
+    bundle = ["git", "-C", path, "bundle", "create", inside, "--branches"]
+    if not succeeds(["sbx", "exec", sandbox_name, *bundle]):
+        return False
+    here = directory / name
+    if not succeeds(["sbx", "cp", f"{sandbox_name}:{inside}", str(here)]):
+        return False
+    refspec = f"+refs/heads/*:{SANDBOX_REFS}/{sandbox_name}/*"
+    return succeeds(["git", "-C", path, "fetch", str(here), refspec])
+
+
+def fetch_committed_work(members: list[Checkout], sandbox_name: str) -> Checkout | None:
+    """Bring every clone's commits back, or name the repository whose work stayed in the sandbox."""
+    # A member is a remote of nothing, so its commits come back the way they went in: as a bundle.
+    with tempfile.TemporaryDirectory() as directory:
+        for checkout in members:
+            if fetch_member_work(checkout, sandbox_name, Path(directory)):
+                continue
+            return checkout
+    return None
+
+
+def clones_are_committed(checkouts: list[Checkout], sandbox_name: str) -> bool:
+    """Say whether every clone in the sandbox is committed, warning about the first that is not."""
+    for checkout in checkouts:
+        status = run_quietly(build_status_command(checkout.path, sandbox_name))
+        if status.returncode != 0:
+            warn_unchecked(checkout.path, sandbox_name, "sbx exec could not read the sandbox's git status")
+            return False
+        if status.stdout.strip():
+            warn_dirty(checkout.path, sandbox_name, status.stdout)
+            return False
+    return True
 
 
 def cleanup(config: Config, launch: Launch) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
-    project = launch.project
     sandbox_name = launch.sandbox_name
+    checkouts = build_checkouts(config, launch.project)
+    main = checkouts[0]
     remote = f"sandbox-{sandbox_name}"
     # Removal follows, so "I could not tell" must never be read as "there is nothing to lose".
     if not succeeds(["git", "fetch", remote]):
-        warn_unchecked(project, sandbox_name, f"git fetch {remote} failed, so its commits are not here")
+        warn_unchecked(main.path, sandbox_name, f"git fetch {remote} failed, so its commits are not here")
         return
-    status = run_quietly(build_status_command(project, sandbox_name))
-    if status.returncode != 0:
-        warn_unchecked(project, sandbox_name, "sbx exec could not read the sandbox's git status")
+    unfetched = fetch_committed_work(checkouts[1:], sandbox_name)
+    if unfetched is not None:
+        reason = f"the sandbox's commits in {unfetched.path} are not here"
+        warn_unchecked(unfetched.path, sandbox_name, reason)
         return
-    if status.stdout.strip():
-        warn_dirty(project, sandbox_name, status.stdout)
+    if not clones_are_committed(checkouts, sandbox_name):
         return
-    settle_sandbox_refs(sandbox_name)
+    for checkout in checkouts:
+        settle_sandbox_refs(checkout, sandbox_name)
     drop_secrets(config.secret_hosts, sandbox_name)
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
@@ -1026,6 +1252,11 @@ def token_file_from_environment() -> str:
     return os.environ.get(TOKEN_FILE_ENV, "")
 
 
+def member_path(project: Project, member: Member) -> Path:
+    """Where a member sits on this host, which is where its clone sits in the sandbox."""
+    return (project.working_directory / resolve_path(member.path)).resolve()
+
+
 def secrets_file_from_environment() -> str:
     """Read the secrets path from the environment, for the same reason the token path comes from it."""
     return os.environ.get(SECRETS_FILE_ENV, "")
@@ -1039,8 +1270,9 @@ def mount_target(workspace: str) -> Path:
 
 
 def reachable_paths(config: Config, project: Project) -> list[Path]:
-    """Every host directory the sandbox can read: the repository it clones, and each mount."""
-    return [project.root] + [mount_target(workspace) for workspace in config.mounts]
+    """Every host directory the sandbox can read: the repository it clones, its members, and the mounts."""
+    members = [member_path(project, member) for member in config.repos]
+    return [project.root, *members] + [mount_target(workspace) for workspace in config.mounts]
 
 
 def is_inside(path: Path, directory: Path) -> bool:
@@ -1061,6 +1293,37 @@ def require_secret_outside(variable: str, secret_file: str, reachable: list[Path
         if not is_inside(path, directory):
             continue
         raise ConfigError(SECRET_INSIDE_HELP.format(variable=variable, path=path, directory=directory))
+
+
+def has_origin(path: Path) -> bool:
+    """Whether a repository has the remote its clone is made from and counts its commits against."""
+    return succeeds(["git", "-C", str(path), "remote", "get-url", "origin"])
+
+
+def require_unmounted(config: Config, member: Member, path: Path) -> None:
+    """Refuse a mount that would hand the sandbox everything a member holds, tracked or not."""
+    for workspace in config.mounts:
+        directory = mount_target(workspace)
+        if not is_inside(path, directory):
+            continue
+        raise ConfigError(MEMBER_MOUNTED_HELP.format(path=member.path, directory=directory))
+
+
+def require_members(config: Config, project: Project) -> None:
+    """Refuse a member box could not clone, and two members that would land on one another."""
+    seen: dict[Path, str] = {}
+    for member in config.repos:
+        path = member_path(project, member)
+        if not is_git_repository(path):
+            raise ConfigError(f"{REPOS} names {member.path}, which is not a git repository")
+        if not has_origin(path):
+            raise ConfigError(f"{REPOS} names {member.path}, which has no origin remote")
+        if is_inside(path, project.root):
+            raise ConfigError(MEMBER_INSIDE_HELP.format(path=member.path, directory=project.root))
+        if path in seen:
+            raise ConfigError(f"{REPOS} names one repository twice: {seen[path]} and {member.path}")
+        seen[path] = member.path
+        require_unmounted(config, member, path)
 
 
 def require_secrets(config: Config, project: Project, token_file: str) -> None:
@@ -1211,6 +1474,7 @@ def require_project(config: Config, project: Project, token_file: str) -> None:
     require_settings(config)
     require_git_repository(project.working_directory)
     require_ignored_local_paths(project.working_directory)
+    require_members(config, project)
     require_secrets(config, project, token_file)
 
 
@@ -1221,18 +1485,40 @@ def prepare_launch(config: Config, project: Project, token_file: str) -> Launch:
         raise ConfigError(TOKEN_FILE_HELP)
     token = SecretValue(secret=OAUTH_SECRET, value=read_token(resolve_path(token_file)))
     declared = read_secret_values(config.secret_hosts, secrets_file_from_environment())
-    parts = [BASE_PROMPT, build_started_in_prompt(project), read_system_prompt(config.prompt_file)]
+    parts = [
+        BASE_PROMPT,
+        build_started_in_prompt(project),
+        read_system_prompt(config.prompt_file),
+        build_members_prompt(config, project),
+    ]
     agent_args = build_agent_args(config, build_system_prompt(parts))
     return Launch(
         project=project,
-        sandbox_name=pick_name(config.name, taken_names()),
+        sandbox_name=pick_name(config.name, taken_names(build_checkouts(config, project))),
         secrets=(token, *declared),
         agent_args=agent_args,
     )
 
 
-def run_session(config: Config, launch: Launch) -> int:
-    """Create the sandbox, run Claude in it, and clean up afterwards."""
+def remove_sandbox(config: Config, launch: Launch, reason: str) -> int:
+    """Take back a sandbox that holds nothing yet, since the run it was made for cannot start."""
+    drop_secrets(config.secret_hosts, launch.sandbox_name)
+    subprocess.run(["sbx", "rm", "--force", launch.sandbox_name], check=False)
+    print(f"box: {reason}, so {launch.sandbox_name} was removed again.", file=sys.stderr)
+    return 1
+
+
+def clone_members(config: Config, launch: Launch, bundles: list[Bundle]) -> int:
+    """Put every member's clone in the fresh sandbox, saying whether the run can start."""
+    for bundle in bundles:
+        if clone_member(bundle, launch.sandbox_name):
+            continue
+        return remove_sandbox(config, launch, f"{bundle.member.path} could not be cloned")
+    return 0
+
+
+def start_session(config: Config, launch: Launch, bundles: list[Bundle]) -> int:
+    """Create the sandbox, clone the members into it, run Claude, and clean up afterwards."""
     environment = build_environment(config)
     # sbx injects the placeholder env vars when the sandbox is created, so they must exist by then.
     drop_secrets(config.secret_hosts, launch.sandbox_name)
@@ -1246,12 +1532,23 @@ def run_session(config: Config, launch: Launch) -> int:
         drop_secrets(config.secret_hosts, launch.sandbox_name)
         print(f"box: sbx create failed, so {launch.sandbox_name} was never started.", file=sys.stderr)
         return 1
+    cloned = clone_members(config, launch, bundles)
+    if cloned != 0:
+        return cloned
     try:
         command = build_run_command(launch.sandbox_name, launch.agent_args)
         result = subprocess.run(command, env=environment, check=False)
         return result.returncode
     finally:
         cleanup(config, launch)
+
+
+def run_session(config: Config, launch: Launch) -> int:
+    """Pack up the members this run needs, then hand the sandbox over to the agent."""
+    # The bundles are made before anything is created, so a member that cannot be read costs nothing.
+    with tempfile.TemporaryDirectory() as directory:
+        bundles = bundle_members(config, launch.project, Path(directory))
+        return start_session(config, launch, bundles)
 
 
 def to_flag(key: str) -> str:

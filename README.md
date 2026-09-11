@@ -125,11 +125,12 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | `--mcp NAMES` | `mcp` | unset | MCP servers the sandbox may use, comma-separated (see [Read-only tools](#read-only-tools)). |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | — | `secret_hosts` | `{}` | Tokens the agent may use, as variable name to host (see [Secrets](#secrets)). |
+| — | `repos` | `{}` | Other repositories this session works on, as path to branch (see [Groups](#groups)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
 text, though `"cpus": 4` works as well as `"cpus": "4"`. A `null`, a `true` or a list is an error
-that says which key holds it. `required_mounts` and `secret_hosts` are the keys holding an object.
+that says which key holds it. `required_mounts`, `secret_hosts` and `repos` are the keys holding an object.
 
 `kit` and `model` have no default. An unset kit would leave the sandbox's network access to whatever
 `sbx` grants, and an unset model would leave the choice to the sandbox's own Claude install, which
@@ -164,6 +165,51 @@ Kubernetes cluster, an error tracker. `sbx mcp add` registers an MCP server on y
 The server runs on the host, under your own access, so registering one is yours to do and box only
 passes the names on to `sbx create --static-mcp`. `sbx mcp ls` shows what this machine has. A name
 `sbx` does not know is a failed create that says so.
+
+## Groups
+
+One task often spans several repositories. A group is one sandbox that works on all of them: keep a
+folder of box setups next to the repositories themselves, one subfolder per group.
+
+```
+~/work/
+  boxes/                    one git repository, shared by the team
+    billing/.box/config.json
+    search/.box/config.json
+  billing-api/              the members sit next to boxes
+  billing-worker/
+  kubernetes/
+```
+
+`cd ~/work/boxes/billing && box run` starts a sandbox named after the folder it ran in. `repos` lists
+the members and the branch each clone starts from:
+
+```json
+{
+  "repos": {
+    "../../billing-api": "develop",
+    "../../kubernetes": "main"
+  }
+}
+```
+
+Paths are relative to the folder box runs in, and a leading `~` expands. Groups may share members.
+
+Before anything is created, box fetches each member — with the terminal attached, so `ssh` can ask
+for a passphrase — and packs its commits into a bundle. Each member then becomes a clone inside the
+sandbox at the same path it has on your machine, starting on the branch you named, with every
+`origin/*` branch present and `origin` pointing where yours does. Nothing can be pushed from inside.
+
+A member is never mounted, so only committed work reaches the sandbox; the fetch itself only writes
+`origin/*`, so your checkout, your index and your own branches are untouched. box refuses a member
+that is not a git repository, has no `origin`, sits inside the repository box runs in, is named
+twice, or is covered by a mount.
+
+On exit each member's committed work comes back the way the main repository's does: onto a branch a
+headless `claude` names, in that member's own repository. A member counts as new whatever none of
+its `origin/*` branches hold, so commits you had not pushed yourself do not end up on a sandbox
+branch. Every clone has to be committed before the sandbox is removed — a dirty member keeps it,
+and the warning names which one.
 
 ## Secrets
 
@@ -319,6 +365,8 @@ The refusals you are most likely to meet, and what to do about each:
 | `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |
 | `quotes its value` | drop the quotes around the value: docker would keep them, so box refuses the line |
 | `has no path on this machine for` | give the mount it lists a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
+| `is not a git repository` | check the path under `repos`; a member has to be a git repository with an `origin` remote |
+| `has no branch <name> on origin` | name a branch `origin` really has under `repos` |
 | `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 
 ## Development
