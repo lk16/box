@@ -161,6 +161,13 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   a failed create, which box already reports.
 - `box gen` writes a single project's settings and never the keys only a group needs, so a config it
   writes today still runs on a box from before groups existed.
+- Settings come from the working directory's `.box/`, but `sbx create --clone` is given the
+  repository root, since it refuses a path that is not a repository of its own. So a folder below
+  the root is a place to keep settings, and the sandbox still gets the whole repository. The
+  sandbox base name follows the working directory too, so sibling folders name their own sandboxes.
+  The agent starts at the root, which is the path `sbx create` was given, so one generated line
+  names the folder the session was started from; the dirty check and the recovery lines address
+  that same root.
 - A failed `sbx create` is reported, not raised. `sbx` has already said why, there is no sandbox
   to clean up or keep, and the stored secret is dropped again, so a failure leaves nothing
   behind and no traceback in front of the reason.

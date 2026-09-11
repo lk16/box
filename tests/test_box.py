@@ -34,6 +34,11 @@ def make_config() -> box.Config:
     )
 
 
+def make_project(directory: Path) -> box.Project:
+    """Build the project a session started at the repository root resolves to."""
+    return box.Project(root=directory, started_in="")
+
+
 def write_box_file(directory: Path, name: str, contents: object) -> Path:
     """Write one .box file, creating the directory it lives in."""
     path = directory / name
@@ -678,7 +683,7 @@ def clean_sandbox() -> FakeSandbox:
 def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     settled = sandbox.commands.index(["settle", "demo-1"])
     assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
 
@@ -686,7 +691,7 @@ def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytes
 def test_cleanup_fetches_from_the_sandbox_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     assert ["git", "fetch", "sandbox-demo-1"] in sandbox.commands
 
 
@@ -695,7 +700,7 @@ def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
 ) -> None:
     sandbox = FakeSandbox(dirty=" M box.py\n", fetch_fails=False, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "uncommitted changes" in capsys.readouterr().err
@@ -706,7 +711,7 @@ def test_cleanup_keeps_the_sandbox_when_the_fetch_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "git fetch sandbox-demo-1 failed" in capsys.readouterr().err
@@ -717,7 +722,7 @@ def test_cleanup_keeps_the_sandbox_when_the_dirty_check_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=True)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "could not read the sandbox's git status" in capsys.readouterr().err
@@ -728,7 +733,7 @@ def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_project(Path("/work/demo")), "demo-1")
     printed = capsys.readouterr().err
     assert "sbx exec demo-1" in printed
     assert "sbx cp demo-1:" in printed
@@ -736,7 +741,7 @@ def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
 
 
 def test_build_create_command_includes_mounts_and_kit() -> None:
-    command = box.build_create_command(make_config(), "demo-1")
+    command = box.build_create_command(make_config(), make_project(Path("/work/demo")), "demo-1")
     assert command == [
         "sbx",
         "create",
@@ -760,29 +765,35 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
 
 
 def test_build_create_command_omits_empty_kit(tmp_path: Path) -> None:
-    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    command = box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
     assert "--kit" not in command
 
 
 def test_build_create_command_omits_an_unset_template(tmp_path: Path) -> None:
-    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    command = box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
     assert "--template" not in command
 
 
 def test_build_create_command_takes_the_template_from_the_config(tmp_path: Path) -> None:
     config = config_from_values({"template": "frlg-sandbox:1"}, tmp_path)
-    command = box.build_create_command(config, "demo-1")
+    command = box.build_create_command(config, make_project(Path("/work/demo")), "demo-1")
     assert command[-2:] == ["--template", "frlg-sandbox:1"]
 
 
 def test_build_create_command_names_the_mcp_servers_sbx_should_start(tmp_path: Path) -> None:
     config = config_from_values({"mcp": "postgres,kubernetes"}, tmp_path)
-    command = box.build_create_command(config, "demo-1")
+    command = box.build_create_command(config, make_project(Path("/work/demo")), "demo-1")
     assert command[-2:] == ["--static-mcp", "postgres,kubernetes"]
 
 
 def test_build_create_command_omits_an_unset_mcp(tmp_path: Path) -> None:
-    assert "--static-mcp" not in box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    assert "--static-mcp" not in box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
@@ -814,13 +825,19 @@ def test_build_environment_sets_disk_limits() -> None:
 
 
 def test_build_system_prompt_is_the_base_prompt_without_a_project_prompt() -> None:
-    assert box.build_system_prompt("") == box.BASE_PROMPT
+    assert box.build_system_prompt([box.BASE_PROMPT]) == box.BASE_PROMPT
 
 
 def test_build_system_prompt_puts_the_project_prompt_last() -> None:
-    combined = box.build_system_prompt("project rules")
+    combined = box.build_system_prompt([box.BASE_PROMPT, "project rules"])
     assert combined.startswith(box.BASE_PROMPT)
     assert combined.endswith("project rules")
+
+
+def test_build_system_prompt_leaves_out_a_part_this_run_has_nothing_for() -> None:
+    assert box.build_system_prompt([box.BASE_PROMPT, "", "project rules"]) == (
+        f"{box.BASE_PROMPT}\n\nproject rules"
+    )
 
 
 def test_read_system_prompt_returns_empty_without_file() -> None:
@@ -1321,6 +1338,97 @@ def test_a_repository_with_no_commits_is_rejected(tmp_path: Path) -> None:
 
 def test_a_repository_with_a_commit_is_accepted(tmp_path: Path) -> None:
     box.require_git_repository(make_git_repository(tmp_path))
+
+
+def test_repository_root_finds_the_root_from_a_subfolder(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    subfolder = tmp_path / "services" / "api"
+    subfolder.mkdir(parents=True)
+    assert box.repository_root(subfolder) == tmp_path.resolve()
+
+
+def test_repository_root_is_the_working_directory_outside_a_repository(tmp_path: Path) -> None:
+    assert box.repository_root(tmp_path) == tmp_path
+
+
+def test_path_below_names_the_folder_the_session_started_in() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/boxes/billing")) == "billing"
+
+
+def test_path_below_is_empty_at_the_root_itself() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/boxes")) == ""
+
+
+def test_path_below_is_empty_when_the_working_directory_is_elsewhere() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/other")) == ""
+
+
+def test_build_project_knows_where_a_subfolder_session_started(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    subfolder = tmp_path / "billing"
+    subfolder.mkdir()
+    project = box.build_project(subfolder)
+    assert project.root == tmp_path.resolve()
+    assert project.started_in == "billing"
+
+
+def test_build_project_at_the_root_started_in_nothing(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    assert box.build_project(tmp_path).started_in == ""
+
+
+def test_sbx_clones_the_working_directory_at_the_root() -> None:
+    assert box.clone_path(make_project(Path("/work/demo"))) == "."
+
+
+def test_sbx_clones_the_root_when_box_ran_below_it() -> None:
+    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    assert box.clone_path(project) == "/work/boxes"
+
+
+def test_build_create_command_clones_the_root_from_a_subfolder() -> None:
+    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    command = box.build_create_command(make_config(), project, "demo-1")
+    assert command[:4] == ["sbx", "create", "claude", "/work/boxes"]
+
+
+def test_the_prompt_says_nothing_about_a_session_started_at_the_root() -> None:
+    assert box.build_started_in_prompt(make_project(Path("/work/demo"))) == ""
+
+
+def test_the_prompt_names_the_folder_a_subfolder_session_started_in() -> None:
+    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    assert "billing" in box.build_started_in_prompt(project)
+
+
+def test_the_status_check_reads_the_clone_at_the_root() -> None:
+    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    assert box.build_status_command(project, "demo-1") == [
+        "sbx",
+        "exec",
+        "demo-1",
+        "git",
+        "-C",
+        "/work/boxes",
+        "status",
+        "--porcelain",
+    ]
+
+
+def test_prepare_launch_tells_a_subfolder_session_where_it_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    subfolder = tmp_path / "billing"
+    subfolder.mkdir()
+    write_config(subfolder, {})
+    token = tmp_path / "token"
+    token.write_text("sk-ant-secret\n")
+    monkeypatch.setattr(box, "taken_names", set)
+    config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, subfolder)
+    launch = box.prepare_launch(config, str(token), subfolder)
+    assert launch.project.root == tmp_path.resolve()
+    assert "billing" in launch.agent_args[1]
 
 
 def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
@@ -2323,11 +2431,11 @@ def test_build_environment_keeps_the_environment_box_was_run_with(
 
 
 def test_warn_dirty_says_how_to_inspect_recover_and_remove(capsys: pytest.CaptureFixture[str]) -> None:
-    box.warn_dirty("demo-1", " M box.py\n")
+    box.warn_dirty(make_project(Path("/work/demo")), "demo-1", " M box.py\n")
     printed = capsys.readouterr().err
     assert " M box.py" in printed
-    assert f"Inspect:  sbx exec demo-1 git -C {Path.cwd()} diff" in printed
-    assert f"Recover:  sbx cp demo-1:{Path.cwd()}/<file> ." in printed
+    assert "Inspect:  sbx exec demo-1 git -C /work/demo diff" in printed
+    assert "Recover:  sbx cp demo-1:/work/demo/<file> ." in printed
     assert "sbx rm --force demo-1" in printed
 
 
@@ -2413,7 +2521,7 @@ class FakeSession:
         def store_secret(sandbox_name: str, token: str) -> None:
             self.steps.append("store-secret")
 
-        def cleanup(sandbox_name: str) -> None:
+        def cleanup(project: box.Project, sandbox_name: str) -> None:
             self.steps.append("cleanup")
 
         monkeypatch.setattr(box, "drop_secret", drop_secret)
@@ -2435,7 +2543,12 @@ class FakeSession:
 
 def make_launch() -> box.Launch:
     """Build what prepare_launch would have resolved for a run."""
-    return box.Launch(sandbox_name="demo-1", token="sk-ant-secret", agent_args=["--model", "claude-opus-5"])
+    return box.Launch(
+        project=make_project(Path("/work/demo")),
+        sandbox_name="demo-1",
+        token="sk-ant-secret",
+        agent_args=["--model", "claude-opus-5"],
+    )
 
 
 def test_run_session_stores_the_secret_before_creating_the_sandbox(

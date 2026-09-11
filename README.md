@@ -84,6 +84,11 @@ watch what it does and step in.
 repository, or in one with no commits yet. `gen`, `mount-prompt` and `self-update` read no settings,
 so they reject every flag.
 
+Settings are read from the working directory's `.box/`, and the whole repository around it is what
+the sandbox gets. So a folder below the repository root can hold a `.box/` of its own: the sandbox
+is named after that folder, the agent still starts at the root, and the prompt tells it which folder
+you ran box in.
+
 `CLAUDE_OAUTH_TOKEN_FILE` points at a file holding a token from `claude setup-token`. It is the one
 setting with no flag and no config key, so that a shared project file can never point at someone
 else's credentials. box refuses to start without it, or if the file it points at is missing or

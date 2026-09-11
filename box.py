@@ -177,6 +177,9 @@ allowed rather than working around it.
 If you cannot reasonably finish the task, stop, state concisely what is
 blocking you, and suggest a solution -- do not keep flailing."""
 
+# The agent starts at the repository root, so a session started below it is told where that was.
+STARTED_IN_PROMPT = "You start at the repository root; this session was started from {started_in} inside it."
+
 # The network policy box gen writes, kept here with BASE_PROMPT so one script stays the whole of box.
 STARTER_KIT_SPEC = """# A starting point rather than a finished policy: the agent's own API calls,
 # and nothing else. Add a host for every dependency the project's checks fetch, or mount a warmed
@@ -253,9 +256,18 @@ class Config:
 
 
 @dataclass(frozen=True)
+class Project:
+    """The repository sbx clones, and where inside it box was run."""
+
+    root: Path
+    started_in: str
+
+
+@dataclass(frozen=True)
 class Launch:
     """Everything resolved before the sandbox is created."""
 
+    project: Project
     sandbox_name: str
     token: str
     agent_args: list[str]
@@ -562,11 +574,16 @@ def read_system_prompt(prompt_file: str) -> str:
     return path.read_text()
 
 
-def build_system_prompt(project_prompt: str) -> str:
-    """Put the built-in sandbox instructions in front of the project's own prompt."""
-    if not project_prompt:
-        return BASE_PROMPT
-    return f"{BASE_PROMPT}\n\n{project_prompt}"
+def build_system_prompt(parts: list[str]) -> str:
+    """Join what the agent is told, leaving out every part this run has nothing to say for."""
+    return "\n\n".join(part for part in parts if part)
+
+
+def build_started_in_prompt(project: Project) -> str:
+    """Say which folder the session was started from, which is nothing when that is the root."""
+    if not project.started_in:
+        return ""
+    return STARTED_IN_PROMPT.format(started_in=project.started_in)
 
 
 def build_environment(config: Config) -> dict[str, str]:
@@ -577,9 +594,41 @@ def build_environment(config: Config) -> dict[str, str]:
     return environment
 
 
-def build_create_command(config: Config, sandbox_name: str) -> list[str]:
+def repository_root(working_directory: Path) -> Path:
+    """Find the root of the repository box runs in, which is what sbx clones."""
+    root = capture(["git", "-C", str(working_directory), "rev-parse", "--show-toplevel"]).strip()
+    if not root:
+        return working_directory
+    return Path(root)
+
+
+def path_below(root: Path, working_directory: Path) -> str:
+    """Name the working directory relative to the root, which is nothing when it is the root."""
+    try:
+        relative = working_directory.resolve().relative_to(root.resolve())
+    except ValueError:
+        return ""
+    if str(relative) == ".":
+        return ""
+    return str(relative)
+
+
+def build_project(working_directory: Path) -> Project:
+    """Locate the repository sbx clones, and where inside it this session was started."""
+    root = repository_root(working_directory)
+    return Project(root=root, started_in=path_below(root, working_directory))
+
+
+def clone_path(project: Project) -> str:
+    """The path sbx clones: the working directory itself, unless box was run below the root."""
+    if not project.started_in:
+        return "."
+    return str(project.root)
+
+
+def build_create_command(config: Config, project: Project, sandbox_name: str) -> list[str]:
     """Assemble the sbx create invocation."""
-    command = ["sbx", "create", "claude", "."]
+    command = ["sbx", "create", "claude", clone_path(project)]
     command.extend(config.mounts)
     command.extend(["--clone", "--name", sandbox_name])
     command.extend(["--memory", config.memory, "--cpus", config.cpus])
@@ -639,25 +688,25 @@ def store_secret(sandbox_name: str, token: str) -> None:
         raise ConfigError(f"sbx would not store the OAuth token for {sandbox_name}")
 
 
-def print_recovery(sandbox_name: str) -> None:
+def print_recovery(project: Project, sandbox_name: str) -> None:
     """Print how to look inside a sandbox box kept, take work out of it, and remove it by hand."""
-    print(f"Inspect:  sbx exec {sandbox_name} git -C {Path.cwd()} diff", file=sys.stderr)
-    print(f"Recover:  sbx cp {sandbox_name}:{Path.cwd()}/<file> .", file=sys.stderr)
+    print(f"Inspect:  sbx exec {sandbox_name} git -C {project.root} diff", file=sys.stderr)
+    print(f"Recover:  sbx cp {sandbox_name}:{project.root}/<file> .", file=sys.stderr)
     print(f"Then remove manually once safe: sbx rm --force {sandbox_name}", file=sys.stderr)
 
 
-def warn_dirty(sandbox_name: str, dirty: str) -> None:
+def warn_dirty(project: Project, sandbox_name: str, dirty: str) -> None:
     """Tell the user how to recover uncommitted work left behind in a sandbox."""
     print(f"WARNING: sandbox {sandbox_name} has uncommitted changes -- not removing it.", file=sys.stderr)
     print(dirty, file=sys.stderr)
-    print_recovery(sandbox_name)
+    print_recovery(project, sandbox_name)
 
 
-def warn_unchecked(sandbox_name: str, reason: str) -> None:
+def warn_unchecked(project: Project, sandbox_name: str, reason: str) -> None:
     """Tell the user box could not find out whether removing a sandbox would lose work."""
     print(f"WARNING: {reason}.", file=sys.stderr)
     print(f"box cannot tell whether sandbox {sandbox_name} holds work -- not removing it.", file=sys.stderr)
-    print_recovery(sandbox_name)
+    print_recovery(project, sandbox_name)
 
 
 def plural(count: str, noun: str) -> str:
@@ -778,19 +827,24 @@ def settle_sandbox_refs(sandbox_name: str) -> None:
         settle_ref(ref)
 
 
-def cleanup(sandbox_name: str) -> None:
+def build_status_command(project: Project, sandbox_name: str) -> list[str]:
+    """Assemble the sbx exec that asks the sandbox whether its clone holds uncommitted work."""
+    return ["sbx", "exec", sandbox_name, "git", "-C", str(project.root), "status", "--porcelain"]
+
+
+def cleanup(project: Project, sandbox_name: str) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
     remote = f"sandbox-{sandbox_name}"
     # Removal follows, so "I could not tell" must never be read as "there is nothing to lose".
     if not succeeds(["git", "fetch", remote]):
-        warn_unchecked(sandbox_name, f"git fetch {remote} failed, so its commits are not here")
+        warn_unchecked(project, sandbox_name, f"git fetch {remote} failed, so its commits are not here")
         return
-    status = run_quietly(["sbx", "exec", sandbox_name, "git", "-C", str(Path.cwd()), "status", "--porcelain"])
+    status = run_quietly(build_status_command(project, sandbox_name))
     if status.returncode != 0:
-        warn_unchecked(sandbox_name, "sbx exec could not read the sandbox's git status")
+        warn_unchecked(project, sandbox_name, "sbx exec could not read the sandbox's git status")
         return
     if status.stdout.strip():
-        warn_dirty(sandbox_name, status.stdout)
+        warn_dirty(project, sandbox_name, status.stdout)
         return
     settle_sandbox_refs(sandbox_name)
     drop_secret(sandbox_name)
@@ -962,9 +1016,15 @@ def prepare_launch(config: Config, token_file: str, working_directory: Path) -> 
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
     token = read_token(resolve_path(token_file))
-    system_prompt = build_system_prompt(read_system_prompt(config.prompt_file))
-    agent_args = build_agent_args(config, system_prompt)
-    return Launch(sandbox_name=pick_name(config.name, taken_names()), token=token, agent_args=agent_args)
+    project = build_project(working_directory)
+    parts = [BASE_PROMPT, build_started_in_prompt(project), read_system_prompt(config.prompt_file)]
+    agent_args = build_agent_args(config, build_system_prompt(parts))
+    return Launch(
+        project=project,
+        sandbox_name=pick_name(config.name, taken_names()),
+        token=token,
+        agent_args=agent_args,
+    )
 
 
 def run_session(config: Config, launch: Launch) -> int:
@@ -973,7 +1033,7 @@ def run_session(config: Config, launch: Launch) -> int:
     # sbx injects the placeholder env var when the sandbox is created, so the secret must exist by then.
     drop_secret(launch.sandbox_name)
     store_secret(launch.sandbox_name, launch.token)
-    create = build_create_command(config, launch.sandbox_name)
+    create = build_create_command(config, launch.project, launch.sandbox_name)
     # sbx has already said why it failed, and there is no sandbox to run in, clean up or keep.
     if subprocess.run(create, env=environment, check=False).returncode != 0:
         # Two runs can pick one name and the loser drops the winner's secret, which sbx has
@@ -986,7 +1046,7 @@ def run_session(config: Config, launch: Launch) -> int:
         result = subprocess.run(command, env=environment, check=False)
         return result.returncode
     finally:
-        cleanup(launch.sandbox_name)
+        cleanup(launch.project, launch.sandbox_name)
 
 
 def to_flag(key: str) -> str:
