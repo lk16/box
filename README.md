@@ -205,6 +205,18 @@ A member is never mounted, so only committed work reaches the sandbox; the fetch
 that is not a git repository, has no `origin`, sits inside the repository box runs in, is named
 twice, or is covered by a mount.
 
+A member may carry a `.box/config.json` of its own, and box reads three things from it: its
+`required_mounts`, answered by its own gitignored `.box/mounts.json`; its `kit`, passed alongside
+the group's, since two kits add up to one allowlist; and its `prompt_file`, appended to the prompt
+under the path its clone sits at. Paths in it are relative to the member. Everything else is
+ignored — a member's own `repos`, `secret_hosts` and `mcp` included, so groups never nest — except
+`template`, which is an error: one sandbox runs one image, so the group's template has to cover
+every member.
+
+Mounts reach the sandbox in that order: the group's, then each member's, then any `--mount` flags.
+The same path asked for twice is passed once, and a path asked for read-only in one place and `:rw`
+in another is an error naming both.
+
 On exit each member's committed work comes back the way the main repository's does: onto a branch a
 headless `claude` names, in that member's own repository. A member counts as new whatever none of
 its `origin/*` branches hold, so commits you had not pushed yourself do not end up on a sandbox

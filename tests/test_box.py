@@ -33,6 +33,7 @@ def make_config() -> box.Config:
         mounts=("/cache:ro",),
         secret_hosts=(),
         repos=(),
+        members=(),
     )
 
 
@@ -77,7 +78,7 @@ def write_config(directory: Path, values: dict[str, object]) -> Path:
 
 def config_from_values(values: dict[str, object], directory: Path) -> box.Config:
     """Build a config from config file values and no mounts, which come from their own file."""
-    return box.build_config(box.merge_values(values, {}), [], directory)
+    return box.build_config(box.merge_values(values, {}), [], (), directory)
 
 
 def test_to_kebab_case_collapses_separators() -> None:
@@ -307,7 +308,7 @@ def test_no_declared_mounts_needs_no_mounts_file() -> None:
 
 
 def test_build_config_applies_the_mount_default() -> None:
-    config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], Path("/tmp/demo"))
+    config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], (), Path("/tmp/demo"))
     assert config.mounts == ("/a:ro", "/b")
 
 
@@ -543,13 +544,13 @@ def test_format_config_names_each_member_and_where_its_clone_starts(tmp_path: Pa
 
 def test_a_member_sits_where_the_working_directory_says_it_does(tmp_path: Path) -> None:
     project = make_project(tmp_path / "boxes")
-    assert box.member_path(project, MEMBER) == (tmp_path / "billing-api").resolve()
+    assert box.member_path(project.working_directory, MEMBER) == (tmp_path / "billing-api").resolve()
 
 
 def test_a_member_path_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     member = box.Member(path="~/billing-api", base="develop")
-    assert box.member_path(make_project(tmp_path), member) == (tmp_path / "billing-api").resolve()
+    assert box.member_path(tmp_path, member) == (tmp_path / "billing-api").resolve()
 
 
 def test_a_member_beside_the_repository_is_accepted(tmp_path: Path) -> None:
@@ -590,7 +591,7 @@ def test_a_mount_holding_a_member_is_rejected(tmp_path: Path) -> None:
     make_member(tmp_path, "billing-api")
     project = make_project(make_git_repository(tmp_path / "boxes"))
     values = box.merge_values({"repos": {"../billing-api": "develop"}}, {})
-    config = box.build_config(values, [str(tmp_path)], tmp_path / "boxes")
+    config = box.build_config(values, [str(tmp_path)], (), tmp_path / "boxes")
     with pytest.raises(box.ConfigError, match="would hand over whole"):
         box.require_members(config, project)
 
@@ -1481,6 +1482,137 @@ def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
     assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == []
 
 
+def make_group(directory: Path, values: dict[str, object]) -> Path:
+    """Create the folder a group's own settings live in, and return it."""
+    boxes = make_git_repository(directory / "boxes")
+    write_config(boxes, values)
+    return boxes
+
+
+def make_member_settings(directory: Path, values: dict[str, object]) -> box.MemberSettings:
+    """Give the member beside a group a box config of its own, and read what it adds."""
+    write_config(make_member(directory, "billing-api"), values)
+    return box.read_member_settings(directory / "boxes", MEMBER)
+
+
+def config_with_member(settings: box.MemberSettings) -> box.Config:
+    """Build the config of a group whose one member brings settings of its own."""
+    repos = {settings.member.path: settings.member.base}
+    values = box.merge_values({"repos": repos, "kit": "registry/kit", "model": "claude-opus-5"}, {})
+    return box.build_config(values, [], (settings,), Path("/work/boxes"))
+
+
+def test_a_member_without_a_box_directory_adds_nothing(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    settings = box.read_member_settings(tmp_path / "boxes", MEMBER)
+    assert settings == box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+
+
+def test_a_members_mounts_come_after_the_groups_and_before_the_flags(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    write_config(member, {"required_mounts": {"go": "the Go toolchain"}})
+    write_box_file(member, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    boxes = make_group(
+        tmp_path, {"repos": {"../billing-api": "develop"}, "required_mounts": {"cache": "the cache"}}
+    )
+    write_box_file(boxes, box.MOUNTS_FILE, {"cache": "/cache"})
+    arguments = box.build_parser().parse_args(["run", "--mount", "/extra"])
+    assert box.load_config(arguments, boxes).mounts == ("/cache:ro", "/usr/local/go:ro", "/extra:ro")
+
+
+def test_a_member_mount_with_no_path_names_the_member(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match=re.escape("../billing-api: go")):
+        make_member_settings(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+
+
+def test_a_mount_a_member_never_declared_names_the_member(tmp_path: Path) -> None:
+    write_box_file(make_member(tmp_path, "billing-api"), box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    write_config(tmp_path / "billing-api", {})
+    with pytest.raises(box.ConfigError, match=re.escape("../billing-api: go")):
+        box.read_member_settings(tmp_path / "boxes", MEMBER)
+
+
+def test_the_same_mount_twice_is_passed_once() -> None:
+    assert box.to_workspaces(["/cache", "/cache"]) == ("/cache:ro",)
+
+
+def test_a_mount_that_is_read_only_in_one_place_and_writable_in_another_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="both /cache:ro and /cache"):
+        box.to_workspaces(["/cache", "/cache:rw"])
+
+
+def test_a_members_kit_is_resolved_against_the_member(tmp_path: Path) -> None:
+    (tmp_path / "billing-api" / box.KIT_DIR).mkdir(parents=True)
+    settings = make_member_settings(tmp_path, {"kit": box.KIT_DIR})
+    assert settings.kit == str(tmp_path / "billing-api" / box.KIT_DIR)
+
+
+def test_a_members_kit_that_is_not_on_disk_is_left_to_sbx(tmp_path: Path) -> None:
+    assert make_member_settings(tmp_path, {"kit": "registry/kit"}).kit == "registry/kit"
+
+
+def test_a_member_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("kind: mixin\n")
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit=str(spec), prompt_file="")
+    with pytest.raises(box.ConfigError, match="../billing-api: kit names a file"):
+        box.require_settings(config_with_member(settings))
+
+
+def test_the_create_command_passes_the_groups_kit_and_then_the_members() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="/kits/billing", prompt_file="")
+    config = config_with_member(settings)
+    command = box.build_create_command(config, make_project(Path("/work/boxes")), "demo-1")
+    passed = [command[index + 1] for index, word in enumerate(command) if word == "--kit"]
+    assert passed == ["registry/kit", "/kits/billing"]
+
+
+def test_a_kit_the_group_already_has_is_passed_once() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="registry/kit", prompt_file="")
+    config = config_with_member(settings)
+    assert box.kits(config) == ["registry/kit"]
+
+
+def test_a_member_that_brings_its_own_image_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="a sandbox runs one image"):
+        make_member_settings(tmp_path, {"template": "frlg-sandbox:1"})
+
+
+def test_a_members_prompt_file_is_resolved_against_the_member(tmp_path: Path) -> None:
+    settings = make_member_settings(tmp_path, {"prompt_file": "docs/agent.md"})
+    assert settings.prompt_file == str(tmp_path / "billing-api" / "docs" / "agent.md")
+
+
+def test_a_members_prompt_comes_after_the_section_naming_the_members(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    (member / "agent.md").write_text("billing rules")
+    write_config(member, {"prompt_file": "agent.md"})
+    boxes = make_group(tmp_path, {"repos": {"../billing-api": "develop"}})
+    config = box.load_config(box.build_parser().parse_args(["run"]), boxes)
+    prompts = box.build_member_prompts(config, make_project(boxes))
+    assert prompts == [f"{(tmp_path / 'billing-api').resolve()}:\n\nbilling rules"]
+
+
+def test_what_a_member_says_about_groups_of_its_own_is_ignored(tmp_path: Path) -> None:
+    values: dict[str, object] = {"repos": {"../other": "main"}, "mcp": "postgres", "secret_hosts": {}}
+    settings = make_member_settings(tmp_path, values)
+    assert settings == box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+
+
+def test_an_unknown_key_in_a_members_config_names_that_file(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match=re.escape(str(tmp_path / "billing-api" / box.CONFIG_FILE))):
+        make_member_settings(tmp_path, {"nope": 1})
+
+
+def test_a_committable_mounts_file_in_a_member_is_rejected(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    write_box_file(member, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    boxes = make_git_repository(tmp_path / "boxes")
+    config = make_group_config(boxes, {"../billing-api": "develop"})
+    with pytest.raises(box.ConfigError, match=re.escape("../billing-api: .box/mounts.json")):
+        box.require_members(config, make_project(boxes))
+
+
 def make_cloned_member(directory: Path, name: str) -> Path:
     """Create a repository box can really fetch from, by cloning one next to it."""
     origin = make_git_repository(directory / f"{name}-origin")
@@ -2073,17 +2205,17 @@ def test_prepare_launch_rejects_a_repository_with_no_commits(tmp_path: Path) -> 
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
-    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"), "")
 
 
 def test_an_ignored_box_directory_covers_the_mounts_file(tmp_path: Path) -> None:
-    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.BOX_DIR}/\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.BOX_DIR}/\n"), "")
 
 
 def test_a_committable_mounts_file_is_rejected(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "*.log\n")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.require_ignored_local_paths(repository)
+        box.require_ignored_local_paths(repository, "")
 
 
 def test_deps_path_follows_xdg_data_home(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2114,7 +2246,7 @@ def test_the_prompt_says_the_sandbox_runs_linux_whatever_this_machine_runs() -> 
 
 def test_no_mounts_file_needs_no_gitignore_entry(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    box.require_ignored_local_paths(tmp_path)
+    box.require_ignored_local_paths(tmp_path, "")
 
 
 def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
@@ -2787,7 +2919,7 @@ def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
 def test_gen_leaves_a_project_box_will_run_in(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
-    box.require_ignored_local_paths(tmp_path)
+    box.require_ignored_local_paths(tmp_path, "")
 
 
 def test_gen_creates_a_gitignore_holding_every_local_path(tmp_path: Path) -> None:
@@ -2904,7 +3036,8 @@ def test_every_config_key_is_snake_case() -> None:
 def test_config_keys_match_the_config_fields() -> None:
     config = config_from_values({}, Path("/tmp/demo"))
     settings = set(box.DEFAULTS) - {"required_mounts"}
-    assert set(vars(config)) == settings | {"mounts"}
+    # mounts and members are what the two files this machine owns resolve to, so neither is a key.
+    assert set(vars(config)) == settings | {"mounts", "members"}
 
 
 def test_flags_use_the_config_keys_with_hyphens() -> None:
@@ -2922,14 +3055,13 @@ def test_plural_makes_every_other_count_plural() -> None:
     assert box.plural("0", "commit") == "0 commits"
 
 
-def test_resolve_mounts_takes_the_extra_mounts_as_a_list(tmp_path: Path) -> None:
+def test_own_mounts_answers_the_declaration_of_the_directory_box_runs_in(tmp_path: Path) -> None:
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
-    required = {"cache": "the build cache"}
-    assert box.resolve_mounts(["/other"], tmp_path, required) == ["/cache", "/other"]
+    assert box.own_mounts(tmp_path, {"cache": "the build cache"}) == ["/cache"]
 
 
-def test_resolve_mounts_needs_no_extra_mounts(tmp_path: Path) -> None:
-    assert box.resolve_mounts([], tmp_path, {}) == []
+def test_own_mounts_is_empty_without_a_declaration(tmp_path: Path) -> None:
+    assert box.own_mounts(tmp_path, {}) == []
 
 
 def test_read_required_mounts_reads_the_declaration(tmp_path: Path) -> None:

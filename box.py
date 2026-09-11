@@ -193,6 +193,9 @@ Set it up once:
   2. Export {SECRETS_FILE_ENV} to point at that file, e.g. via direnv.
 Keep that file outside every repository and every mount, since the sandbox can read those."""
 
+MEMBER_TEMPLATE_HELP = """{path} sets template, and a sandbox runs one image.
+A member cannot bring its own, so the template the group names has to cover every member of it."""
+
 MEMBER_INSIDE_HELP = f"""{REPOS} names {{path}}, which is inside {{directory}}.
 Its clone would sit inside the sandbox's own clone and leave it dirty, so a member has to live
 outside the repository box runs in."""
@@ -314,6 +317,7 @@ class Config:
     mounts: tuple[str, ...]
     secret_hosts: tuple[Secret, ...]
     repos: tuple[Member, ...]
+    members: tuple[MemberSettings, ...]
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,16 @@ class Member:
 
     path: str
     base: str
+
+
+@dataclass(frozen=True)
+class MemberSettings:
+    """What a member's own .box/ adds to the session it is part of."""
+
+    member: Member
+    mounts: tuple[str, ...]
+    kit: str
+    prompt_file: str
 
 
 @dataclass(frozen=True)
@@ -496,6 +510,11 @@ def require_named_mounts(required: dict[str, str], provided: dict[str, str]) -> 
     )
 
 
+def scoped(scope: str, values: dict[str, str]) -> dict[str, str]:
+    """Name every entry by the member it came from, so a message says which one is at fault."""
+    return {f"{scope}: {name}": value for name, value in values.items()}
+
+
 def order_mounts(required: dict[str, str], provided: dict[str, str]) -> list[str]:
     """Return the declared mounts' paths in declaration order, so the sbx args never shuffle."""
     require_named_mounts(required, provided)
@@ -570,8 +589,23 @@ def to_workspace(mount: str) -> str:
 
 
 def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
-    """Turn the configured mounts into sbx workspace specs."""
-    return tuple(to_workspace(mount) for mount in mounts)
+    """Turn the configured mounts into sbx workspace specs, passing a repeated one once."""
+    workspaces: list[str] = []
+    for mount in mounts:
+        workspace = to_workspace(mount)
+        if workspace in workspaces:
+            continue
+        require_one_access(workspaces, workspace)
+        workspaces.append(workspace)
+    return tuple(workspaces)
+
+
+def require_one_access(workspaces: list[str], workspace: str) -> None:
+    """Refuse a path one place mounts read-only and another writable, since only one can hold."""
+    for other in workspaces:
+        if mount_target(other) != mount_target(workspace):
+            continue
+        raise ConfigError(f"mount {mount_target(workspace)} is asked for as both {other} and {workspace}")
 
 
 def setting(values: dict[str, object], key: str) -> str:
@@ -582,7 +616,12 @@ def setting(values: dict[str, object], key: str) -> str:
     return value
 
 
-def build_config(values: dict[str, object], mounts: list[str], working_directory: Path) -> Config:
+def build_config(
+    values: dict[str, object],
+    mounts: list[str],
+    members: tuple[MemberSettings, ...],
+    working_directory: Path,
+) -> Config:
     """Turn merged config values into a Config, filling in the derived sandbox name."""
     name = setting(values, "name")
     if not name:
@@ -601,6 +640,7 @@ def build_config(values: dict[str, object], mounts: list[str], working_directory
         mounts=to_workspaces(mounts),
         secret_hosts=to_secrets(values[SECRET_HOSTS]),
         repos=to_members(values[REPOS]),
+        members=members,
     )
 
 
@@ -810,8 +850,20 @@ def build_members_prompt(config: Config, project: Project) -> str:
     """Say where each member's clone is, what it starts on, and how its commits come back."""
     if not config.repos:
         return ""
-    members = "\n".join(f"  {member_path(project, member)} on {member.base}" for member in config.repos)
-    return MEMBERS_PROMPT.format(members=members)
+    directory = project.working_directory
+    where = [f"  {member_path(directory, member)} on {member.base}" for member in config.repos]
+    return MEMBERS_PROMPT.format(members="\n".join(where))
+
+
+def build_member_prompts(config: Config, project: Project) -> list[str]:
+    """Read each member's own prompt, headed with the path its clone sits at."""
+    prompts = []
+    for settings in config.members:
+        if not settings.prompt_file:
+            continue
+        path = member_path(project.working_directory, settings.member)
+        prompts.append(f"{path}:\n\n{read_system_prompt(settings.prompt_file)}")
+    return prompts
 
 
 def build_environment(config: Config) -> dict[str, str]:
@@ -856,14 +908,25 @@ def clone_path(project: Project) -> str:
     return str(project.root)
 
 
+def kits(config: Config) -> list[str]:
+    """List the kits this sandbox runs under: the group's, then each member's, and each one once."""
+    wanted = []
+    for kit in [config.kit, *[settings.kit for settings in config.members]]:
+        if not kit or kit in wanted:
+            continue
+        wanted.append(kit)
+    return wanted
+
+
 def build_create_command(config: Config, project: Project, sandbox_name: str) -> list[str]:
     """Assemble the sbx create invocation."""
     command = ["sbx", "create", "claude", clone_path(project)]
     command.extend(config.mounts)
     command.extend(["--clone", "--name", sandbox_name])
     command.extend(["--memory", config.memory, "--cpus", config.cpus])
-    if config.kit:
-        command.extend(["--kit", config.kit])
+    # Two kits are one allowlist, so a member's hosts are added to the group's rather than replacing them.
+    for kit in kits(config):
+        command.extend(["--kit", kit])
     # An unset template leaves the image to sbx, which is what almost every project wants.
     if config.template:
         command.extend(["--template", config.template])
@@ -1109,7 +1172,7 @@ def has_base(path: Path, base: str) -> bool:
 
 def bundle_member(project: Project, member: Member, number: int, directory: Path) -> Bundle:
     """Fetch one member and pack the history its clone is made from into the bundle directory."""
-    path = member_path(project, member)
+    path = member_path(project.working_directory, member)
     fetch_member(path)
     if not has_base(path, member.base):
         raise ConfigError(f"{member.path} has no branch {member.base} on origin")
@@ -1165,7 +1228,8 @@ def build_checkouts(config: Config, project: Project) -> list[Checkout]:
     """List every repository a sandbox's work comes back to: the one box runs in, then the members."""
     checkouts = [Checkout(path=project.root, known_commits=MAIN_KNOWN)]
     for member in config.repos:
-        checkouts.append(Checkout(path=member_path(project, member), known_commits=MEMBER_KNOWN))
+        path = member_path(project.working_directory, member)
+        checkouts.append(Checkout(path=path, known_commits=MEMBER_KNOWN))
     return checkouts
 
 
@@ -1231,10 +1295,65 @@ def cleanup(config: Config, launch: Launch) -> None:
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
 
-def resolve_mounts(extra: list[str], working_directory: Path, required: dict[str, str]) -> list[str]:
-    """Add the mounts given as flags to the named ones in the mounts file."""
+def own_mounts(working_directory: Path, required: dict[str, str]) -> list[str]:
+    """Read the mounts one .box/ declares and this machine answers, in declaration order."""
     provided = read_mounts_file(working_directory / MOUNTS_FILE)
-    return order_mounts(required, provided) + extra
+    return order_mounts(required, provided)
+
+
+def member_setting(values: dict[str, object], key: str) -> str:
+    """Read one setting a member's config holds, which is nothing when it holds none."""
+    if key not in values:
+        return ""
+    return setting(values, key)
+
+
+def member_kit(directory: Path, kit: str) -> str:
+    """Resolve a member's kit against the member when it names a directory here, not this run's."""
+    if not kit:
+        return ""
+    path = directory / resolve_path(kit)
+    # A kit that is not on disk is a reference sbx resolves itself, and no path of this machine's.
+    if not path.exists():
+        return kit
+    return str(path)
+
+
+def read_member_settings(working_directory: Path, member: Member) -> MemberSettings:
+    """Read what a member's own .box/ adds, which is nothing at all when it has none."""
+    directory = member_path(working_directory, member)
+    path = directory / CONFIG_FILE
+    # A member with no box setup of its own is a repository to clone and nothing more.
+    if not path.is_file():
+        return MemberSettings(member=member, mounts=(), kit="", prompt_file="")
+    values = read_config_file(path)
+    if member_setting(values, "template"):
+        raise ConfigError(MEMBER_TEMPLATE_HELP.format(path=member.path))
+    required = as_descriptions(values.get(REQUIRED_MOUNTS, {}))
+    provided = read_mounts_file(directory / MOUNTS_FILE)
+    mounts = order_mounts(scoped(member.path, required), scoped(member.path, provided))
+    prompt_file = member_setting(values, "prompt_file")
+    if prompt_file:
+        prompt_file = str(directory / resolve_path(prompt_file))
+    return MemberSettings(
+        member=member,
+        mounts=tuple(mounts),
+        kit=member_kit(directory, member_setting(values, "kit")),
+        prompt_file=prompt_file,
+    )
+
+
+def read_members(working_directory: Path, members: tuple[Member, ...]) -> tuple[MemberSettings, ...]:
+    """Read every member's own settings, in the order the group declared them."""
+    return tuple(read_member_settings(working_directory, member) for member in members)
+
+
+def member_mounts(members: tuple[MemberSettings, ...]) -> list[str]:
+    """Collect what the members ask to have mounted, in the order the group declared them."""
+    mounts: list[str] = []
+    for settings in members:
+        mounts.extend(settings.mounts)
+    return mounts
 
 
 def load_config(arguments: argparse.Namespace, working_directory: Path) -> Config:
@@ -1242,9 +1361,11 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
     cli_values = {key: value for key, value in vars(arguments).items() if key in DEFAULTS}
     file_values = read_config_file(working_directory / CONFIG_FILE)
     values = merge_values(file_values, cli_values)
-    extra = list(arguments.mounts or [])
-    mounts = resolve_mounts(extra, working_directory, as_descriptions(values[REQUIRED_MOUNTS]))
-    return build_config(values, mounts, working_directory)
+    members = read_members(working_directory, to_members(values[REPOS]))
+    own = own_mounts(working_directory, as_descriptions(values[REQUIRED_MOUNTS]))
+    # The flags come last, since they are this one run's rather than anyone's settings.
+    mounts = own + member_mounts(members) + list(arguments.mounts or [])
+    return build_config(values, mounts, members, working_directory)
 
 
 def token_file_from_environment() -> str:
@@ -1252,9 +1373,9 @@ def token_file_from_environment() -> str:
     return os.environ.get(TOKEN_FILE_ENV, "")
 
 
-def member_path(project: Project, member: Member) -> Path:
+def member_path(working_directory: Path, member: Member) -> Path:
     """Where a member sits on this host, which is where its clone sits in the sandbox."""
-    return (project.working_directory / resolve_path(member.path)).resolve()
+    return (working_directory / resolve_path(member.path)).resolve()
 
 
 def secrets_file_from_environment() -> str:
@@ -1271,7 +1392,7 @@ def mount_target(workspace: str) -> Path:
 
 def reachable_paths(config: Config, project: Project) -> list[Path]:
     """Every host directory the sandbox can read: the repository it clones, its members, and the mounts."""
-    members = [member_path(project, member) for member in config.repos]
+    members = [member_path(project.working_directory, member) for member in config.repos]
     return [project.root, *members] + [mount_target(workspace) for workspace in config.mounts]
 
 
@@ -1313,7 +1434,7 @@ def require_members(config: Config, project: Project) -> None:
     """Refuse a member box could not clone, and two members that would land on one another."""
     seen: dict[Path, str] = {}
     for member in config.repos:
-        path = member_path(project, member)
+        path = member_path(project.working_directory, member)
         if not is_git_repository(path):
             raise ConfigError(f"{REPOS} names {member.path}, which is not a git repository")
         if not has_origin(path):
@@ -1324,6 +1445,7 @@ def require_members(config: Config, project: Project) -> None:
             raise ConfigError(f"{REPOS} names one repository twice: {seen[path]} and {member.path}")
         seen[path] = member.path
         require_unmounted(config, member, path)
+        require_ignored_local_paths(path, f"{member.path}: ")
 
 
 def require_secrets(config: Config, project: Project, token_file: str) -> None:
@@ -1345,6 +1467,9 @@ def require_settings(config: Config) -> None:
     # A kit that is not on disk is a reference sbx resolves itself, so only a local file is wrong.
     if resolve_path(config.kit).is_file():
         raise ConfigError(KIT_FILE_HELP)
+    for settings in config.members:
+        if resolve_path(settings.kit).is_file():
+            raise ConfigError(f"{settings.member.path}: {KIT_FILE_HELP}")
     if not config.model:
         raise ConfigError(MODEL_HELP)
 
@@ -1372,14 +1497,14 @@ def is_git_ignored(working_directory: Path, relative_path: str) -> bool:
     return succeeds(["git", "-C", str(working_directory), "check-ignore", "-q", relative_path])
 
 
-def require_ignored_local_paths(working_directory: Path) -> None:
+def require_ignored_local_paths(directory: Path, scope: str) -> None:
     """Refuse to run while anything holding this machine's own files could be committed."""
     for relative_path, help_text in LOCAL_PATHS.items():
-        if not (working_directory / relative_path).exists():
+        if not (directory / relative_path).exists():
             continue
-        if is_git_ignored(working_directory, relative_path):
+        if is_git_ignored(directory, relative_path):
             continue
-        raise ConfigError(help_text)
+        raise ConfigError(f"{scope}{help_text}")
 
 
 def missing_binaries(names: tuple[str, ...]) -> list[str]:
@@ -1473,7 +1598,7 @@ def require_project(config: Config, project: Project, token_file: str) -> None:
     require_config_file(project.working_directory)
     require_settings(config)
     require_git_repository(project.working_directory)
-    require_ignored_local_paths(project.working_directory)
+    require_ignored_local_paths(project.working_directory, "")
     require_members(config, project)
     require_secrets(config, project, token_file)
 
@@ -1490,6 +1615,7 @@ def prepare_launch(config: Config, project: Project, token_file: str) -> Launch:
         build_started_in_prompt(project),
         read_system_prompt(config.prompt_file),
         build_members_prompt(config, project),
+        *build_member_prompts(config, project),
     ]
     agent_args = build_agent_args(config, build_system_prompt(parts))
     return Launch(

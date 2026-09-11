@@ -197,6 +197,20 @@ as a second copy of the mechanics, which is how the two came to disagree about a
     from getting a branch of their own.
   - A member's clone sits at the member's own host path inside the sandbox, so a tool that prints
     a path names something the user recognises, and so two members can never collide.
+  - A member's own `.box/config.json` is read for the three things a sandbox has to hold for it:
+    what it needs mounted, the hosts its work reaches, and what an agent has to know about it. Its
+    mounts follow the same declare-and-supply contract, checked in the member itself, and every
+    message names the member so a group of ten says which one is at fault. Its kit is passed
+    alongside the group's, since two kits are one allowlist, and its prompt comes after the section
+    naming the members, headed with the path its clone sits at.
+  - Everything else in a member's config is ignored, its own `repos`, `secret_hosts` and `mcp`
+    included, so a group never nests and reading one is never recursive. A `template` is the one
+    exception and an error: a sandbox runs one image, so the group's has to cover every member.
+  - Mounts reach sbx in one order: the group's own, then each member's in the order `repos` names
+    them, then the `--mount` flags, which are this run's rather than anyone's settings. The same
+    spec twice is passed once, since two groups sharing a member would otherwise ask for one path
+    twice, and one path asked for read-only in one place and writable in another is an error: only
+    one of the two can hold, and picking either silently would surprise whoever asked for the other.
   - Every repository a run can leave work in is read when a sandbox name is picked, and every one
     of them is fetched, checked for uncommitted work and settled before anything is removed. A
     sandbox is only ever removed when all of them came back clean.
