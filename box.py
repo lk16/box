@@ -602,12 +602,22 @@ def build_run_command(sandbox_name: str, agent_args: list[str]) -> list[str]:
 
 def drop_secret(sandbox_name: str) -> None:
     """Remove any stored secret for this sandbox name, ignoring failures."""
-    capture(["sbx", "secret", "rm", sandbox_name, "--host", SECRET_HOST, "-f"])
+    capture(["sbx", "secret", "rm", "--sandbox", sandbox_name, "--host", SECRET_HOST, "-f"])
 
 
 def store_secret(sandbox_name: str, token: str) -> None:
     """Hand the OAuth token to sbx over stdin so it never lands in the shell history."""
-    command = ["sbx", "secret", "set-custom", sandbox_name, "--host", SECRET_HOST, "--env", SECRET_ENV]
+    command = [
+        "sbx",
+        "secret",
+        "set-custom",
+        "--sandbox",
+        sandbox_name,
+        "--host",
+        SECRET_HOST,
+        "--env",
+        SECRET_ENV,
+    ]
     try:
         result = subprocess.run(command, input=token, text=True, check=False)
     except OSError as error:
