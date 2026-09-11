@@ -61,11 +61,21 @@ SECRET_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 # The token path is deliberately the one setting that is not a flag or a config file key.
 TOKEN_FILE_ENV = "CLAUDE_OAUTH_TOKEN_FILE"
 
+# Where this machine keeps the values behind secret_hosts, for the same reason: the environment only.
+SECRETS_FILE_ENV = "BOX_SECRETS_FILE"
+
+# What a shell accepts as a variable name, which is what sbx puts the placeholder in.
+ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# What docker --env-file would keep as part of the value, so box refuses the line instead.
+QUOTES = "\"'"
+
 # What box config shows for a setting nothing was given for, rather than an empty column.
 UNSET = "(unset)"
 
 # Mounts are read-only unless the user opts out, so a sandbox cannot write to the host by accident.
 READ_WRITE_SUFFIX = ":rw"
+READ_ONLY_SUFFIX = ":ro"
 
 # The one flag whose argparse dest is not its own name, since it collects a list of paths.
 MOUNT_FLAG = "--mount"
@@ -151,6 +161,15 @@ TOKEN_FILE_HELP = f"""{TOKEN_FILE_ENV} is not set. Set it up once:
   2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
   3. Export {TOKEN_FILE_ENV} to point at that file, e.g. via direnv."""
 
+SECRETS_FILE_HELP = f"""{{config_file}} declares secret_hosts, but {SECRETS_FILE_ENV} is not set.
+Set it up once:
+  1. Write a file holding one NAME=value line per secret, e.g. ~/.secrets/box.env
+  2. Export {SECRETS_FILE_ENV} to point at that file, e.g. via direnv.
+Keep that file outside every repository and every mount, since the sandbox can read those."""
+
+SECRET_INSIDE_HELP = """{variable} points at {path}, which is inside {directory}.
+The sandbox can read everything there, so the file holding secrets has to sit somewhere else."""
+
 # Sandbox facts that hold for every project, always sent ahead of the project's own prompt file.
 BASE_PROMPT = """You are running unattended in a network-restricted sandbox. Treat the next
 message as your only input from the user -- nobody is available to answer
@@ -199,8 +218,14 @@ permissions:
 # The one config key that is not a setting, so it is the one key whose value is not a string.
 REQUIRED_MOUNTS = "required_mounts"
 
+# What every environment variable the sandbox gets a value for may be sent to, as name to host.
+SECRET_HOSTS = "secret_hosts"
+
+# The config keys holding an object rather than the text of a setting.
+OBJECT_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS)
+
 # What a group of repositories adds to a config, which box gen writes only when asked for a group.
-GROUP_SETTINGS = ("mcp",)
+GROUP_SETTINGS = ("mcp", SECRET_HOSTS)
 
 # How a rejected value is named, so the message spells the type the way the JSON file does.
 JSON_TYPE_NAMES: dict[type, str] = {
@@ -225,6 +250,7 @@ DEFAULTS: dict[str, object] = {
     "template": "",
     "mcp": "",
     REQUIRED_MOUNTS: {},
+    SECRET_HOSTS: {},
 }
 
 # What box gen writes for one project: today's settings, so a config it writes runs on an older box.
@@ -253,12 +279,30 @@ class Config:
     template: str
     mcp: str
     mounts: tuple[str, ...]
+    secret_hosts: tuple[Secret, ...]
+
+
+@dataclass(frozen=True)
+class Secret:
+    """One environment variable the sandbox gets, and the one host its value may be sent to."""
+
+    name: str
+    host: str
+
+
+@dataclass(frozen=True)
+class SecretValue:
+    """One declared secret, and the value this machine holds for it."""
+
+    secret: Secret
+    value: str
 
 
 @dataclass(frozen=True)
 class Project:
-    """The repository sbx clones, and where inside it box was run."""
+    """Where box was run, the repository root sbx clones, and the path from one to the other."""
 
+    working_directory: Path
     root: Path
     started_in: str
 
@@ -269,8 +313,12 @@ class Launch:
 
     project: Project
     sandbox_name: str
-    token: str
+    secrets: tuple[SecretValue, ...]
     agent_args: list[str]
+
+
+# box's own token is a secret like any other, and always the first one a sandbox is given.
+OAUTH_SECRET = Secret(name=SECRET_ENV, host=SECRET_HOST)
 
 
 @dataclass(frozen=True)
@@ -339,10 +387,11 @@ def read_config_file(path: Path) -> dict[str, object]:
     unknown = sorted(set(loaded) - set(DEFAULTS))
     if unknown:
         raise ConfigError(f"{path} has unknown keys: {', '.join(unknown)}")
-    settings = {key: value for key, value in loaded.items() if key != REQUIRED_MOUNTS}
+    settings = {key: value for key, value in loaded.items() if key not in OBJECT_KEYS}
     values: dict[str, object] = dict(as_text_values(path, settings))
-    if REQUIRED_MOUNTS in loaded:
-        values[REQUIRED_MOUNTS] = loaded[REQUIRED_MOUNTS]
+    for key in OBJECT_KEYS:
+        if key in loaded:
+            values[key] = loaded[key]
     return values
 
 
@@ -393,6 +442,28 @@ def order_mounts(required: dict[str, str], provided: dict[str, str]) -> list[str
     return [provided[name] for name in required]
 
 
+def to_secret(name: str, host: str) -> Secret:
+    """Take one declared secret, rejecting a name or a host box could never send a value to."""
+    if not ENVIRONMENT_NAME.fullmatch(name):
+        raise ConfigError(f"{SECRET_HOSTS} name {name} is not a valid environment variable name")
+    # Dropping this sandbox's secrets by host would take box's own token with them.
+    if name == SECRET_ENV:
+        raise ConfigError(f"{SECRET_HOSTS} cannot name {SECRET_ENV}, which carries box's own token")
+    if not host:
+        raise ConfigError(f"{SECRET_HOSTS} gives {name} no host, so there is nowhere its value may go")
+    if host == SECRET_HOST:
+        raise ConfigError(f"{SECRET_HOSTS} cannot name {SECRET_HOST}, which carries box's own token")
+    return Secret(name=name, host=host)
+
+
+def to_secrets(value: object) -> tuple[Secret, ...]:
+    """Normalise the secret_hosts value into the variables the sandbox gets, and where each may go."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{SECRET_HOSTS} must be a JSON object of name to host")
+    declared = as_text_values(Path(CONFIG_FILE), value)
+    return tuple(to_secret(name, host) for name, host in declared.items())
+
+
 def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) -> dict[str, object]:
     """Layer CLI values over file values over defaults; CLI wins."""
     merged = dict(DEFAULTS)
@@ -417,7 +488,7 @@ def to_workspace(mount: str) -> str:
     """Turn a configured mount into an sbx workspace spec, read-only unless :rw was asked for."""
     if mount.endswith(READ_WRITE_SUFFIX):
         return str(resolve_path(mount_path(mount[: -len(READ_WRITE_SUFFIX)])))
-    return f"{resolve_path(mount_path(mount))}:ro"
+    return f"{resolve_path(mount_path(mount))}{READ_ONLY_SUFFIX}"
 
 
 def to_workspaces(mounts: list[str]) -> tuple[str, ...]:
@@ -450,6 +521,7 @@ def build_config(values: dict[str, object], mounts: list[str], working_directory
         template=setting(values, "template"),
         mcp=setting(values, "mcp"),
         mounts=to_workspaces(mounts),
+        secret_hosts=to_secrets(values[SECRET_HOSTS]),
     )
 
 
@@ -498,9 +570,19 @@ def format_value(value: object) -> str:
     return or_unset(str(value))
 
 
-def format_config(config: Config, token_file: str) -> str:
-    """Render the settings in effect, token path included, as aligned key/value lines."""
-    items: dict[str, object] = {TOKEN_FILE_ENV: token_file, **asdict(config)}
+def format_secret(secret: Secret) -> str:
+    """Name one declared secret and the host its value may go to, which is never the value."""
+    return f"{secret.name}->{secret.host}"
+
+
+def format_config(config: Config, token_file: str, secrets_file: str) -> str:
+    """Render the settings in effect, the secret paths included, as aligned key/value lines."""
+    items: dict[str, object] = {
+        TOKEN_FILE_ENV: token_file,
+        SECRETS_FILE_ENV: secrets_file,
+        **asdict(config),
+        SECRET_HOSTS: tuple(format_secret(secret) for secret in config.secret_hosts),
+    }
     width = max(len(key) for key in items)
     lines = [f"  {key.ljust(width)}  {format_value(value)}" for key, value in items.items()]
     return "\n".join(["config in effect:", *lines])
@@ -564,6 +646,57 @@ def read_token(path: Path) -> str:
     return token
 
 
+def is_quoted(value: str) -> bool:
+    """Whether a value is wrapped in matching quotes, which docker would keep as part of it."""
+    if len(value) < 2:
+        return False
+    if value[0] not in QUOTES:
+        return False
+    return value[0] == value[-1]
+
+
+def parse_secrets_file(path: Path, contents: str) -> dict[str, str]:
+    """Read NAME=value lines the way docker --env-file does, so one file can serve both."""
+    values = {}
+    for number, line in enumerate(contents.splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        if not separator:
+            raise ConfigError(f"{path} line {number} is not NAME=value")
+        # An invalid name is what "export NAME=" and a space around the = come out as.
+        if not ENVIRONMENT_NAME.fullmatch(name):
+            raise ConfigError(f"{path} line {number} does not start with a variable name")
+        if is_quoted(value):
+            raise ConfigError(f"{path} line {number} quotes its value, which docker would keep")
+        values[name] = value
+    return values
+
+
+def read_secrets_file(path: Path) -> dict[str, str]:
+    """Read the values behind the declared secrets, which box never prints."""
+    if not path.is_file():
+        raise ConfigError(f"secrets file {path} does not exist")
+    return parse_secrets_file(path, path.read_text())
+
+
+def read_secret_values(secrets: tuple[Secret, ...], secrets_file: str) -> tuple[SecretValue, ...]:
+    """Give every declared secret the value this machine has for it, and nothing else that file holds."""
+    if not secrets:
+        return ()
+    if not secrets_file:
+        raise ConfigError(SECRETS_FILE_HELP.format(config_file=CONFIG_FILE))
+    path = resolve_path(secrets_file)
+    values = read_secrets_file(path)
+    stored = []
+    for secret in secrets:
+        value = values.get(secret.name, "")
+        if not value:
+            raise ConfigError(f"{path} has no value for {secret.name}, which {CONFIG_FILE} declares")
+        stored.append(SecretValue(secret=secret, value=value))
+    return tuple(stored)
+
+
 def read_system_prompt(prompt_file: str) -> str:
     """Read the extra system prompt, or return nothing when no file is configured."""
     if not prompt_file:
@@ -616,7 +749,9 @@ def path_below(root: Path, working_directory: Path) -> str:
 def build_project(working_directory: Path) -> Project:
     """Locate the repository sbx clones, and where inside it this session was started."""
     root = repository_root(working_directory)
-    return Project(root=root, started_in=path_below(root, working_directory))
+    return Project(
+        working_directory=working_directory, root=root, started_in=path_below(root, working_directory)
+    )
 
 
 def clone_path(project: Project) -> str:
@@ -662,30 +797,47 @@ def build_run_command(sandbox_name: str, agent_args: list[str]) -> list[str]:
     return command
 
 
-def drop_secret(sandbox_name: str) -> None:
-    """Remove any stored secret for this sandbox name, ignoring failures."""
-    capture(["sbx", "secret", "rm", "--sandbox", sandbox_name, "--host", SECRET_HOST, "-f"])
+def distinct_hosts(secrets: tuple[Secret, ...]) -> list[str]:
+    """List the hosts this sandbox has secrets for, box's own token host first and each one once."""
+    hosts = [SECRET_HOST]
+    for secret in secrets:
+        if secret.host in hosts:
+            continue
+        hosts.append(secret.host)
+    return hosts
 
 
-def store_secret(sandbox_name: str, token: str) -> None:
-    """Hand the OAuth token to sbx over stdin so it never lands in the shell history."""
-    command = [
+def drop_secrets(secrets: tuple[Secret, ...], sandbox_name: str) -> None:
+    """Remove every stored secret for this sandbox name, ignoring failures."""
+    for host in distinct_hosts(secrets):
+        capture(["sbx", "secret", "rm", "--sandbox", sandbox_name, "--host", host, "-f"])
+
+
+def build_store_command(sandbox_name: str, secret: Secret) -> list[str]:
+    """Assemble the sbx secret invocation, which takes the value on stdin rather than as an argument."""
+    return [
         "sbx",
         "secret",
         "set-custom",
         "--sandbox",
         sandbox_name,
         "--host",
-        SECRET_HOST,
+        secret.host,
         "--env",
-        SECRET_ENV,
+        secret.name,
     ]
+
+
+def store_secret(sandbox_name: str, stored: SecretValue) -> None:
+    """Hand one secret's value to sbx over stdin so it never lands in the shell history."""
     try:
-        result = subprocess.run(command, input=token, text=True, check=False)
+        result = subprocess.run(
+            build_store_command(sandbox_name, stored.secret), input=stored.value, text=True, check=False
+        )
     except OSError as error:
         raise ConfigError(f"could not run sbx: {error}") from error
     if result.returncode != 0:
-        raise ConfigError(f"sbx would not store the OAuth token for {sandbox_name}")
+        raise ConfigError(f"sbx would not store {stored.secret.name} for {sandbox_name}")
 
 
 def print_recovery(project: Project, sandbox_name: str) -> None:
@@ -832,8 +984,10 @@ def build_status_command(project: Project, sandbox_name: str) -> list[str]:
     return ["sbx", "exec", sandbox_name, "git", "-C", str(project.root), "status", "--porcelain"]
 
 
-def cleanup(project: Project, sandbox_name: str) -> None:
+def cleanup(config: Config, launch: Launch) -> None:
     """Pull committed work back, then drop the sandbox unless work would be lost."""
+    project = launch.project
+    sandbox_name = launch.sandbox_name
     remote = f"sandbox-{sandbox_name}"
     # Removal follows, so "I could not tell" must never be read as "there is nothing to lose".
     if not succeeds(["git", "fetch", remote]):
@@ -847,7 +1001,7 @@ def cleanup(project: Project, sandbox_name: str) -> None:
         warn_dirty(project, sandbox_name, status.stdout)
         return
     settle_sandbox_refs(sandbox_name)
-    drop_secret(sandbox_name)
+    drop_secrets(config.secret_hosts, sandbox_name)
     subprocess.run(["sbx", "rm", "--force", sandbox_name], check=False)
 
 
@@ -870,6 +1024,55 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
 def token_file_from_environment() -> str:
     """Read the token path from the environment, which is the only place it comes from."""
     return os.environ.get(TOKEN_FILE_ENV, "")
+
+
+def secrets_file_from_environment() -> str:
+    """Read the secrets path from the environment, for the same reason the token path comes from it."""
+    return os.environ.get(SECRETS_FILE_ENV, "")
+
+
+def mount_target(workspace: str) -> Path:
+    """The host path one sbx workspace spec names, whether the sandbox may write to it or not."""
+    if workspace.endswith(READ_ONLY_SUFFIX):
+        return Path(workspace[: -len(READ_ONLY_SUFFIX)])
+    return Path(workspace)
+
+
+def reachable_paths(config: Config, project: Project) -> list[Path]:
+    """Every host directory the sandbox can read: the repository it clones, and each mount."""
+    return [project.root] + [mount_target(workspace) for workspace in config.mounts]
+
+
+def is_inside(path: Path, directory: Path) -> bool:
+    """Whether a path lies in a directory, symlinks resolved, the directory itself included."""
+    try:
+        path.resolve().relative_to(directory.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def require_secret_outside(variable: str, secret_file: str, reachable: list[Path]) -> None:
+    """Refuse a file of secrets the sandbox could read for itself."""
+    if not secret_file:
+        return
+    path = resolve_path(secret_file)
+    for directory in reachable:
+        if not is_inside(path, directory):
+            continue
+        raise ConfigError(SECRET_INSIDE_HELP.format(variable=variable, path=path, directory=directory))
+
+
+def require_secrets(config: Config, project: Project, token_file: str) -> None:
+    """Refuse secrets the sandbox could read itself, and declarations this machine has no value for."""
+    reachable = reachable_paths(config, project)
+    require_secret_outside(TOKEN_FILE_ENV, token_file, reachable)
+    # An unset BOX_SECRETS_FILE is only missing when the project declares secrets to read from it.
+    if not config.secret_hosts:
+        return
+    secrets_file = secrets_file_from_environment()
+    require_secret_outside(SECRETS_FILE_ENV, secrets_file, reachable)
+    read_secret_values(config.secret_hosts, secrets_file)
 
 
 def require_settings(config: Config) -> None:
@@ -999,30 +1202,31 @@ def require_config_file(working_directory: Path) -> None:
         raise ConfigError(NO_CONFIG_HELP)
 
 
-def require_project(config: Config, working_directory: Path) -> None:
+def require_project(config: Config, project: Project, token_file: str) -> None:
     """Run every check on the settings and the project that does not create anything."""
     # Nothing box does works without these, so they come before anything about this project.
     require_binaries()
     # A first-timer has no settings to be told about yet, so the missing file comes next.
-    require_config_file(working_directory)
+    require_config_file(project.working_directory)
     require_settings(config)
-    require_git_repository(working_directory)
-    require_ignored_local_paths(working_directory)
+    require_git_repository(project.working_directory)
+    require_ignored_local_paths(project.working_directory)
+    require_secrets(config, project, token_file)
 
 
-def prepare_launch(config: Config, token_file: str, working_directory: Path) -> Launch:
+def prepare_launch(config: Config, project: Project, token_file: str) -> Launch:
     """Resolve everything that can still fail before the sandbox exists."""
-    require_project(config, working_directory)
+    require_project(config, project, token_file)
     if not token_file:
         raise ConfigError(TOKEN_FILE_HELP)
-    token = read_token(resolve_path(token_file))
-    project = build_project(working_directory)
+    token = SecretValue(secret=OAUTH_SECRET, value=read_token(resolve_path(token_file)))
+    declared = read_secret_values(config.secret_hosts, secrets_file_from_environment())
     parts = [BASE_PROMPT, build_started_in_prompt(project), read_system_prompt(config.prompt_file)]
     agent_args = build_agent_args(config, build_system_prompt(parts))
     return Launch(
         project=project,
         sandbox_name=pick_name(config.name, taken_names()),
-        token=token,
+        secrets=(token, *declared),
         agent_args=agent_args,
     )
 
@@ -1030,15 +1234,16 @@ def prepare_launch(config: Config, token_file: str, working_directory: Path) -> 
 def run_session(config: Config, launch: Launch) -> int:
     """Create the sandbox, run Claude in it, and clean up afterwards."""
     environment = build_environment(config)
-    # sbx injects the placeholder env var when the sandbox is created, so the secret must exist by then.
-    drop_secret(launch.sandbox_name)
-    store_secret(launch.sandbox_name, launch.token)
+    # sbx injects the placeholder env vars when the sandbox is created, so they must exist by then.
+    drop_secrets(config.secret_hosts, launch.sandbox_name)
+    for stored in launch.secrets:
+        store_secret(launch.sandbox_name, stored)
     create = build_create_command(config, launch.project, launch.sandbox_name)
     # sbx has already said why it failed, and there is no sandbox to run in, clean up or keep.
     if subprocess.run(create, env=environment, check=False).returncode != 0:
         # Two runs can pick one name and the loser drops the winner's secret, which sbx has
         # already injected into the running sandbox, so the winner keeps working regardless.
-        drop_secret(launch.sandbox_name)
+        drop_secrets(config.secret_hosts, launch.sandbox_name)
         print(f"box: sbx create failed, so {launch.sandbox_name} was never started.", file=sys.stderr)
         return 1
     try:
@@ -1046,7 +1251,7 @@ def run_session(config: Config, launch: Launch) -> int:
         result = subprocess.run(command, env=environment, check=False)
         return result.returncode
     finally:
-        cleanup(launch.project, launch.sandbox_name)
+        cleanup(config, launch)
 
 
 def to_flag(key: str) -> str:
@@ -1229,11 +1434,11 @@ def setup_command(command: str, working_directory: Path) -> int:
     return mount_prompt(working_directory)
 
 
-def show_config(config: Config, token_file: str, working_directory: Path) -> int:
+def show_config(config: Config, project: Project, token_file: str) -> int:
     """Print the settings in effect, then run every check a run would make before starting."""
-    print(format_config(config, token_file))
+    print(format_config(config, token_file, secrets_file_from_environment()))
     # The settings are printed first, so a rejected project is read next to what it resolved to.
-    require_project(config, working_directory)
+    require_project(config, project, token_file)
     return 0
 
 
@@ -1373,10 +1578,11 @@ def dispatch(arguments: argparse.Namespace, working_directory: Path) -> int:
         require_no_flags(arguments)
         return setup_command(arguments.command, working_directory)
     config = load_config(arguments, working_directory)
+    project = build_project(working_directory)
     token_file = token_file_from_environment()
     if arguments.command == "config":
-        return show_config(config, token_file, working_directory)
-    launch = prepare_launch(config, token_file, working_directory)
+        return show_config(config, project, token_file)
+    launch = prepare_launch(config, project, token_file)
     return run_session(config, launch)
 
 

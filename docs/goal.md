@@ -82,7 +82,9 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   turns that wipe into a deadlock, EROFS on every file with a mountpoint that cannot be removed.
   The agent answering `mount-prompt` creates it; box never downloads into it. A dependency
   reaches the sandbox by being mounted, not by sitting in the project, because the container gets
-  a clone and a clone has no ignored files.
+  a clone and a clone holds no ignored files. The host repository is another matter: sbx mounts it
+  read-only at `/run/sandbox/source`, ignored files included, so a project directory is no place
+  for a secret even when git never sees it.
 - Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored,
   since it would carry a machine's paths into every clone.
 - `box gen` writes a starter kit at `.box/kit/spec.yaml` and points `kit` at it, since a hand-written
@@ -110,6 +112,23 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   stdout stays nothing but a prompt to hand over.
 - The OAuth token path is the one exception: it comes from `CLAUDE_OAUTH_TOKEN_FILE` and from
   nowhere else, so a shared project config can never point at someone else's credentials.
+  `BOX_SECRETS_FILE` names the values behind `secret_hosts` for the same reason: the config says
+  which variable may reach which host, which is the same everywhere, and the file holding the
+  values is this machine's alone.
+- Neither of those files may sit inside the repository box runs in or inside any mount, symlinks
+  resolved. The sandbox reads the whole repository at `/run/sandbox/source` and every mount at its
+  own path, so a secret kept there is a secret the agent can read for itself, and no scoping by
+  host would help.
+- The values file follows docker's `--env-file` rules, since the same file is what a `docker run`
+  on this host would read. That means the value is everything after the first `=`, verbatim, so box
+  refuses a quoted value rather than handing the quotes to sbx as part of it, and refuses a line
+  docker would reject outright. A rejected line is named by its number and never by its content.
+  Names the config does not declare are ignored, so one file can serve several projects.
+- A secret is scoped to the sandbox and dropped with it, the way the token is, and
+  `CLAUDE_CODE_OAUTH_TOKEN` and `api.anthropic.com` are refused as declarations: secrets are
+  dropped by host, so a project naming either would drop box's own token along with its own.
+- A value reaches sbx on stdin and lives in the sandbox as a placeholder sbx swaps in at its own
+  proxy, so the real value never enters the sandbox and never appears on a command line.
 - Unknown keys in `.box/config.json` are an error, so typos surface immediately.
 - `BASE_PROMPT` stays in `box.py` and holds only what is true of every sandbox. Anything about
   one project belongs in that project's `prompt_file`, and anything about one machine or one host

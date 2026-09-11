@@ -124,11 +124,12 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | `--template REF` | `template` | unset | `sbx` template the sandbox's container image comes from. |
 | `--mcp NAMES` | `mcp` | unset | MCP servers the sandbox may use, comma-separated (see [Read-only tools](#read-only-tools)). |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
+| — | `secret_hosts` | `{}` | Tokens the agent may use, as variable name to host (see [Secrets](#secrets)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
 text, though `"cpus": 4` works as well as `"cpus": "4"`. A `null`, a `true` or a list is an error
-that says which key holds it. `required_mounts` is the one key holding an object.
+that says which key holds it. `required_mounts` and `secret_hosts` are the keys holding an object.
 
 `kit` and `model` have no default. An unset kit would leave the sandbox's network access to whatever
 `sbx` grants, and an unset model would leave the choice to the sandbox's own Claude install, which
@@ -163,6 +164,54 @@ Kubernetes cluster, an error tracker. `sbx mcp add` registers an MCP server on y
 The server runs on the host, under your own access, so registering one is yours to do and box only
 passes the names on to `sbx create --static-mcp`. `sbx mcp ls` shows what this machine has. A name
 `sbx` does not know is a failed create that says so.
+
+## Secrets
+
+An HTTP API the agent reads from — GitLab, Sentry, SigNoz — wants a token. `secret_hosts` says
+which variable carries which token, and the one host it may be sent to:
+
+```json
+{
+  "secret_hosts": {
+    "GITLAB_TOKEN": "gitlab.com",
+    "SIGNOZ_API_KEY": "signoz.example.com"
+  }
+}
+```
+
+The sandbox sees a placeholder in each variable; `sbx` swaps the real value in on its way to that
+host and nowhere else, so the value never enters the sandbox. The kit has to allow the host as well,
+or the request is a 403 before any token is needed.
+
+The values live on your machine, in a file `BOX_SECRETS_FILE` points at:
+
+```sh
+export BOX_SECRETS_FILE=~/.secrets/box.env
+```
+
+```
+# one NAME=value line per secret
+GITLAB_TOKEN=glpat-xxxxxxxxxxxx
+SIGNOZ_API_KEY=xxxxxxxx
+```
+
+Like `CLAUDE_OAUTH_TOKEN_FILE`, it comes from the environment and from nowhere else, and box reads
+it only when the config declares `secret_hosts`. The format is docker's `--env-file`, so the same
+file works with `docker run --env-file`: blank lines and `#` lines are skipped, and the value is
+everything after the first `=`, quotes included. box refuses a line docker would keep quotes from,
+a line that is not `NAME=value`, and a declared name the file has no value for, naming the line
+number but never the value. Names the config does not declare are ignored, so one file can serve
+several projects.
+
+**Keep that file outside every repository and every mount.** The sandbox can read the whole
+repository — sbx mounts it at `/run/sandbox/source`, ignored files and all — and every mount you
+give it, so box refuses to start when either secrets file, symlinks resolved, sits inside one. The
+same goes for `CLAUDE_OAUTH_TOKEN_FILE`.
+
+Secrets are scoped to the sandbox and dropped when it is removed, exactly like the OAuth token. A
+sandbox box keeps because it holds uncommitted work keeps its secrets too. `CLAUDE_CODE_OAUTH_TOKEN`
+and `api.anthropic.com` cannot be declared: dropping secrets by host would take box's own token with
+them.
 
 ## The system prompt
 
@@ -265,6 +314,10 @@ The refusals you are most likely to meet, and what to do about each:
 | `kit is not set` | point `kit` at a kit directory in `.box/config.json` |
 | `model is not set` | fill in a model in `.box/config.json` |
 | `CLAUDE_OAUTH_TOKEN_FILE is not set` | export it, pointing at a file holding a `claude setup-token` token |
+| `BOX_SECRETS_FILE is not set` | export it, pointing at a file of `NAME=value` lines for the declared [secrets](#secrets) |
+| `which is inside` | move the secrets file out of the repository or the mount it names; the sandbox can read both |
+| `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |
+| `quotes its value` | drop the quotes around the value: docker would keep them, so box refuses the line |
 | `has no path on this machine for` | give the mount it lists a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
 | `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 

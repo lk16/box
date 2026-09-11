@@ -31,12 +31,29 @@ def make_config() -> box.Config:
         template="frlg-sandbox:1",
         mcp="postgres,kubernetes",
         mounts=("/cache:ro",),
+        secret_hosts=(),
+    )
+
+
+def write_token(directory: Path) -> Path:
+    """Write a token file beside the repository, which is the only place box accepts one."""
+    outside = directory.parent / f"{directory.name}-secrets"
+    outside.mkdir(exist_ok=True)
+    token = outside / "token"
+    token.write_text("sk-ant-secret\n")
+    return token
+
+
+def make_subfolder_project() -> box.Project:
+    """Build the project a session started one folder below the repository root resolves to."""
+    return box.Project(
+        working_directory=Path("/work/boxes/billing"), root=Path("/work/boxes"), started_in="billing"
     )
 
 
 def make_project(directory: Path) -> box.Project:
     """Build the project a session started at the repository root resolves to."""
-    return box.Project(root=directory, started_in="")
+    return box.Project(working_directory=directory, root=directory, started_in="")
 
 
 def write_box_file(directory: Path, name: str, contents: object) -> Path:
@@ -286,6 +303,181 @@ def test_no_declared_mounts_needs_no_mounts_file() -> None:
 def test_build_config_applies_the_mount_default() -> None:
     config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], Path("/tmp/demo"))
     assert config.mounts == ("/a:ro", "/b")
+
+
+GITLAB = box.Secret(name="GITLAB_TOKEN", host="gitlab.com")
+
+
+def write_secrets_file(directory: Path, contents: str) -> Path:
+    """Write a file of NAME=value lines beside the repository, and return where it landed."""
+    outside = directory.parent / f"{directory.name}-secrets"
+    outside.mkdir(exist_ok=True)
+    path = outside / "box.env"
+    path.write_text(contents)
+    return path
+
+
+def test_read_config_file_keeps_secret_hosts_an_object(tmp_path: Path) -> None:
+    declared = {"GITLAB_TOKEN": "gitlab.com"}
+    path = write_config(tmp_path, {"secret_hosts": declared})
+    assert box.read_config_file(path) == {"secret_hosts": declared}
+
+
+def test_a_declared_secret_names_a_variable_and_its_one_host() -> None:
+    assert box.to_secrets({"GITLAB_TOKEN": "gitlab.com"}) == (GITLAB,)
+
+
+def test_no_declared_secrets_is_no_secrets() -> None:
+    assert box.to_secrets({}) == ()
+
+
+def test_a_secret_name_that_is_no_variable_name_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="not a valid environment variable name"):
+        box.to_secrets({"gitlab token": "gitlab.com"})
+
+
+def test_a_secret_without_a_host_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="no host"):
+        box.to_secrets({"GITLAB_TOKEN": ""})
+
+
+def test_a_secret_that_would_take_box_own_token_variable_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="box's own token"):
+        box.to_secrets({box.SECRET_ENV: "gitlab.com"})
+
+
+def test_a_secret_on_box_own_token_host_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="box's own token"):
+        box.to_secrets({"GITLAB_TOKEN": box.SECRET_HOST})
+
+
+def test_secret_hosts_must_be_an_object() -> None:
+    with pytest.raises(box.ConfigError, match="must be a JSON object"):
+        box.to_secrets(["GITLAB_TOKEN"])
+
+
+def test_load_config_reads_the_declared_secrets(tmp_path: Path) -> None:
+    write_config(tmp_path, {"secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).secret_hosts == (GITLAB,)
+
+
+def test_secret_hosts_is_not_a_flag() -> None:
+    arguments = box.build_parser().parse_args(["run"])
+    assert "secret_hosts" not in vars(arguments)
+
+
+def test_parse_secrets_file_reads_a_name_and_its_value(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\n") == {"GITLAB_TOKEN": "glpat-abc"}
+
+
+def test_parse_secrets_file_keeps_everything_after_the_first_equals(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "A=x=y z\n") == {"A": "x=y z"}
+
+
+def test_parse_secrets_file_skips_blank_lines_and_comments(tmp_path: Path) -> None:
+    contents = "# a comment\n\n   \nA=1\n"
+    assert box.parse_secrets_file(tmp_path, contents) == {"A": "1"}
+
+
+def test_parse_secrets_file_rejects_a_line_that_is_not_a_pair(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 2 is not NAME=value"):
+        box.parse_secrets_file(tmp_path, "A=1\nGITLAB_TOKEN\n")
+
+
+def test_parse_secrets_file_rejects_an_export_line(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 does not start with a variable name"):
+        box.parse_secrets_file(tmp_path, "export A=1\n")
+
+
+def test_parse_secrets_file_rejects_spaces_around_the_equals(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 does not start with a variable name"):
+        box.parse_secrets_file(tmp_path, "A = 1\n")
+
+
+def test_parse_secrets_file_rejects_a_quoted_value(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 quotes its value"):
+        box.parse_secrets_file(tmp_path, "A='glpat-abc'\n")
+
+
+def test_a_rejected_line_never_carries_the_value_it_holds(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError) as rejected:
+        box.parse_secrets_file(tmp_path, 'A="glpat-abc"\n')
+    assert "glpat-abc" not in str(rejected.value)
+
+
+def test_a_value_holding_a_quote_is_kept(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "A=gl'pat\n") == {"A": "gl'pat"}
+
+
+def test_read_secret_values_needs_no_file_without_a_declaration() -> None:
+    assert box.read_secret_values((), "") == ()
+
+
+def test_read_secret_values_gives_every_declared_secret_its_value(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\nOTHER=ignored\n")
+    stored = box.read_secret_values((GITLAB,), str(path))
+    assert stored == (box.SecretValue(secret=GITLAB, value="glpat-abc"),)
+
+
+def test_read_secret_values_says_how_to_set_the_file_up_when_it_is_unset() -> None:
+    with pytest.raises(box.ConfigError, match=box.SECRETS_FILE_ENV):
+        box.read_secret_values((GITLAB,), "")
+
+
+def test_read_secret_values_rejects_a_file_that_is_not_there(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="does not exist"):
+        box.read_secret_values((GITLAB,), str(tmp_path / "nothing.env"))
+
+
+def test_read_secret_values_rejects_a_declared_name_the_file_lacks(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "OTHER=1\n")
+    with pytest.raises(box.ConfigError, match="no value for GITLAB_TOKEN"):
+        box.read_secret_values((GITLAB,), str(path))
+
+
+def test_read_secret_values_rejects_a_declared_name_with_no_value(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "GITLAB_TOKEN=\n")
+    with pytest.raises(box.ConfigError, match="no value for GITLAB_TOKEN"):
+        box.read_secret_values((GITLAB,), str(path))
+
+
+def test_the_sandbox_reads_the_repository_and_every_mount() -> None:
+    config = make_config()
+    project = make_project(Path("/work/demo"))
+    assert box.reachable_paths(config, project) == [Path("/work/demo"), Path("/cache")]
+
+
+def test_a_writable_mount_is_reachable_too() -> None:
+    assert box.mount_target("/scratch") == Path("/scratch")
+
+
+def test_a_secrets_file_outside_everything_the_sandbox_reads_is_accepted() -> None:
+    box.require_secret_outside(box.SECRETS_FILE_ENV, "/secrets/box.env", [Path("/work/demo")])
+
+
+def test_a_secrets_file_in_the_repository_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.SECRETS_FILE_ENV, "/work/demo/.env", [Path("/work/demo")])
+
+
+def test_a_secrets_file_in_a_mount_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.TOKEN_FILE_ENV, "/cache/token", [Path("/work/demo"), Path("/cache")])
+
+
+def test_a_secrets_file_that_is_not_set_is_nowhere() -> None:
+    box.require_secret_outside(box.SECRETS_FILE_ENV, "", [Path("/work/demo")])
+
+
+def test_a_symlink_into_the_repository_is_rejected(tmp_path: Path) -> None:
+    inside = tmp_path / "repo"
+    inside.mkdir()
+    (inside / "box.env").write_text("A=1\n")
+    link = tmp_path / "link.env"
+    link.symlink_to(inside / "box.env")
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.SECRETS_FILE_ENV, str(link), [inside])
 
 
 def test_parse_ref_names_extracts_sandbox_names() -> None:
@@ -586,7 +778,7 @@ def test_store_secret_never_puts_the_token_on_the_command_line(monkeypatch: pyte
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(subprocess, "run", run)
-    box.store_secret("demo-1", "sk-ant-secret")
+    box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
     assert stdin == ["sk-ant-secret"]
     assert "sk-ant-secret" not in " ".join(commands[0])
 
@@ -599,7 +791,7 @@ def test_store_secret_names_the_sandbox_the_host_and_the_variable(monkeypatch: p
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(subprocess, "run", run)
-    box.store_secret("demo-1", "sk-ant-secret")
+    box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
     assert commands[0] == [
         "sbx",
         "secret",
@@ -619,7 +811,7 @@ def test_store_secret_reports_a_missing_sbx(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(box.ConfigError, match="could not run sbx"):
-        box.store_secret("demo-1", "sk-ant-secret")
+        box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
 
 
 def test_store_secret_reports_an_sbx_that_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -627,8 +819,8 @@ def test_store_secret_reports_an_sbx_that_refused(monkeypatch: pytest.MonkeyPatc
         return subprocess.CompletedProcess(args=command, returncode=1)
 
     monkeypatch.setattr(subprocess, "run", run)
-    with pytest.raises(box.ConfigError, match="would not store the OAuth token for demo-1"):
-        box.store_secret("demo-1", "sk-ant-secret")
+    with pytest.raises(box.ConfigError, match="would not store CLAUDE_CODE_OAUTH_TOKEN for demo-1"):
+        box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
 
 
 class FakeSandbox:
@@ -683,7 +875,7 @@ def clean_sandbox() -> FakeSandbox:
 def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     settled = sandbox.commands.index(["settle", "demo-1"])
     assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
 
@@ -691,7 +883,7 @@ def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytes
 def test_cleanup_fetches_from_the_sandbox_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     assert ["git", "fetch", "sandbox-demo-1"] in sandbox.commands
 
 
@@ -700,7 +892,7 @@ def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
 ) -> None:
     sandbox = FakeSandbox(dirty=" M box.py\n", fetch_fails=False, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "uncommitted changes" in capsys.readouterr().err
@@ -711,7 +903,7 @@ def test_cleanup_keeps_the_sandbox_when_the_fetch_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "git fetch sandbox-demo-1 failed" in capsys.readouterr().err
@@ -722,7 +914,7 @@ def test_cleanup_keeps_the_sandbox_when_the_dirty_check_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=True)
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     assert ["settle", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "could not read the sandbox's git status" in capsys.readouterr().err
@@ -733,7 +925,7 @@ def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup(make_project(Path("/work/demo")), "demo-1")
+    box.cleanup(make_config(), make_launch())
     printed = capsys.readouterr().err
     assert "sbx exec demo-1" in printed
     assert "sbx cp demo-1:" in printed
@@ -940,7 +1132,7 @@ def test_load_config_leaves_the_mcp_servers_unset_by_default(tmp_path: Path) -> 
 
 
 def test_format_config_prints_the_mcp_servers() -> None:
-    rendered = box.format_config(make_config(), "/secrets/token")
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
     assert re.search(r"^\s+mcp\s+postgres,kubernetes$", rendered, re.MULTILINE)
 
 
@@ -1123,8 +1315,40 @@ def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.Monk
         return ""
 
     monkeypatch.setattr(box, "capture", capture)
-    box.drop_secret("demo-1")
+    box.drop_secrets((), "demo-1")
     assert commands == [["sbx", "secret", "rm", "--sandbox", "demo-1", "--host", box.SECRET_HOST, "-f"]]
+
+
+def test_drop_secrets_removes_every_host_this_sandbox_has_a_secret_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hosts: list[str] = []
+
+    def capture(command: list[str]) -> str:
+        hosts.append(command[command.index("--host") + 1])
+        return ""
+
+    monkeypatch.setattr(box, "capture", capture)
+    box.drop_secrets((GITLAB, box.Secret(name="SIGNOZ_API_KEY", host="gitlab.com")), "demo-1")
+    assert hosts == [box.SECRET_HOST, "gitlab.com"]
+
+
+def test_store_secret_names_the_sandbox_the_declared_host_and_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    stdin: list[object] = []
+
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        stdin.append(keywords["input"])
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    box.store_secret("demo-1", box.SecretValue(secret=GITLAB, value="glpat-abc"))
+    assert commands[0][-4:] == ["--host", "gitlab.com", "--env", "GITLAB_TOKEN"]
+    assert stdin == ["glpat-abc"]
+    assert "glpat-abc" not in " ".join(commands[0])
 
 
 def test_every_command_box_shells_out_to_is_required() -> None:
@@ -1308,7 +1532,7 @@ def test_prepare_launch_refuses_a_machine_without_sbx(
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
     with pytest.raises(box.ConfigError, match="not on PATH"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_project_with_no_config_is_sent_to_gen(tmp_path: Path) -> None:
@@ -1382,12 +1606,12 @@ def test_sbx_clones_the_working_directory_at_the_root() -> None:
 
 
 def test_sbx_clones_the_root_when_box_ran_below_it() -> None:
-    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    project = make_subfolder_project()
     assert box.clone_path(project) == "/work/boxes"
 
 
 def test_build_create_command_clones_the_root_from_a_subfolder() -> None:
-    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    project = make_subfolder_project()
     command = box.build_create_command(make_config(), project, "demo-1")
     assert command[:4] == ["sbx", "create", "claude", "/work/boxes"]
 
@@ -1397,12 +1621,12 @@ def test_the_prompt_says_nothing_about_a_session_started_at_the_root() -> None:
 
 
 def test_the_prompt_names_the_folder_a_subfolder_session_started_in() -> None:
-    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    project = make_subfolder_project()
     assert "billing" in box.build_started_in_prompt(project)
 
 
 def test_the_status_check_reads_the_clone_at_the_root() -> None:
-    project = box.Project(root=Path("/work/boxes"), started_in="billing")
+    project = make_subfolder_project()
     assert box.build_status_command(project, "demo-1") == [
         "sbx",
         "exec",
@@ -1422,21 +1646,58 @@ def test_prepare_launch_tells_a_subfolder_session_where_it_started(
     subfolder = tmp_path / "billing"
     subfolder.mkdir()
     write_config(subfolder, {})
-    token = tmp_path / "token"
-    token.write_text("sk-ant-secret\n")
+    token = write_token(tmp_path)
     monkeypatch.setattr(box, "taken_names", set)
     config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, subfolder)
-    launch = box.prepare_launch(config, str(token), subfolder)
+    launch = box.prepare_launch(config, box.build_project(subfolder), str(token))
     assert launch.project.root == tmp_path.resolve()
     assert "billing" in launch.agent_args[1]
+
+
+def test_prepare_launch_reads_a_value_for_every_declared_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    token = write_token(tmp_path)
+    secrets = write_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\n")
+    monkeypatch.setenv(box.SECRETS_FILE_ENV, str(secrets))
+    monkeypatch.setattr(box, "taken_names", set)
+    config = config_from_values(
+        {"kit": "registry/kit", "model": "claude-opus-5", "secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}},
+        tmp_path,
+    )
+    launch = box.prepare_launch(config, box.build_project(repository), str(token))
+    assert launch.secrets[0].secret == box.OAUTH_SECRET
+    assert launch.secrets[1] == box.SecretValue(secret=GITLAB, value="glpat-abc")
+
+
+def test_prepare_launch_refuses_a_token_the_sandbox_could_read_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    inside = tmp_path / "token"
+    inside.write_text("sk-ant-secret\n")
+    config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, tmp_path)
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.prepare_launch(config, box.build_project(repository), str(inside))
+
+
+def test_show_config_runs_the_secret_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    monkeypatch.delenv(box.SECRETS_FILE_ENV, raising=False)
+    config = config_from_values(
+        {"kit": "registry/kit", "model": "claude-opus-5", "secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}},
+        tmp_path,
+    )
+    with pytest.raises(box.ConfigError, match=box.SECRETS_FILE_ENV):
+        box.show_config(config, box.build_project(repository), "")
 
 
 def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
-    token = tmp_path / "token"
-    token.write_text("sk-ant-secret\n")
+    token = write_token(tmp_path)
     monkeypatch.setattr(box, "taken_names", lambda: {"demo-1"})
     prompt = tmp_path / "agent.md"
     prompt.write_text("project rules")
@@ -1444,9 +1705,9 @@ def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
         {"name": "demo", "kit": "registry/kit", "model": "claude-opus-5", "prompt_file": str(prompt)},
         tmp_path,
     )
-    launch = box.prepare_launch(config, str(token), repository)
+    launch = box.prepare_launch(config, box.build_project(repository), str(token))
     assert launch.sandbox_name == "demo-2"
-    assert launch.token == "sk-ant-secret"
+    assert launch.secrets == (box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),)
     assert launch.agent_args[0] == "--append-system-prompt"
     assert launch.agent_args[1] == f"{box.BASE_PROMPT}\n\nproject rules"
     assert launch.agent_args[2:] == ["--model", "claude-opus-5"]
@@ -1455,13 +1716,13 @@ def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
 def test_prepare_launch_rejects_a_directory_that_is_not_a_repository(tmp_path: Path) -> None:
     write_config(tmp_path, {})
     with pytest.raises(box.ConfigError, match="not a git repository"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_prepare_launch_rejects_a_repository_with_no_commits(tmp_path: Path) -> None:
     write_config(git_init(tmp_path), {})
     with pytest.raises(box.ConfigError, match="no commits"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
@@ -1512,7 +1773,7 @@ def test_no_mounts_file_needs_no_gitignore_entry(tmp_path: Path) -> None:
 def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.prepare_launch(make_config(), "/secrets/token", repository)
+        box.prepare_launch(make_config(), box.build_project(repository), "/secrets/token")
 
 
 def test_gen_is_a_command() -> None:
@@ -1546,7 +1807,7 @@ def test_show_config_prints_the_settings_and_returns_zero(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     write_config(make_git_repository(tmp_path), {})
-    assert box.show_config(make_config(), "/secrets/token", tmp_path) == 0
+    assert box.show_config(make_config(), box.build_project(tmp_path), "/secrets/token") == 0
     printed = capsys.readouterr().out
     assert "claude-opus-5" in printed
     assert "/secrets/token" in printed
@@ -1556,20 +1817,20 @@ def test_show_config_makes_the_checks_a_run_would(tmp_path: Path) -> None:
     write_config(make_git_repository(tmp_path), {"model": "claude-opus-5"})
     config = config_from_values({"model": "claude-opus-5"}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.show_config(config, "/secrets/token", tmp_path)
+        box.show_config(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_show_config_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.show_config(make_config(), "/secrets/token", repository)
+        box.show_config(make_config(), box.build_project(repository), "/secrets/token")
 
 
 def test_show_config_prints_the_settings_before_rejecting_the_project(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with pytest.raises(box.ConfigError):
-        box.show_config(make_config(), "/secrets/token", tmp_path)
+        box.show_config(make_config(), box.build_project(tmp_path), "/secrets/token")
     assert "claude-opus-5" in capsys.readouterr().out
 
 
@@ -2233,21 +2494,21 @@ def test_append_line_creates_the_file_when_absent(tmp_path: Path) -> None:
 def test_prepare_launch_requires_the_token_environment_variable(tmp_path: Path) -> None:
     write_config(make_git_repository(tmp_path), {})
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(make_config(), "", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "")
 
 
 def test_prepare_launch_requires_a_kit(tmp_path: Path) -> None:
     write_config(tmp_path, {})
     config = config_from_values({}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.prepare_launch(config, "/secrets/token", tmp_path)
+        box.prepare_launch(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_prepare_launch_requires_a_model(tmp_path: Path) -> None:
     write_config(tmp_path, {"kit": "registry/kit"})
     config = config_from_values({"kit": "registry/kit"}, tmp_path)
     with pytest.raises(box.ConfigError, match="model is not set"):
-        box.prepare_launch(config, "/secrets/token", tmp_path)
+        box.prepare_launch(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
@@ -2386,30 +2647,37 @@ def test_format_value_names_an_empty_mount_list() -> None:
 
 
 def test_format_config_leaves_no_line_ending_in_whitespace(tmp_path: Path) -> None:
-    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    rendered = box.format_config(config_from_values({}, tmp_path), "", "")
     assert box.UNSET in rendered
     assert [line for line in rendered.splitlines() if line != line.rstrip()] == []
 
 
 def test_format_config_shows_the_token_path_with_the_settings() -> None:
-    rendered = box.format_config(make_config(), "/secrets/token")
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
     assert box.TOKEN_FILE_ENV in rendered
     assert "/secrets/token" in rendered
     assert "8g" in rendered
 
 
 def test_format_config_prints_the_template() -> None:
-    rendered = box.format_config(make_config(), "/secrets/token")
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
     assert re.search(r"^\s+template\s+frlg-sandbox:1$", rendered, re.MULTILINE)
 
 
 def test_format_config_names_an_unset_template(tmp_path: Path) -> None:
-    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    rendered = box.format_config(config_from_values({}, tmp_path), "", "")
     assert re.search(rf"^\s+template\s+{re.escape(box.UNSET)}$", rendered, re.MULTILINE)
 
 
+def test_format_config_names_each_declared_secret_and_where_it_may_go(tmp_path: Path) -> None:
+    config = config_from_values({"secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}}, tmp_path)
+    rendered = box.format_config(config, "/secrets/token", "/secrets/box.env")
+    assert "GITLAB_TOKEN->gitlab.com" in rendered
+    assert re.search(rf"^\s+{box.SECRETS_FILE_ENV}\s+/secrets/box.env$", rendered, re.MULTILINE)
+
+
 def test_format_config_aligns_every_value_in_one_column() -> None:
-    lines = box.format_config(make_config(), "/secrets/token").splitlines()[1:]
+    lines = box.format_config(make_config(), "/secrets/token", "/secrets/box.env").splitlines()[1:]
     columns = {len(line) - len(line.lstrip().split(" ", 1)[-1].lstrip()) for line in lines}
     assert len(columns) == 1
 
@@ -2515,16 +2783,16 @@ class FakeSession:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for the secret, the cleanup and every sbx call run_session makes."""
 
-        def drop_secret(sandbox_name: str) -> None:
+        def drop_secrets(secrets: tuple[box.Secret, ...], sandbox_name: str) -> None:
             self.steps.append("drop-secret")
 
-        def store_secret(sandbox_name: str, token: str) -> None:
+        def store_secret(sandbox_name: str, stored: box.SecretValue) -> None:
             self.steps.append("store-secret")
 
-        def cleanup(project: box.Project, sandbox_name: str) -> None:
+        def cleanup(config: box.Config, launch: box.Launch) -> None:
             self.steps.append("cleanup")
 
-        monkeypatch.setattr(box, "drop_secret", drop_secret)
+        monkeypatch.setattr(box, "drop_secrets", drop_secrets)
         monkeypatch.setattr(box, "store_secret", store_secret)
         monkeypatch.setattr(box, "cleanup", cleanup)
         monkeypatch.setattr(subprocess, "run", self.run)
@@ -2546,7 +2814,7 @@ def make_launch() -> box.Launch:
     return box.Launch(
         project=make_project(Path("/work/demo")),
         sandbox_name="demo-1",
-        token="sk-ant-secret",
+        secrets=(box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),),
         agent_args=["--model", "claude-opus-5"],
     )
 
@@ -2565,6 +2833,22 @@ def test_run_session_creates_runs_and_cleans_up_in_that_order(monkeypatch: pytes
     session.install(monkeypatch)
     assert box.run_session(make_config(), make_launch()) == 0
     assert session.steps == ["drop-secret", "store-secret", "sbx create", "sbx run", "cleanup"]
+
+
+def test_run_session_stores_every_secret_the_sandbox_gets(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    launch = box.Launch(
+        project=make_project(Path("/work/demo")),
+        sandbox_name="demo-1",
+        secrets=(
+            box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),
+            box.SecretValue(secret=GITLAB, value="glpat-abc"),
+        ),
+        agent_args=[],
+    )
+    box.run_session(make_config(), launch)
+    assert session.steps[:4] == ["drop-secret", "store-secret", "store-secret", "sbx create"]
 
 
 def test_run_session_returns_the_agents_own_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2595,9 +2879,7 @@ def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> P
     make_git_repository(directory)
     (directory / box.GITIGNORE_FILE).write_text(f"{box.MOUNTS_FILE}\n")
     write_config(directory, {"kit": "registry/kit", "model": "claude-opus-5"})
-    token = directory / "token"
-    token.write_text("sk-ant-secret\n")
-    monkeypatch.setenv(box.TOKEN_FILE_ENV, str(token))
+    monkeypatch.setenv(box.TOKEN_FILE_ENV, str(write_token(directory)))
     return directory
 
 
@@ -2668,7 +2950,7 @@ def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(box, "taken_names", set)
     monkeypatch.setattr(box, "run_session", run_session)
     assert call_main(monkeypatch, tmp_path, ["run"]) == 7
-    assert launched[0].token == "sk-ant-secret"
+    assert launched[0].secrets[0].value == "sk-ant-secret"
     assert launched[0].agent_args[-2:] == ["--model", "claude-opus-5"]
 
 
