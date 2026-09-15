@@ -218,7 +218,8 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   `--static-mcp` and nothing more, the way it names a template. Registering one starts a process on
   this host holding the user's own access to a database or a cluster, which is the machine owner's
   call rather than a project's, and box neither registers, checks nor starts one: an unknown name is
-  a failed create, which box already reports.
+  a failed create, which box already reports. The names are a JSON list, and one holding a comma is
+  refused, since sbx takes them all as one comma-separated argument and would split it in two.
 - `box gen` writes a single project's settings and never the keys only a group needs, so a config it
   writes today still runs on a box from before groups existed. It asks one question first -- one
   project or a group -- and only where a config is missing and stdin is a terminal, so it still

@@ -123,15 +123,16 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | `--prompt-file PATH` | `prompt_file` | unset | File added after the built-in prompt. |
 | `--kit REF` | `kit` | — (required) | `sbx` kit holding the sandbox's network policy. |
 | `--template REF` | `template` | unset | `sbx` template the sandbox's container image comes from. |
-| `--mcp NAMES` | `mcp` | unset | MCP servers the sandbox may use, comma-separated (see [Read-only tools](#read-only-tools)). |
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | — | `secret_hosts` | `{}` | Tokens the agent may use, as variable name to host (see [Secrets](#secrets)). |
+| — | `mcp` | `[]` | MCP servers the sandbox may use, as a list of names (see [Read-only tools](#read-only-tools)). |
 | — | `repos` | `{}` | Other repositories this session works on, as path to branch (see [Groups](#groups)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
 text, though `"cpus": 4` works as well as `"cpus": "4"`. A `null`, a `true` or a list is an error
-that says which key holds it. `required_mounts`, `secret_hosts` and `repos` are the keys holding an object.
+that says which key holds it. `required_mounts`, `secret_hosts` and `repos` are the keys holding an
+object, and `mcp` is the one holding a list.
 
 `kit` and `model` have no default. An unset kit would leave the sandbox's network access to whatever
 `sbx` grants, and an unset model would leave the choice to the sandbox's own Claude install, which
@@ -159,13 +160,14 @@ Kubernetes cluster, an error tracker. `sbx mcp add` registers an MCP server on y
 
 ```json
 {
-  "mcp": "postgres,kubernetes"
+  "mcp": ["postgres", "kubernetes"]
 }
 ```
 
 The server runs on the host, under your own access, so registering one is yours to do and box only
 passes the names on to `sbx create --static-mcp`. `sbx mcp ls` shows what this machine has. A name
-`sbx` does not know is a failed create that says so.
+`sbx` does not know is a failed create that says so. A name holding a comma is refused, since `sbx`
+takes every name in one comma-separated argument.
 
 ## Groups
 

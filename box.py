@@ -181,11 +181,14 @@ SECRET_HOSTS = "secret_hosts"
 # The repositories a group works on besides the one box runs in, as path to the branch to start from.
 REPOS = "repos"
 
-# The config keys holding an object rather than the text of a setting.
-OBJECT_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS, REPOS)
+# The MCP servers registered on this host that the sandbox may use, as a list of their names.
+MCP = "mcp"
+
+# The config keys holding an object or a list rather than the text of a setting.
+CONTAINER_KEYS = (REQUIRED_MOUNTS, SECRET_HOSTS, REPOS, MCP)
 
 # What a group of repositories adds to a config, which box gen writes only when asked for a group.
-GROUP_SETTINGS = (REPOS, SECRET_HOSTS, "mcp")
+GROUP_SETTINGS = (REPOS, SECRET_HOSTS, MCP)
 
 SECRETS_FILE_HELP = f"""{{config_file}} declares {SECRET_HOSTS}, but {SECRETS_FILE_ENV} is not set.
 Set it up once:
@@ -291,7 +294,7 @@ DEFAULTS: dict[str, object] = {
     "prompt_file": "",
     "kit": "",
     "template": "",
-    "mcp": "",
+    MCP: [],
     REQUIRED_MOUNTS: {},
     SECRET_HOSTS: {},
     REPOS: {},
@@ -324,7 +327,7 @@ class Config:
     prompt_file: str
     kit: str
     template: str
-    mcp: str
+    mcp: tuple[str, ...]
     mounts: tuple[str, ...]
     secret_hosts: tuple[Secret, ...]
     repos: tuple[Member, ...]
@@ -472,9 +475,9 @@ def read_config_file(path: Path) -> dict[str, object]:
     unknown = sorted(set(loaded) - set(DEFAULTS))
     if unknown:
         raise ConfigError(f"{path} has unknown keys: {', '.join(unknown)}")
-    settings = {key: value for key, value in loaded.items() if key not in OBJECT_KEYS}
+    settings = {key: value for key, value in loaded.items() if key not in CONTAINER_KEYS}
     values: dict[str, object] = dict(as_text_values(path, settings))
-    for key in OBJECT_KEYS:
+    for key in CONTAINER_KEYS:
         if key in loaded:
             values[key] = loaded[key]
     return values
@@ -572,6 +575,25 @@ def to_members(value: object) -> tuple[Member, ...]:
     return tuple(to_member(path, base) for path, base in declared.items())
 
 
+def to_mcp_server(name: object) -> str:
+    """Take one MCP server name, rejecting what sbx could not be handed as that one name."""
+    if not isinstance(name, str):
+        raise ConfigError(f"{MCP} holds {name_of_type(name)}, which is not a server name")
+    if not name:
+        raise ConfigError(f"{MCP} holds an empty server name")
+    # sbx takes every name in one comma-separated argument, so a comma would split this one in two.
+    if "," in name:
+        raise ConfigError(f"{MCP} name {name} holds a comma, which sbx would read as two servers")
+    return name
+
+
+def to_mcp_servers(value: object) -> tuple[str, ...]:
+    """Normalise the mcp value into the registered servers the sandbox may use, in the order listed."""
+    if not isinstance(value, list):
+        raise ConfigError(f"{MCP} must be a JSON list of server names")
+    return tuple(to_mcp_server(name) for name in value)
+
+
 def merge_values(file_values: dict[str, object], cli_values: dict[str, object]) -> dict[str, object]:
     """Layer CLI values over file values over defaults; CLI wins."""
     merged = dict(DEFAULTS)
@@ -647,7 +669,7 @@ def build_config(
         prompt_file=setting(values, "prompt_file"),
         kit=setting(values, "kit"),
         template=setting(values, "template"),
-        mcp=setting(values, "mcp"),
+        mcp=to_mcp_servers(values[MCP]),
         mounts=to_workspaces(mounts),
         secret_hosts=to_secrets(values[SECRET_HOSTS]),
         repos=to_members(values[REPOS]),
@@ -671,7 +693,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-file", metavar="PATH", help="file added to the prompt")
     parser.add_argument("--kit", metavar="REF", help="sbx kit reference")
     parser.add_argument("--template", metavar="REF", help="sbx template the sandbox image comes from")
-    parser.add_argument("--mcp", metavar="NAMES", help="MCP servers sbx mcp add registered, comma-separated")
     parser.add_argument(
         MOUNT_FLAG, dest=MOUNT_DEST, metavar="PATH", action="append", help="read-only workspace, :rw to write"
     )
@@ -954,9 +975,9 @@ def build_create_command(config: Config, project: Project, sandbox_name: str) ->
     # An unset template leaves the image to sbx, which is what almost every project wants.
     if config.template:
         command.extend(["--template", config.template])
-    # The names are the user's own registered servers, so an unset mcp asks sbx for none of them.
+    # The names are the user's own registered servers, so an empty mcp asks sbx for none of them.
     if config.mcp:
-        command.extend(["--static-mcp", config.mcp])
+        command.extend(["--static-mcp", ",".join(config.mcp)])
     return command
 
 

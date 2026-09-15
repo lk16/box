@@ -30,7 +30,7 @@ def make_config() -> box.Config:
         prompt_file="docs/project-prompt.md",
         kit="registry/kit",
         template="frlg-sandbox:1",
-        mcp="postgres,kubernetes",
+        mcp=("postgres", "kubernetes"),
         mounts=("/cache:ro",),
         secret_hosts=(),
         repos=(),
@@ -1186,7 +1186,7 @@ def test_build_create_command_takes_the_template_from_the_config(tmp_path: Path)
 
 
 def test_build_create_command_names_the_mcp_servers_sbx_should_start(tmp_path: Path) -> None:
-    config = config_from_values({"mcp": "postgres,kubernetes"}, tmp_path)
+    config = config_from_values({"mcp": ["postgres", "kubernetes"]}, tmp_path)
     command = box.build_create_command(config, make_project(Path("/work/demo")), "demo-1")
     assert command[-2:] == ["--static-mcp", "postgres,kubernetes"]
 
@@ -1324,25 +1324,39 @@ def test_load_config_leaves_the_template_unset_by_default(tmp_path: Path) -> Non
 
 
 def test_load_config_takes_the_mcp_servers_from_the_config_file(tmp_path: Path) -> None:
-    write_config(tmp_path, {"mcp": "postgres"})
+    write_config(tmp_path, {"mcp": ["postgres", "kubernetes"]})
     arguments = box.build_parser().parse_args(["run"])
-    assert box.load_config(arguments, tmp_path).mcp == "postgres"
-
-
-def test_load_config_lets_the_mcp_flag_win_over_the_file(tmp_path: Path) -> None:
-    write_config(tmp_path, {"mcp": "postgres"})
-    arguments = box.build_parser().parse_args(["run", "--mcp", "kubernetes"])
-    assert box.load_config(arguments, tmp_path).mcp == "kubernetes"
+    assert box.load_config(arguments, tmp_path).mcp == ("postgres", "kubernetes")
 
 
 def test_load_config_leaves_the_mcp_servers_unset_by_default(tmp_path: Path) -> None:
     arguments = box.build_parser().parse_args(["run"])
-    assert box.load_config(arguments, tmp_path).mcp == ""
+    assert box.load_config(arguments, tmp_path).mcp == ()
+
+
+def test_to_mcp_servers_refuses_the_names_as_one_comma_separated_text() -> None:
+    with pytest.raises(box.ConfigError, match="mcp must be a JSON list of server names"):
+        box.to_mcp_servers("postgres,kubernetes")
+
+
+def test_to_mcp_servers_refuses_a_name_that_is_not_text() -> None:
+    with pytest.raises(box.ConfigError, match="mcp holds a number, which is not a server name"):
+        box.to_mcp_servers([5])
+
+
+def test_to_mcp_servers_refuses_an_empty_name() -> None:
+    with pytest.raises(box.ConfigError, match="mcp holds an empty server name"):
+        box.to_mcp_servers([""])
+
+
+def test_to_mcp_servers_refuses_a_name_sbx_would_split_in_two() -> None:
+    with pytest.raises(box.ConfigError, match="postgres,kubernetes holds a comma"):
+        box.to_mcp_servers(["postgres,kubernetes"])
 
 
 def test_format_config_prints_the_mcp_servers() -> None:
     rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
-    assert re.search(r"^\s+mcp\s+postgres,kubernetes$", rendered, re.MULTILINE)
+    assert re.search(r"^\s+mcp\s+postgres kubernetes$", rendered, re.MULTILINE)
 
 
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
@@ -1611,7 +1625,7 @@ def test_a_members_prompt_comes_after_the_section_naming_the_members(tmp_path: P
 
 
 def test_what_a_member_says_about_groups_of_its_own_is_ignored(tmp_path: Path) -> None:
-    values: dict[str, object] = {"repos": {"../other": "main"}, "mcp": "postgres", "secret_hosts": {}}
+    values: dict[str, object] = {"repos": {"../other": "main"}, "mcp": ["postgres"], "secret_hosts": {}}
     settings = make_member_settings(tmp_path, values)
     assert settings == box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
 
@@ -2844,7 +2858,7 @@ class FakeTerminal:
 
 
 def test_the_group_starter_is_the_starter_plus_what_only_a_group_needs() -> None:
-    assert box.GROUP_CONFIG == {**box.STARTER_CONFIG, "repos": {}, "secret_hosts": {}, "mcp": ""}
+    assert box.GROUP_CONFIG == {**box.STARTER_CONFIG, "repos": {}, "secret_hosts": {}, "mcp": []}
 
 
 def test_gen_writes_a_group_config_box_can_read_back(tmp_path: Path) -> None:
