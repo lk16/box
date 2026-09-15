@@ -755,7 +755,7 @@ def test_settle_ref_says_where_the_work_ended_up(
     repository.install(monkeypatch)
     box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     printed = capsys.readouterr().err
-    assert "branch add-retry-logic holds 3 commits" in printed
+    assert f"box: {Path('/work/demo')}: branch add-retry-logic holds 3 commits" in printed
     assert SANDBOX_REF.ref_name in printed
 
 
@@ -774,6 +774,15 @@ def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPat
     box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == [SANDBOX_REF.ref_name]
+
+
+def test_settle_ref_names_the_repository_a_dropped_ref_was_in(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository = FakeRepository(count="0", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
+    repository.install(monkeypatch)
+    box.settle_ref(make_checkout(Path("/work/billing-api")), SANDBOX_REF)
+    assert f"box: {Path('/work/billing-api')}: {SANDBOX_REF.ref_name} held no" in capsys.readouterr().err
 
 
 def test_settle_ref_keeps_the_ref_when_naming_fails(

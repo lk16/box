@@ -1150,24 +1150,26 @@ def delete_ref(checkout: Checkout, ref_name: str) -> None:
 
 def settle_ref(checkout: Checkout, ref: SandboxRef) -> None:
     """Turn one sandbox ref into a branch, drop it when it holds nothing, and keep it otherwise."""
+    # Every member's ref carries the same sandbox name, so only the path tells a group's repositories apart.
+    prefix = f"box: {checkout.path}:"
     count = count_new_commits(checkout, ref.commit)
     if not count:
-        print(f"box: git could not read {ref.ref_name}, so it was kept.", file=sys.stderr)
+        print(f"{prefix} git could not read {ref.ref_name}, so it was kept.", file=sys.stderr)
         return
     if count == "0":
         delete_ref(checkout, ref.ref_name)
-        print(f"box: {ref.ref_name} held no commits, so it was dropped.", file=sys.stderr)
+        print(f"{prefix} {ref.ref_name} held no commits, so it was dropped.", file=sys.stderr)
         return
     suggested = suggest_branch_name(new_commit_subjects(checkout, ref.commit))
     if not suggested:
-        print(f"box: naming a branch failed, so the work stayed on {ref.ref_name}.", file=sys.stderr)
+        print(f"{prefix} naming a branch failed, so the work stayed on {ref.ref_name}.", file=sys.stderr)
         return
     branch = pick_branch_name(suggested, local_branch_names(checkout))
     if not create_branch(checkout, branch, ref.commit):
-        print(f"box: git refused branch {branch}, so the work stayed on {ref.ref_name}.", file=sys.stderr)
+        print(f"{prefix} git refused branch {branch}, so the work stayed on {ref.ref_name}.", file=sys.stderr)
         return
     delete_ref(checkout, ref.ref_name)
-    print(f"box: branch {branch} holds {plural(count, 'commit')} from {ref.ref_name}.", file=sys.stderr)
+    print(f"{prefix} branch {branch} holds {plural(count, 'commit')} from {ref.ref_name}.", file=sys.stderr)
 
 
 def settle_sandbox_refs(checkout: Checkout, sandbox_name: str) -> None:
