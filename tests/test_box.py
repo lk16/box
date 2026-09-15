@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
@@ -29,8 +30,38 @@ def make_config() -> box.Config:
         prompt_file="docs/project-prompt.md",
         kit="registry/kit",
         template="frlg-sandbox:1",
+        mcp=("postgres", "kubernetes"),
         mounts=("/cache:ro",),
+        secret_hosts=(),
+        repos=(),
+        members=(),
     )
+
+
+def write_token(directory: Path) -> Path:
+    """Write a token file beside the repository, which is the only place box accepts one."""
+    outside = directory.parent / f"{directory.name}-secrets"
+    outside.mkdir(exist_ok=True)
+    token = outside / "token"
+    token.write_text("sk-ant-secret\n")
+    return token
+
+
+def make_subfolder_project() -> box.Project:
+    """Build the project a session started one folder below the repository root resolves to."""
+    return box.Project(
+        working_directory=Path("/work/boxes/billing"), root=Path("/work/boxes"), started_in="billing"
+    )
+
+
+def make_checkout(directory: Path) -> box.Checkout:
+    """Build the checkout the repository box runs in resolves to."""
+    return box.Checkout(path=directory, known_commits=box.MAIN_KNOWN)
+
+
+def make_project(directory: Path) -> box.Project:
+    """Build the project a session started at the repository root resolves to."""
+    return box.Project(working_directory=directory, root=directory, started_in="")
 
 
 def write_box_file(directory: Path, name: str, contents: object) -> Path:
@@ -48,7 +79,7 @@ def write_config(directory: Path, values: dict[str, object]) -> Path:
 
 def config_from_values(values: dict[str, object], directory: Path) -> box.Config:
     """Build a config from config file values and no mounts, which come from their own file."""
-    return box.build_config(box.merge_values(values, {}), [], directory)
+    return box.build_config(box.merge_values(values, {}), [], (), directory)
 
 
 def test_to_kebab_case_collapses_separators() -> None:
@@ -202,31 +233,31 @@ def test_mounts_is_not_a_config_key() -> None:
 
 
 def test_read_mounts_file_returns_nothing_when_absent(tmp_path: Path) -> None:
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {}
+    assert box.read_paths_file(tmp_path / box.MOUNTS_FILE) == {}
 
 
 def test_read_mounts_file_reads_the_named_paths(tmp_path: Path) -> None:
     path = write_box_file(tmp_path, box.MOUNTS_FILE, {"cargo": "~/.cargo", "go": "/usr/local/go"})
-    assert box.read_mounts_file(path) == {"cargo": "~/.cargo", "go": "/usr/local/go"}
+    assert box.read_paths_file(path) == {"cargo": "~/.cargo", "go": "/usr/local/go"}
 
 
 def test_read_mounts_file_rejects_a_json_array(tmp_path: Path) -> None:
     path = write_box_file(tmp_path, box.MOUNTS_FILE, ["/cache"])
     with pytest.raises(box.ConfigError, match="must contain a JSON object"):
-        box.read_mounts_file(path)
+        box.read_paths_file(path)
 
 
 def test_read_mounts_file_rejects_broken_json(tmp_path: Path) -> None:
     path = write_box_file(tmp_path, box.MOUNTS_FILE, {})
     path.write_text("{")
     with pytest.raises(box.ConfigError, match="not valid JSON"):
-        box.read_mounts_file(path)
+        box.read_paths_file(path)
 
 
 def test_read_mounts_file_rejects_a_path_that_is_not_a_string(tmp_path: Path) -> None:
     path = write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": None})
     with pytest.raises(box.ConfigError, match="gives cache null, which is not text or a number"):
-        box.read_mounts_file(path)
+        box.read_paths_file(path)
 
 
 def test_as_descriptions_rejects_a_description_that_is_not_text() -> None:
@@ -278,8 +309,411 @@ def test_no_declared_mounts_needs_no_mounts_file() -> None:
 
 
 def test_build_config_applies_the_mount_default() -> None:
-    config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], Path("/tmp/demo"))
+    config = box.build_config(box.merge_values({}, {}), ["/a", "/b:rw"], (), Path("/tmp/demo"))
     assert config.mounts == ("/a:ro", "/b")
+
+
+GITLAB = box.Secret(name="GITLAB_TOKEN", host="gitlab.com")
+
+
+def write_secrets_file(directory: Path, contents: str) -> Path:
+    """Write a file of NAME=value lines beside the repository, and return where it landed."""
+    outside = directory.parent / f"{directory.name}-secrets"
+    outside.mkdir(exist_ok=True)
+    path = outside / "box.env"
+    path.write_text(contents)
+    return path
+
+
+def test_read_config_file_keeps_secret_hosts_an_object(tmp_path: Path) -> None:
+    declared = {"GITLAB_TOKEN": "gitlab.com"}
+    path = write_config(tmp_path, {"secret_hosts": declared})
+    assert box.read_config_file(path) == {"secret_hosts": declared}
+
+
+def test_a_declared_secret_names_a_variable_and_its_one_host() -> None:
+    assert box.to_secrets({"GITLAB_TOKEN": "gitlab.com"}) == (GITLAB,)
+
+
+def test_no_declared_secrets_is_no_secrets() -> None:
+    assert box.to_secrets({}) == ()
+
+
+def test_a_secret_name_that_is_no_variable_name_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="not a valid environment variable name"):
+        box.to_secrets({"gitlab token": "gitlab.com"})
+
+
+def test_a_secret_without_a_host_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="no host"):
+        box.to_secrets({"GITLAB_TOKEN": ""})
+
+
+def test_a_secret_that_would_take_box_own_token_variable_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="box's own token"):
+        box.to_secrets({box.SECRET_ENV: "gitlab.com"})
+
+
+def test_a_secret_on_box_own_token_host_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="box's own token"):
+        box.to_secrets({"GITLAB_TOKEN": box.SECRET_HOST})
+
+
+def test_secret_hosts_must_be_an_object() -> None:
+    with pytest.raises(box.ConfigError, match="must be a JSON object"):
+        box.to_secrets(["GITLAB_TOKEN"])
+
+
+def test_load_config_reads_the_declared_secrets(tmp_path: Path) -> None:
+    write_config(tmp_path, {"secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).secret_hosts == (GITLAB,)
+
+
+def test_secret_hosts_is_not_a_flag() -> None:
+    arguments = box.build_parser().parse_args(["run"])
+    assert "secret_hosts" not in vars(arguments)
+
+
+def test_parse_secrets_file_reads_a_name_and_its_value(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\n") == {"GITLAB_TOKEN": "glpat-abc"}
+
+
+def test_parse_secrets_file_keeps_everything_after_the_first_equals(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "A=x=y z\n") == {"A": "x=y z"}
+
+
+def test_parse_secrets_file_skips_blank_lines_and_comments(tmp_path: Path) -> None:
+    contents = "# a comment\n\n   \nA=1\n"
+    assert box.parse_secrets_file(tmp_path, contents) == {"A": "1"}
+
+
+def test_parse_secrets_file_rejects_a_line_that_is_not_a_pair(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 2 is not NAME=value"):
+        box.parse_secrets_file(tmp_path, "A=1\nGITLAB_TOKEN\n")
+
+
+def test_parse_secrets_file_rejects_an_export_line(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 does not start with a variable name"):
+        box.parse_secrets_file(tmp_path, "export A=1\n")
+
+
+def test_parse_secrets_file_rejects_spaces_around_the_equals(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 does not start with a variable name"):
+        box.parse_secrets_file(tmp_path, "A = 1\n")
+
+
+def test_parse_secrets_file_rejects_a_quoted_value(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="line 1 quotes its value"):
+        box.parse_secrets_file(tmp_path, "A='glpat-abc'\n")
+
+
+def test_a_rejected_line_never_carries_the_value_it_holds(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError) as rejected:
+        box.parse_secrets_file(tmp_path, 'A="glpat-abc"\n')
+    assert "glpat-abc" not in str(rejected.value)
+
+
+def test_a_value_holding_a_quote_is_kept(tmp_path: Path) -> None:
+    assert box.parse_secrets_file(tmp_path, "A=gl'pat\n") == {"A": "gl'pat"}
+
+
+def test_read_secret_values_needs_no_file_without_a_declaration() -> None:
+    assert box.read_secret_values((), "") == ()
+
+
+def test_read_secret_values_gives_every_declared_secret_its_value(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\nOTHER=ignored\n")
+    stored = box.read_secret_values((GITLAB,), str(path))
+    assert stored == (box.SecretValue(secret=GITLAB, value="glpat-abc"),)
+
+
+def test_read_secret_values_says_how_to_set_the_file_up_when_it_is_unset() -> None:
+    with pytest.raises(box.ConfigError, match=box.SECRETS_FILE_ENV):
+        box.read_secret_values((GITLAB,), "")
+
+
+def test_read_secret_values_rejects_a_file_that_is_not_there(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="does not exist"):
+        box.read_secret_values((GITLAB,), str(tmp_path / "nothing.env"))
+
+
+def test_read_secret_values_rejects_a_declared_name_the_file_lacks(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "OTHER=1\n")
+    with pytest.raises(box.ConfigError, match="no value for GITLAB_TOKEN"):
+        box.read_secret_values((GITLAB,), str(path))
+
+
+def test_read_secret_values_rejects_a_declared_name_with_no_value(tmp_path: Path) -> None:
+    path = write_secrets_file(tmp_path, "GITLAB_TOKEN=\n")
+    with pytest.raises(box.ConfigError, match="no value for GITLAB_TOKEN"):
+        box.read_secret_values((GITLAB,), str(path))
+
+
+def test_the_sandbox_reads_the_repository_and_every_mount() -> None:
+    config = make_config()
+    project = make_project(Path("/work/demo"))
+    assert box.reachable_paths(config, project) == [Path("/work/demo"), Path("/cache")]
+
+
+def test_a_writable_mount_is_reachable_too() -> None:
+    assert box.mount_target("/scratch") == Path("/scratch")
+
+
+def test_a_secrets_file_outside_everything_the_sandbox_reads_is_accepted() -> None:
+    box.require_secret_outside(box.SECRETS_FILE_ENV, "/secrets/box.env", [Path("/work/demo")])
+
+
+def test_a_secrets_file_in_the_repository_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.SECRETS_FILE_ENV, "/work/demo/.env", [Path("/work/demo")])
+
+
+def test_a_secrets_file_in_a_mount_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.TOKEN_FILE_ENV, "/cache/token", [Path("/work/demo"), Path("/cache")])
+
+
+def test_a_secrets_file_that_is_not_set_is_nowhere() -> None:
+    box.require_secret_outside(box.SECRETS_FILE_ENV, "", [Path("/work/demo")])
+
+
+def test_a_symlink_into_the_repository_is_rejected(tmp_path: Path) -> None:
+    inside = tmp_path / "repo"
+    inside.mkdir()
+    (inside / "box.env").write_text("A=1\n")
+    link = tmp_path / "link.env"
+    link.symlink_to(inside / "box.env")
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.require_secret_outside(box.SECRETS_FILE_ENV, str(link), [inside])
+
+
+MEMBER = box.Member(
+    name="billing-api",
+    branch="develop",
+    git_origin="https://example.com/billing-api.git",
+    path="../billing-api",
+)
+
+DECLARED: dict[str, object] = {
+    "billing-api": {"branch": "develop", "git_origin": "https://example.com/billing-api.git"}
+}
+
+PLACED = {"billing-api": "../billing-api"}
+
+
+def member_at(path: str) -> box.Member:
+    """Build the member a group declares, kept somewhere else on this machine."""
+    return box.Member(name=MEMBER.name, branch=MEMBER.branch, git_origin=MEMBER.git_origin, path=path)
+
+
+def make_member(directory: Path, name: str) -> Path:
+    """Create a repository with an origin remote, the way a member repository sits on a host."""
+    path = directory / name
+    make_git_repository(path)
+    git(path, ["remote", "add", "origin", f"https://example.com/{name}.git"])
+    return path
+
+
+def make_group_config(directory: Path, members: tuple[box.Member, ...]) -> box.Config:
+    """Build the config of a group working on the given members, none of which brings settings."""
+    settings = tuple(
+        box.MemberSettings(member=member, mounts=(), kit="", prompt_file="") for member in members
+    )
+    return box.build_config(box.merge_values({}, {}), [], settings, directory)
+
+
+def test_a_member_is_declared_by_name_and_placed_by_this_machine() -> None:
+    assert box.to_members(DECLARED, PLACED) == (MEMBER,)
+
+
+def test_members_keep_the_order_they_were_declared_in() -> None:
+    declaration = {"branch": "main", "git_origin": "https://example.com/b.git"}
+    members = box.to_members({"b": declaration, "a": declaration}, {})
+    assert [member.name for member in members] == ["b", "a"]
+
+
+def test_a_member_this_machine_has_not_placed_has_no_path_yet() -> None:
+    assert box.to_members(DECLARED, {})[0].path == ""
+
+
+def test_a_member_without_a_branch_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="gives billing-api no branch"):
+        box.to_members({"billing-api": {"git_origin": "https://example.com/billing-api.git"}}, {})
+
+
+def test_a_member_with_an_empty_git_origin_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="gives billing-api no git_origin"):
+        box.to_members({"billing-api": {"branch": "develop", "git_origin": ""}}, {})
+
+
+def test_a_member_without_a_name_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="no name"):
+        box.to_members({"": {"branch": "main", "git_origin": "https://example.com/a.git"}}, {})
+
+
+def test_a_member_given_as_a_path_and_a_branch_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="gives ../billing-api text, where an object"):
+        box.to_members({"../billing-api": "develop"}, {})
+
+
+def test_a_member_with_a_key_box_does_not_know_is_rejected() -> None:
+    declaration = {"branch": "develop", "git_origin": "https://example.com/billing-api.git", "base": "main"}
+    with pytest.raises(box.ConfigError, match="unknown keys: base"):
+        box.to_members({"billing-api": declaration}, {})
+
+
+def test_repos_must_be_an_object() -> None:
+    with pytest.raises(box.ConfigError, match="must be a JSON object"):
+        box.to_members(["billing-api"], {})
+
+
+def test_load_config_reads_the_members_and_where_this_machine_keeps_them(tmp_path: Path) -> None:
+    write_config(tmp_path, {"repos": DECLARED})
+    write_box_file(tmp_path, box.REPOS_FILE, PLACED)
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).repos == (MEMBER,)
+
+
+def test_a_member_with_no_path_names_the_repos_file_and_the_origin_to_clone(tmp_path: Path) -> None:
+    listed = f"{tmp_path / box.REPOS_FILE} is missing a path for:\n  billing-api: {MEMBER.git_origin}"
+    with pytest.raises(box.ConfigError, match=re.escape(listed)):
+        box.read_repos(tmp_path, DECLARED)
+
+
+def test_a_member_with_an_empty_path_is_rejected(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.REPOS_FILE, {"billing-api": ""})
+    with pytest.raises(box.ConfigError, match="is missing a path for"):
+        box.read_repos(tmp_path, DECLARED)
+
+
+def test_a_path_for_a_member_the_config_does_not_declare_is_rejected(tmp_path: Path) -> None:
+    write_box_file(tmp_path, box.REPOS_FILE, {**PLACED, "typo": "../typo"})
+    with pytest.raises(box.ConfigError, match="does not declare: typo"):
+        box.read_repos(tmp_path, DECLARED)
+
+
+def test_two_members_with_one_origin_are_rejected(tmp_path: Path) -> None:
+    declared = {
+        "api": {"branch": "main", "git_origin": "git@example.com:team/api.git"},
+        "api-worktree": {"branch": "main", "git_origin": "https://example.com/team/api"},
+    }
+    write_box_file(tmp_path, box.REPOS_FILE, {"api": "../api", "api-worktree": "../api-worktree"})
+    with pytest.raises(box.ConfigError, match="gives api and api-worktree one git_origin"):
+        box.read_repos(tmp_path, declared)
+
+
+def test_a_single_project_needs_no_repos_file(tmp_path: Path) -> None:
+    assert box.read_repos(tmp_path, {}) == ()
+
+
+def test_repos_is_not_a_flag() -> None:
+    assert "repos" not in vars(box.build_parser().parse_args(["run"]))
+
+
+def test_format_config_names_each_member_its_branch_and_its_path(tmp_path: Path) -> None:
+    config = make_group_config(tmp_path, (MEMBER,))
+    assert "billing-api@develop->../billing-api" in box.format_config(config, "", "")
+
+
+def test_origins_spelled_for_ssh_scp_and_https_agree() -> None:
+    spellings = [
+        "git@Example.com:team/api.git",
+        "ssh://git@example.com:22/team/api.git",
+        "https://example.com/team/api/",
+        "https://user@example.com/team/api.git",
+    ]
+    assert {box.normalize_origin(spelling) for spelling in spellings} == {"example.com/team/api"}
+
+
+def test_origins_of_two_repositories_differ() -> None:
+    assert box.normalize_origin("git@example.com:team/api.git") != box.normalize_origin(
+        "git@example.com:team/web"
+    )
+
+
+def test_an_origin_keeps_the_case_of_its_path() -> None:
+    assert box.normalize_origin("https://example.com/Team/api") == "example.com/Team/api"
+
+
+def test_a_local_origin_is_compared_as_the_path_it_is() -> None:
+    assert box.normalize_origin("/srv/git/api.git") == "/srv/git/api"
+
+
+def test_a_member_sits_where_the_working_directory_says_it_does(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    assert box.member_path(project.working_directory, MEMBER) == (tmp_path / "billing-api").resolve()
+
+
+def test_a_member_path_expands_a_leading_tilde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert box.member_path(tmp_path, member_at("~/billing-api")) == (tmp_path / "billing-api").resolve()
+
+
+def test_a_member_beside_the_repository_is_accepted(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    box.require_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project)
+
+
+def test_a_member_whose_origin_is_spelled_another_way_is_accepted(tmp_path: Path) -> None:
+    path = make_member(tmp_path, "billing-api")
+    git(path, ["remote", "set-url", "origin", "git@example.com:billing-api.git"])
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    box.require_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project)
+
+
+def test_a_member_that_is_not_there_is_rejected_with_its_full_path(tmp_path: Path) -> None:
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    config = make_group_config(tmp_path / "boxes", (member_at("../nothing"),))
+    full_path = f"{(tmp_path / 'nothing').resolve()}, which is no directory on this machine"
+    with pytest.raises(box.ConfigError, match=re.escape(full_path)):
+        box.require_members(config, project)
+
+
+def test_a_member_that_is_not_a_repository_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "billing-api").mkdir()
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    with pytest.raises(box.ConfigError, match="not a git repository"):
+        box.require_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project)
+
+
+def test_a_member_without_an_origin_remote_is_rejected(tmp_path: Path) -> None:
+    make_git_repository(tmp_path / "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    with pytest.raises(box.ConfigError, match="no origin remote"):
+        box.require_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project)
+
+
+def test_a_member_whose_origin_is_another_repository_is_rejected(tmp_path: Path) -> None:
+    path = make_member(tmp_path, "billing-api")
+    git(path, ["remote", "set-url", "origin", "https://example.com/other.git"])
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    mismatch = f"sits at {path.resolve()}, whose origin is https://example.com/other.git"
+    with pytest.raises(box.ConfigError, match=re.escape(mismatch)):
+        box.require_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project)
+
+
+def test_a_member_inside_the_repository_box_runs_in_is_rejected(tmp_path: Path) -> None:
+    boxes = make_git_repository(tmp_path / "boxes")
+    make_member(boxes, "billing-api")
+    with pytest.raises(box.ConfigError, match="would sit inside"):
+        box.require_members(make_group_config(boxes, (member_at("./billing-api"),)), make_project(boxes))
+
+
+def test_a_mount_holding_a_member_is_rejected(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    settings = (box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file=""),)
+    config = box.build_config(box.merge_values({}, {}), [str(tmp_path)], settings, tmp_path / "boxes")
+    with pytest.raises(box.ConfigError, match="would hand over whole"):
+        box.require_members(config, project)
+
+
+def test_the_sandbox_reads_every_member_too(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    assert (tmp_path / "billing-api").resolve() in box.reachable_paths(config, project)
 
 
 def test_parse_ref_names_extracts_sandbox_names() -> None:
@@ -361,13 +795,13 @@ class FakeRepository:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for everything settle_ref runs against git and Claude."""
 
-        def count_new_commits(commit: str) -> str:
+        def count_new_commits(checkout: box.Checkout, commit: str) -> str:
             return self.count
 
-        def new_commit_subjects(commit: str) -> str:
+        def new_commit_subjects(checkout: box.Checkout, commit: str) -> str:
             return "Add retry logic\n"
 
-        def local_branch_names() -> set[str]:
+        def local_branch_names(checkout: box.Checkout) -> set[str]:
             return self.branches
 
         monkeypatch.setattr(box, "count_new_commits", count_new_commits)
@@ -375,14 +809,18 @@ class FakeRepository:
         monkeypatch.setattr(box, "suggest_branch_name", self.suggest)
         monkeypatch.setattr(box, "local_branch_names", local_branch_names)
         monkeypatch.setattr(box, "create_branch", self.create)
-        monkeypatch.setattr(box, "delete_ref", self.deleted.append)
+
+        def delete_ref(checkout: box.Checkout, ref_name: str) -> None:
+            self.deleted.append(ref_name)
+
+        monkeypatch.setattr(box, "delete_ref", delete_ref)
 
     def suggest(self, subjects: str) -> str:
         """Record what the branch was named after, and answer with the fixed suggestion."""
         self.named_after = subjects
         return self.suggestion
 
-    def create(self, branch: str, commit: str) -> bool:
+    def create(self, checkout: box.Checkout, branch: str, commit: str) -> bool:
         """Create a branch unless this repository was set up to refuse one."""
         if self.refuse_branch:
             return False
@@ -395,7 +833,7 @@ def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.Monk
         count="3", suggestion="add-retry-logic", branches={"main"}, refuse_branch=False
     )
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == [("add-retry-logic", "abc123")]
     assert repository.deleted == [SANDBOX_REF.ref_name]
 
@@ -403,7 +841,7 @@ def test_settle_ref_branches_the_work_and_drops_the_ref(monkeypatch: pytest.Monk
 def test_settle_ref_names_the_branch_after_the_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.named_after == "Add retry logic\n"
 
 
@@ -412,7 +850,7 @@ def test_settle_ref_numbers_a_branch_the_repository_already_has(monkeypatch: pyt
         count="1", suggestion="add-retry-logic", branches={"add-retry-logic"}, refuse_branch=False
     )
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == [("add-retry-logic-2", "abc123")]
 
 
@@ -421,9 +859,9 @@ def test_settle_ref_says_where_the_work_ended_up(
 ) -> None:
     repository = FakeRepository(count="3", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     printed = capsys.readouterr().err
-    assert "branch add-retry-logic holds 3 commits" in printed
+    assert f"box: {Path('/work/demo')}: branch add-retry-logic holds 3 commits" in printed
     assert SANDBOX_REF.ref_name in printed
 
 
@@ -432,16 +870,25 @@ def test_settle_ref_counts_a_single_commit_in_the_singular(
 ) -> None:
     repository = FakeRepository(count="1", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert "holds 1 commit from" in capsys.readouterr().err
 
 
 def test_settle_ref_drops_a_ref_holding_no_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     repository = FakeRepository(count="0", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == [SANDBOX_REF.ref_name]
+
+
+def test_settle_ref_names_the_repository_a_dropped_ref_was_in(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository = FakeRepository(count="0", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
+    repository.install(monkeypatch)
+    box.settle_ref(make_checkout(Path("/work/billing-api")), SANDBOX_REF)
+    assert f"box: {Path('/work/billing-api')}: {SANDBOX_REF.ref_name} held no" in capsys.readouterr().err
 
 
 def test_settle_ref_keeps_the_ref_when_naming_fails(
@@ -449,7 +896,7 @@ def test_settle_ref_keeps_the_ref_when_naming_fails(
 ) -> None:
     repository = FakeRepository(count="2", suggestion="", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == []
     assert SANDBOX_REF.ref_name in capsys.readouterr().err
@@ -459,7 +906,7 @@ def test_settle_ref_keeps_the_ref_when_git_refuses_the_branch(monkeypatch: pytes
     repository = FakeRepository(count="2", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.refuse_branch = True
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.deleted == []
 
 
@@ -468,7 +915,7 @@ def test_settle_ref_keeps_the_ref_when_git_cannot_count_the_commits(
 ) -> None:
     repository = FakeRepository(count="", suggestion="add-retry-logic", branches=set(), refuse_branch=False)
     repository.install(monkeypatch)
-    box.settle_ref(SANDBOX_REF)
+    box.settle_ref(make_checkout(Path("/work/demo")), SANDBOX_REF)
     assert repository.created == []
     assert repository.deleted == []
 
@@ -580,7 +1027,7 @@ def test_store_secret_never_puts_the_token_on_the_command_line(monkeypatch: pyte
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(subprocess, "run", run)
-    box.store_secret("demo-1", "sk-ant-secret")
+    box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
     assert stdin == ["sk-ant-secret"]
     assert "sk-ant-secret" not in " ".join(commands[0])
 
@@ -593,7 +1040,7 @@ def test_store_secret_names_the_sandbox_the_host_and_the_variable(monkeypatch: p
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(subprocess, "run", run)
-    box.store_secret("demo-1", "sk-ant-secret")
+    box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
     assert commands[0] == [
         "sbx",
         "secret",
@@ -613,7 +1060,7 @@ def test_store_secret_reports_a_missing_sbx(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(box.ConfigError, match="could not run sbx"):
-        box.store_secret("demo-1", "sk-ant-secret")
+        box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
 
 
 def test_store_secret_reports_an_sbx_that_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -621,8 +1068,8 @@ def test_store_secret_reports_an_sbx_that_refused(monkeypatch: pytest.MonkeyPatc
         return subprocess.CompletedProcess(args=command, returncode=1)
 
     monkeypatch.setattr(subprocess, "run", run)
-    with pytest.raises(box.ConfigError, match="would not store the OAuth token for demo-1"):
-        box.store_secret("demo-1", "sk-ant-secret")
+    with pytest.raises(box.ConfigError, match="would not store CLAUDE_CODE_OAUTH_TOKEN for demo-1"):
+        box.store_secret("demo-1", box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"))
 
 
 class FakeSandbox:
@@ -637,8 +1084,8 @@ class FakeSandbox:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for everything cleanup runs against git, sbx and the refs."""
 
-        def settle_sandbox_refs(sandbox_name: str) -> None:
-            self.commands.append(["settle", sandbox_name])
+        def settle_sandbox_refs(checkout: box.Checkout, sandbox_name: str) -> None:
+            self.commands.append(["settle", str(checkout.path), sandbox_name])
 
         monkeypatch.setattr(box, "capture", self.capture)
         monkeypatch.setattr(box, "succeeds", self.succeeds)
@@ -677,15 +1124,15 @@ def clean_sandbox() -> FakeSandbox:
 def test_cleanup_settles_the_refs_before_removing_the_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
-    settled = sandbox.commands.index(["settle", "demo-1"])
+    box.cleanup(make_config(), make_launch())
+    settled = sandbox.commands.index(["settle", "/work/demo", "demo-1"])
     assert settled < sandbox.commands.index(["sbx", "rm", "--force", "demo-1"])
 
 
 def test_cleanup_fetches_from_the_sandbox_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = clean_sandbox()
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_config(), make_launch())
     assert ["git", "fetch", "sandbox-demo-1"] in sandbox.commands
 
 
@@ -694,8 +1141,8 @@ def test_cleanup_keeps_the_refs_and_the_sandbox_when_the_tree_is_dirty(
 ) -> None:
     sandbox = FakeSandbox(dirty=" M box.py\n", fetch_fails=False, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
-    assert ["settle", "demo-1"] not in sandbox.commands
+    box.cleanup(make_config(), make_launch())
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "uncommitted changes" in capsys.readouterr().err
 
@@ -705,8 +1152,8 @@ def test_cleanup_keeps_the_sandbox_when_the_fetch_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
-    assert ["settle", "demo-1"] not in sandbox.commands
+    box.cleanup(make_config(), make_launch())
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "git fetch sandbox-demo-1 failed" in capsys.readouterr().err
 
@@ -716,8 +1163,8 @@ def test_cleanup_keeps_the_sandbox_when_the_dirty_check_fails(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=True)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
-    assert ["settle", "demo-1"] not in sandbox.commands
+    box.cleanup(make_config(), make_launch())
+    assert ["settle", "/work/demo", "demo-1"] not in sandbox.commands
     assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
     assert "could not read the sandbox's git status" in capsys.readouterr().err
 
@@ -727,15 +1174,81 @@ def test_cleanup_says_how_to_recover_from_a_sandbox_it_kept(
 ) -> None:
     sandbox = FakeSandbox(dirty="", fetch_fails=True, status_fails=False)
     sandbox.install(monkeypatch)
-    box.cleanup("demo-1")
+    box.cleanup(make_config(), make_launch())
     printed = capsys.readouterr().err
     assert "sbx exec demo-1" in printed
     assert "sbx cp demo-1:" in printed
     assert "sbx rm --force demo-1" in printed
 
 
+def make_group_launch(tmp_path: Path) -> box.Launch:
+    """Build the launch of a group session, whose one member sits beside the repository."""
+    return box.Launch(
+        project=make_project(tmp_path / "boxes"),
+        sandbox_name="demo-1",
+        secrets=(box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),),
+        agent_args=[],
+    )
+
+
+def test_cleanup_brings_every_members_work_back_before_anything_is_removed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sandbox = clean_sandbox()
+    sandbox.install(monkeypatch)
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    box.cleanup(config, make_group_launch(tmp_path))
+    member = str((tmp_path / "billing-api").resolve())
+    bundled = [command for command in sandbox.commands if "bundle" in command]
+    assert bundled[0][:3] == ["sbx", "exec", "demo-1"]
+    assert member in bundled[0]
+    assert ["settle", member, "demo-1"] in sandbox.commands
+    assert sandbox.commands[-1] == ["sbx", "rm", "--force", "demo-1"]
+
+
+def test_cleanup_keeps_the_sandbox_when_a_members_work_cannot_come_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty="", fetch_fails=False, status_fails=False)
+    sandbox.install(monkeypatch)
+    # The main repository's fetch is the one succeeds() call cleanup makes before the members.
+    monkeypatch.setattr(box, "fetch_member_work", lambda checkout, sandbox_name, directory: False)
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    box.cleanup(config, make_group_launch(tmp_path))
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    printed = capsys.readouterr().err
+    assert str((tmp_path / "billing-api").resolve()) in printed
+
+
+def test_cleanup_checks_every_clone_for_uncommitted_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = FakeSandbox(dirty=" M main.go\n", fetch_fails=False, status_fails=False)
+    sandbox.install(monkeypatch)
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    box.cleanup(config, make_group_launch(tmp_path))
+    assert ["sbx", "rm", "--force", "demo-1"] not in sandbox.commands
+    assert str(tmp_path / "boxes") in capsys.readouterr().err
+
+
+def test_taken_names_reads_the_refs_waiting_in_a_member(monkeypatch: pytest.MonkeyPatch) -> None:
+    def capture(command: list[str]) -> str:
+        if command[0] == "sbx":
+            return ""
+        if command[2] == "/work/billing-api":
+            return f"{box.SANDBOX_REFS}/demo-2/wip\n"
+        return ""
+
+    monkeypatch.setattr(box, "capture", capture)
+    checkouts = [
+        make_checkout(Path("/work/boxes")),
+        box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN),
+    ]
+    assert box.taken_names(checkouts) == {"demo-2"}
+
+
 def test_build_create_command_includes_mounts_and_kit() -> None:
-    command = box.build_create_command(make_config(), "demo-1")
+    command = box.build_create_command(make_config(), make_project(Path("/work/demo")), "demo-1")
     assert command == [
         "sbx",
         "create",
@@ -753,23 +1266,41 @@ def test_build_create_command_includes_mounts_and_kit() -> None:
         "registry/kit",
         "--template",
         "frlg-sandbox:1",
+        "--static-mcp",
+        "postgres,kubernetes",
     ]
 
 
 def test_build_create_command_omits_empty_kit(tmp_path: Path) -> None:
-    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    command = box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
     assert "--kit" not in command
 
 
 def test_build_create_command_omits_an_unset_template(tmp_path: Path) -> None:
-    command = box.build_create_command(config_from_values({}, tmp_path), "demo-1")
+    command = box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
     assert "--template" not in command
 
 
 def test_build_create_command_takes_the_template_from_the_config(tmp_path: Path) -> None:
     config = config_from_values({"template": "frlg-sandbox:1"}, tmp_path)
-    command = box.build_create_command(config, "demo-1")
+    command = box.build_create_command(config, make_project(Path("/work/demo")), "demo-1")
     assert command[-2:] == ["--template", "frlg-sandbox:1"]
+
+
+def test_build_create_command_names_the_mcp_servers_sbx_should_start(tmp_path: Path) -> None:
+    config = config_from_values({"mcp": ["postgres", "kubernetes"]}, tmp_path)
+    command = box.build_create_command(config, make_project(Path("/work/demo")), "demo-1")
+    assert command[-2:] == ["--static-mcp", "postgres,kubernetes"]
+
+
+def test_build_create_command_omits_an_unset_mcp(tmp_path: Path) -> None:
+    assert "--static-mcp" not in box.build_create_command(
+        config_from_values({}, tmp_path), make_project(Path("/work/demo")), "demo-1"
+    )
 
 
 def test_build_agent_args_includes_prompt_and_model() -> None:
@@ -801,13 +1332,19 @@ def test_build_environment_sets_disk_limits() -> None:
 
 
 def test_build_system_prompt_is_the_base_prompt_without_a_project_prompt() -> None:
-    assert box.build_system_prompt("") == box.BASE_PROMPT
+    assert box.build_system_prompt([box.BASE_PROMPT]) == box.BASE_PROMPT
 
 
 def test_build_system_prompt_puts_the_project_prompt_last() -> None:
-    combined = box.build_system_prompt("project rules")
+    combined = box.build_system_prompt([box.BASE_PROMPT, "project rules"])
     assert combined.startswith(box.BASE_PROMPT)
     assert combined.endswith("project rules")
+
+
+def test_build_system_prompt_leaves_out_a_part_this_run_has_nothing_for() -> None:
+    assert box.build_system_prompt([box.BASE_PROMPT, "", "project rules"]) == (
+        f"{box.BASE_PROMPT}\n\nproject rules"
+    )
 
 
 def test_read_system_prompt_returns_empty_without_file() -> None:
@@ -892,6 +1429,42 @@ def test_load_config_leaves_the_template_unset_by_default(tmp_path: Path) -> Non
     assert box.load_config(arguments, tmp_path).template == ""
 
 
+def test_load_config_takes_the_mcp_servers_from_the_config_file(tmp_path: Path) -> None:
+    write_config(tmp_path, {"mcp": ["postgres", "kubernetes"]})
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).mcp == ("postgres", "kubernetes")
+
+
+def test_load_config_leaves_the_mcp_servers_unset_by_default(tmp_path: Path) -> None:
+    arguments = box.build_parser().parse_args(["run"])
+    assert box.load_config(arguments, tmp_path).mcp == ()
+
+
+def test_to_mcp_servers_refuses_the_names_as_one_comma_separated_text() -> None:
+    with pytest.raises(box.ConfigError, match="mcp must be a JSON list of server names"):
+        box.to_mcp_servers("postgres,kubernetes")
+
+
+def test_to_mcp_servers_refuses_a_name_that_is_not_text() -> None:
+    with pytest.raises(box.ConfigError, match="mcp holds a number, which is not a server name"):
+        box.to_mcp_servers([5])
+
+
+def test_to_mcp_servers_refuses_an_empty_name() -> None:
+    with pytest.raises(box.ConfigError, match="mcp holds an empty server name"):
+        box.to_mcp_servers([""])
+
+
+def test_to_mcp_servers_refuses_a_name_sbx_would_split_in_two() -> None:
+    with pytest.raises(box.ConfigError, match="postgres,kubernetes holds a comma"):
+        box.to_mcp_servers(["postgres,kubernetes"])
+
+
+def test_format_config_prints_the_mcp_servers() -> None:
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
+    assert re.search(r"^\s+mcp\s+postgres kubernetes$", rendered, re.MULTILINE)
+
+
 def test_load_config_takes_mounts_from_the_mounts_file(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
@@ -971,7 +1544,7 @@ def test_count_new_commits_counts_what_this_checkout_lacks(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.count_new_commits(work) == "2"
+    assert box.count_new_commits(make_checkout(tmp_path), work) == "2"
 
 
 def test_count_new_commits_is_empty_when_git_cannot_read_the_commit(
@@ -979,7 +1552,7 @@ def test_count_new_commits_is_empty_when_git_cannot_read_the_commit(
 ) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.count_new_commits("no-such-commit") == ""
+    assert box.count_new_commits(make_checkout(tmp_path), "no-such-commit") == ""
 
 
 def test_new_commit_subjects_reads_the_subjects_of_what_this_checkout_lacks(
@@ -987,13 +1560,13 @@ def test_new_commit_subjects_reads_the_subjects_of_what_this_checkout_lacks(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.new_commit_subjects(work) == "Add two\nAdd one\n"
+    assert box.new_commit_subjects(make_checkout(tmp_path), work) == "Add two\nAdd one\n"
 
 
 def test_sandbox_refs_finds_what_the_fetch_left(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.sandbox_refs("demo-1") == [
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == [
         box.SandboxRef(ref_name=f"{box.SANDBOX_REFS}/demo-1/main", commit=work)
     ]
 
@@ -1001,7 +1574,7 @@ def test_sandbox_refs_finds_what_the_fetch_left(tmp_path: Path, monkeypatch: pyt
 def test_sandbox_refs_ignores_another_sandboxs_refs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.sandbox_refs("demo-2") == []
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-2") == []
 
 
 def test_create_branch_points_a_branch_at_the_sandboxs_commit(
@@ -1009,14 +1582,14 @@ def test_create_branch_points_a_branch_at_the_sandboxs_commit(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert box.create_branch("add-retry-logic", work)
+    assert box.create_branch(make_checkout(tmp_path), "add-retry-logic", work)
     assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
 
 
 def test_create_branch_says_no_to_a_name_git_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert not box.create_branch("a name with spaces", work)
+    assert not box.create_branch(make_checkout(tmp_path), "a name with spaces", work)
 
 
 def test_local_branch_names_reads_the_branches_this_repository_has(
@@ -1024,15 +1597,15 @@ def test_local_branch_names_reads_the_branches_this_repository_has(
 ) -> None:
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    box.create_branch("add-retry-logic", work)
-    assert "add-retry-logic" in box.local_branch_names()
+    box.create_branch(make_checkout(tmp_path), "add-retry-logic", work)
+    assert "add-retry-logic" in box.local_branch_names(make_checkout(tmp_path))
 
 
 def test_delete_ref_drops_the_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
-    box.delete_ref(f"{box.SANDBOX_REFS}/demo-1/main")
-    assert box.sandbox_refs("demo-1") == []
+    box.delete_ref(make_checkout(tmp_path), f"{box.SANDBOX_REFS}/demo-1/main")
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == []
 
 
 def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
@@ -1041,9 +1614,293 @@ def test_settle_sandbox_refs_puts_a_real_sandboxs_work_on_a_real_branch(
     work = repository_with_sandbox_work(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(box, "suggest_branch_name", lambda subjects: "add-retry-logic")
-    box.settle_sandbox_refs("demo-1")
+    box.settle_sandbox_refs(make_checkout(tmp_path), "demo-1")
     assert git(tmp_path, ["rev-parse", "add-retry-logic"]) == work
-    assert box.sandbox_refs("demo-1") == []
+    assert box.sandbox_refs(make_checkout(tmp_path), "demo-1") == []
+
+
+def make_group(directory: Path, values: dict[str, object]) -> Path:
+    """Create the folder a group's own settings live in, placing its member beside it, and return it."""
+    boxes = make_git_repository(directory / "boxes")
+    write_config(boxes, values)
+    if "repos" in values:
+        write_box_file(boxes, box.REPOS_FILE, PLACED)
+    return boxes
+
+
+def make_member_settings(directory: Path, values: dict[str, object]) -> box.MemberSettings:
+    """Give the member beside a group a box config of its own, and read what it adds."""
+    write_config(make_member(directory, "billing-api"), values)
+    return box.read_member_settings(directory / "boxes", MEMBER)
+
+
+def config_with_member(settings: box.MemberSettings) -> box.Config:
+    """Build the config of a group whose one member brings settings of its own."""
+    values = box.merge_values({"kit": "registry/kit", "model": "claude-opus-5"}, {})
+    return box.build_config(values, [], (settings,), Path("/work/boxes"))
+
+
+def test_a_member_without_a_box_directory_adds_nothing(tmp_path: Path) -> None:
+    make_member(tmp_path, "billing-api")
+    settings = box.read_member_settings(tmp_path / "boxes", MEMBER)
+    assert settings == box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+
+
+def test_a_members_mounts_come_after_the_groups_and_before_the_flags(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    write_config(member, {"required_mounts": {"go": "the Go toolchain"}})
+    write_box_file(member, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    boxes = make_group(tmp_path, {"repos": DECLARED, "required_mounts": {"cache": "the cache"}})
+    write_box_file(boxes, box.MOUNTS_FILE, {"cache": "/cache"})
+    arguments = box.build_parser().parse_args(["run", "--mount", "/extra"])
+    assert box.load_config(arguments, boxes).mounts == ("/cache:ro", "/usr/local/go:ro", "/extra:ro")
+
+
+def test_a_member_mount_with_no_path_names_the_member(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match=re.escape("billing-api: go")):
+        make_member_settings(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
+
+
+def test_a_mount_a_member_never_declared_names_the_member(tmp_path: Path) -> None:
+    write_box_file(make_member(tmp_path, "billing-api"), box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    write_config(tmp_path / "billing-api", {})
+    with pytest.raises(box.ConfigError, match=re.escape("billing-api: go")):
+        box.read_member_settings(tmp_path / "boxes", MEMBER)
+
+
+def test_the_same_mount_twice_is_passed_once() -> None:
+    assert box.to_workspaces(["/cache", "/cache"]) == ("/cache:ro",)
+
+
+def test_a_mount_that_is_read_only_in_one_place_and_writable_in_another_is_rejected() -> None:
+    with pytest.raises(box.ConfigError, match="both /cache:ro and /cache"):
+        box.to_workspaces(["/cache", "/cache:rw"])
+
+
+def test_a_members_kit_is_resolved_against_the_member(tmp_path: Path) -> None:
+    (tmp_path / "billing-api" / box.KIT_DIR).mkdir(parents=True)
+    settings = make_member_settings(tmp_path, {"kit": box.KIT_DIR})
+    assert settings.kit == str(tmp_path / "billing-api" / box.KIT_DIR)
+
+
+def test_a_members_kit_that_is_not_on_disk_is_left_to_sbx(tmp_path: Path) -> None:
+    assert make_member_settings(tmp_path, {"kit": "registry/kit"}).kit == "registry/kit"
+
+
+def test_a_member_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("kind: mixin\n")
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit=str(spec), prompt_file="")
+    with pytest.raises(box.ConfigError, match="billing-api: kit names a file"):
+        box.require_settings(config_with_member(settings))
+
+
+def test_the_create_command_passes_the_groups_kit_and_then_the_members() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="/kits/billing", prompt_file="")
+    config = config_with_member(settings)
+    command = box.build_create_command(config, make_project(Path("/work/boxes")), "demo-1")
+    passed = [command[index + 1] for index, word in enumerate(command) if word == "--kit"]
+    assert passed == ["registry/kit", "/kits/billing"]
+
+
+def test_a_kit_the_group_already_has_is_passed_once() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="registry/kit", prompt_file="")
+    config = config_with_member(settings)
+    assert box.kits(config) == ["registry/kit"]
+
+
+def test_a_member_that_brings_its_own_image_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match="a sandbox runs one image"):
+        make_member_settings(tmp_path, {"template": "frlg-sandbox:1"})
+
+
+def test_a_members_prompt_file_is_resolved_against_the_member(tmp_path: Path) -> None:
+    settings = make_member_settings(tmp_path, {"prompt_file": "docs/agent.md"})
+    assert settings.prompt_file == str(tmp_path / "billing-api" / "docs" / "agent.md")
+
+
+def test_a_members_prompt_comes_after_the_section_naming_the_members(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    (member / "agent.md").write_text("billing rules")
+    write_config(member, {"prompt_file": "agent.md"})
+    boxes = make_group(tmp_path, {"repos": DECLARED})
+    config = box.load_config(box.build_parser().parse_args(["run"]), boxes)
+    prompts = box.build_member_prompts(config, make_project(boxes))
+    assert prompts == [f"{(tmp_path / 'billing-api').resolve()}:\n\nbilling rules"]
+
+
+def test_what_a_member_says_about_groups_of_its_own_is_ignored(tmp_path: Path) -> None:
+    values: dict[str, object] = {"repos": {"../other": "main"}, "mcp": ["postgres"], "secret_hosts": {}}
+    settings = make_member_settings(tmp_path, values)
+    assert settings == box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+
+
+def test_an_unknown_key_in_a_members_config_names_that_file(tmp_path: Path) -> None:
+    with pytest.raises(box.ConfigError, match=re.escape(str(tmp_path / "billing-api" / box.CONFIG_FILE))):
+        make_member_settings(tmp_path, {"nope": 1})
+
+
+def test_a_committable_mounts_file_in_a_member_is_rejected(tmp_path: Path) -> None:
+    member = make_member(tmp_path, "billing-api")
+    write_box_file(member, box.MOUNTS_FILE, {"go": "/usr/local/go"})
+    boxes = make_git_repository(tmp_path / "boxes")
+    config = make_group_config(boxes, (MEMBER,))
+    full_path = f"{(tmp_path / 'billing-api').resolve()}: .box/mounts.json"
+    with pytest.raises(box.ConfigError, match=re.escape(full_path)):
+        box.require_members(config, make_project(boxes))
+
+
+def make_cloned_member(directory: Path, name: str) -> Path:
+    """Create a repository box can really fetch from, by cloning one next to it."""
+    origin = make_git_repository(directory / f"{name}-origin")
+    git(origin, ["branch", "-M", "develop"])
+    path = directory / name
+    subprocess.run(["git", "clone", "-q", str(origin), str(path)], check=True)
+    return path
+
+
+def make_bundle(directory: Path) -> box.Bundle:
+    """Build what a fetched and packed member hands to the commands that clone it."""
+    return box.Bundle(
+        member=MEMBER,
+        path=Path("/work/billing-api"),
+        bundle_file=directory / "1-billing-api.bundle",
+    )
+
+
+def test_bundle_member_packs_what_the_clone_is_made_from(tmp_path: Path) -> None:
+    make_cloned_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    bundles = box.bundle_members(make_group_config(tmp_path / "boxes", (MEMBER,)), project, tmp_path)
+    assert bundles[0].path == (tmp_path / "billing-api").resolve()
+    assert bundles[0].bundle_file.is_file()
+    assert "refs/remotes/origin/develop" in git(
+        tmp_path, ["bundle", "list-heads", str(bundles[0].bundle_file)]
+    )
+
+
+def test_a_member_whose_origin_lacks_the_base_is_rejected(tmp_path: Path) -> None:
+    make_cloned_member(tmp_path, "billing-api")
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    member = box.Member(name="billing-api", branch="nope", git_origin=MEMBER.git_origin, path=MEMBER.path)
+    config = make_group_config(tmp_path / "boxes", (member,))
+    with pytest.raises(box.ConfigError, match="no branch nope on origin"):
+        box.bundle_members(config, project, tmp_path)
+
+
+def test_a_member_box_cannot_fetch_stops_the_run(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    git(path, ["remote", "set-url", "origin", str(tmp_path / "gone")])
+    project = make_project(make_git_repository(tmp_path / "boxes"))
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    with pytest.raises(box.ConfigError, match="git fetch origin failed"):
+        box.bundle_members(config, project, tmp_path)
+
+
+def test_nothing_is_fetched_without_members(tmp_path: Path) -> None:
+    assert box.bundle_members(make_config(), make_project(tmp_path), tmp_path) == []
+
+
+def test_the_clone_commands_copy_the_bundle_and_build_a_clone_from_it(tmp_path: Path) -> None:
+    commands = box.build_clone_commands(make_bundle(tmp_path), "demo-1")
+    inside = "/tmp/1-billing-api.bundle"
+    assert commands[0] == ["sbx", "cp", str(tmp_path / "1-billing-api.bundle"), f"demo-1:{inside}"]
+    assert commands[1] == ["sbx", "exec", "-u", "root", "demo-1", "mkdir", "-p", "/work/billing-api"]
+    assert commands[2][-2:] == ["agent:agent", "/work/billing-api"]
+    assert commands[3] == ["sbx", "exec", "demo-1", "git", "init", "-q", "/work/billing-api"]
+    assert commands[4][-2:] == ["origin", "https://example.com/billing-api.git"]
+    assert commands[5][-2:] == [inside, "refs/remotes/origin/*:refs/remotes/origin/*"]
+    assert commands[6][-4:] == ["-c", "develop", "--track", "origin/develop"]
+
+
+def test_every_path_reaches_sbx_exec_as_an_argument_of_its_own(tmp_path: Path) -> None:
+    for command in box.build_clone_commands(make_bundle(tmp_path), "demo-1"):
+        assert [word for word in command if " " in word] == []
+
+
+def test_clone_member_says_no_when_a_step_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tried: list[list[str]] = []
+
+    def succeeds(command: list[str]) -> bool:
+        tried.append(command)
+        return "mkdir" not in command
+
+    monkeypatch.setattr(box, "succeeds", succeeds)
+    assert not box.clone_member(make_bundle(tmp_path), "demo-1")
+    # The steps after the one that failed are never run, since there is nothing to run them on.
+    assert len(tried) == 2
+
+
+def test_clone_member_says_yes_when_every_step_works(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(box, "succeeds", lambda command: True)
+    assert box.clone_member(make_bundle(tmp_path), "demo-1")
+
+
+def test_the_prompt_says_nothing_about_members_without_any(tmp_path: Path) -> None:
+    assert box.build_members_prompt(make_config(), make_project(tmp_path)) == ""
+
+
+def test_the_prompt_names_each_member_and_what_it_starts_on(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    prompt = box.build_members_prompt(config, project)
+    assert f"{(tmp_path / 'billing-api').resolve()} on develop" in prompt
+    assert "comes back to the host" in prompt
+
+
+def test_the_checkouts_are_the_repository_box_runs_in_and_then_its_members(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "boxes")
+    config = make_group_config(tmp_path / "boxes", (MEMBER,))
+    checkouts = box.build_checkouts(config, project)
+    assert checkouts[0] == box.Checkout(path=(tmp_path / "boxes"), known_commits=box.MAIN_KNOWN)
+    assert checkouts[1].path == (tmp_path / "billing-api").resolve()
+    assert checkouts[1].known_commits == box.MEMBER_KNOWN
+
+
+def test_the_repository_box_runs_in_counts_what_its_checkout_lacks() -> None:
+    assert box.new_commits(make_checkout(Path("/work/demo")), "abc123") == ["abc123", "--not", "HEAD"]
+
+
+def test_a_member_counts_what_none_of_its_origin_branches_hold() -> None:
+    checkout = box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN)
+    assert box.new_commits(checkout, "abc123") == ["abc123", "--not", "--remotes=origin"]
+
+
+def test_a_member_counts_a_commit_its_origin_branches_do_not_hold(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    work = commit_file(path, "one.txt", "Add one")
+    checkout = box.Checkout(path=path, known_commits=box.MEMBER_KNOWN)
+    assert box.count_new_commits(checkout, work) == "1"
+    assert box.new_commit_subjects(checkout, work) == "Add one\n"
+
+
+def test_fetching_a_members_work_bundles_it_inside_and_fetches_it_here(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands: list[list[str]] = []
+
+    def succeeds(command: list[str]) -> bool:
+        commands.append(command)
+        return True
+
+    monkeypatch.setattr(box, "succeeds", succeeds)
+    checkout = box.Checkout(path=Path("/work/billing-api"), known_commits=box.MEMBER_KNOWN)
+    assert box.fetch_member_work(checkout, "demo-1", tmp_path)
+    inside = "/tmp/demo-1-billing-api.bundle"
+    assert commands[0][:4] == ["sbx", "exec", "demo-1", "git"]
+    assert commands[0][-4:] == ["bundle", "create", inside, "--branches"]
+    assert commands[1] == ["sbx", "cp", f"demo-1:{inside}", str(tmp_path / "demo-1-billing-api.bundle")]
+    assert commands[2][-1] == f"+refs/heads/*:{box.SANDBOX_REFS}/demo-1/*"
+
+
+def test_a_members_work_comes_back_to_the_member_itself(tmp_path: Path) -> None:
+    path = make_cloned_member(tmp_path, "billing-api")
+    work = commit_file(path, "one.txt", "Add one")
+    bundle = tmp_path / "work.bundle"
+    git(path, ["bundle", "create", str(bundle), "--branches"])
+    git(path, ["fetch", str(bundle), f"+refs/heads/*:{box.SANDBOX_REFS}/demo-1/*"])
+    checkout = box.Checkout(path=path, known_commits=box.MEMBER_KNOWN)
+    assert box.sandbox_refs(checkout, "demo-1")[0].commit == work
 
 
 def test_taken_names_asks_both_sbx_and_git(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1056,10 +1913,10 @@ def test_taken_names_asks_both_sbx_and_git(monkeypatch: pytest.MonkeyPatch) -> N
         return f"{box.SANDBOX_REFS}/demo-2/main\n"
 
     monkeypatch.setattr(box, "capture", capture)
-    assert box.taken_names() == {"demo-1", "demo-2"}
+    assert box.taken_names([make_checkout(Path("/work/demo"))]) == {"demo-1", "demo-2"}
     assert commands == [
         ["sbx", "ls", "-q"],
-        ["git", "for-each-ref", "--format=%(refname)", box.SANDBOX_REFS],
+        ["git", "-C", "/work/demo", "for-each-ref", "--format=%(refname)", box.SANDBOX_REFS],
     ]
 
 
@@ -1071,8 +1928,40 @@ def test_drop_secret_removes_the_secret_for_one_sandbox(monkeypatch: pytest.Monk
         return ""
 
     monkeypatch.setattr(box, "capture", capture)
-    box.drop_secret("demo-1")
+    box.drop_secrets((), "demo-1")
     assert commands == [["sbx", "secret", "rm", "--sandbox", "demo-1", "--host", box.SECRET_HOST, "-f"]]
+
+
+def test_drop_secrets_removes_every_host_this_sandbox_has_a_secret_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hosts: list[str] = []
+
+    def capture(command: list[str]) -> str:
+        hosts.append(command[command.index("--host") + 1])
+        return ""
+
+    monkeypatch.setattr(box, "capture", capture)
+    box.drop_secrets((GITLAB, box.Secret(name="SIGNOZ_API_KEY", host="gitlab.com")), "demo-1")
+    assert hosts == [box.SECRET_HOST, "gitlab.com"]
+
+
+def test_store_secret_names_the_sandbox_the_declared_host_and_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    stdin: list[object] = []
+
+    def run(command: list[str], **keywords: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        stdin.append(keywords["input"])
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    box.store_secret("demo-1", box.SecretValue(secret=GITLAB, value="glpat-abc"))
+    assert commands[0][-4:] == ["--host", "gitlab.com", "--env", "GITLAB_TOKEN"]
+    assert stdin == ["glpat-abc"]
+    assert "glpat-abc" not in " ".join(commands[0])
 
 
 def test_every_command_box_shells_out_to_is_required() -> None:
@@ -1256,7 +2145,7 @@ def test_prepare_launch_refuses_a_machine_without_sbx(
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
     with pytest.raises(box.ConfigError, match="not on PATH"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_project_with_no_config_is_sent_to_gen(tmp_path: Path) -> None:
@@ -1288,22 +2177,150 @@ def test_a_repository_with_a_commit_is_accepted(tmp_path: Path) -> None:
     box.require_git_repository(make_git_repository(tmp_path))
 
 
+def test_repository_root_finds_the_root_from_a_subfolder(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    subfolder = tmp_path / "services" / "api"
+    subfolder.mkdir(parents=True)
+    assert box.repository_root(subfolder) == tmp_path.resolve()
+
+
+def test_repository_root_is_the_working_directory_outside_a_repository(tmp_path: Path) -> None:
+    assert box.repository_root(tmp_path) == tmp_path
+
+
+def test_path_below_names_the_folder_the_session_started_in() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/boxes/billing")) == "billing"
+
+
+def test_path_below_is_empty_at_the_root_itself() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/boxes")) == ""
+
+
+def test_path_below_is_empty_when_the_working_directory_is_elsewhere() -> None:
+    assert box.path_below(Path("/work/boxes"), Path("/work/other")) == ""
+
+
+def test_build_project_knows_where_a_subfolder_session_started(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    subfolder = tmp_path / "billing"
+    subfolder.mkdir()
+    project = box.build_project(subfolder)
+    assert project.root == tmp_path.resolve()
+    assert project.started_in == "billing"
+
+
+def test_build_project_at_the_root_started_in_nothing(tmp_path: Path) -> None:
+    make_git_repository(tmp_path)
+    assert box.build_project(tmp_path).started_in == ""
+
+
+def test_sbx_clones_the_working_directory_at_the_root() -> None:
+    assert box.clone_path(make_project(Path("/work/demo"))) == "."
+
+
+def test_sbx_clones_the_root_when_box_ran_below_it() -> None:
+    project = make_subfolder_project()
+    assert box.clone_path(project) == "/work/boxes"
+
+
+def test_build_create_command_clones_the_root_from_a_subfolder() -> None:
+    project = make_subfolder_project()
+    command = box.build_create_command(make_config(), project, "demo-1")
+    assert command[:4] == ["sbx", "create", "claude", "/work/boxes"]
+
+
+def test_the_prompt_says_nothing_about_a_session_started_at_the_root() -> None:
+    assert box.build_started_in_prompt(make_project(Path("/work/demo"))) == ""
+
+
+def test_the_prompt_names_the_folder_a_subfolder_session_started_in() -> None:
+    project = make_subfolder_project()
+    assert "billing" in box.build_started_in_prompt(project)
+
+
+def test_the_status_check_reads_the_clone_at_the_root() -> None:
+    project = make_subfolder_project()
+    assert box.build_status_command(project.root, "demo-1") == [
+        "sbx",
+        "exec",
+        "demo-1",
+        "git",
+        "-C",
+        "/work/boxes",
+        "status",
+        "--porcelain",
+    ]
+
+
+def test_prepare_launch_tells_a_subfolder_session_where_it_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    subfolder = tmp_path / "billing"
+    subfolder.mkdir()
+    write_config(subfolder, {})
+    token = write_token(tmp_path)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
+    config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, subfolder)
+    launch = box.prepare_launch(config, box.build_project(subfolder), str(token))
+    assert launch.project.root == tmp_path.resolve()
+    assert "billing" in launch.agent_args[1]
+
+
+def test_prepare_launch_reads_a_value_for_every_declared_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    token = write_token(tmp_path)
+    secrets = write_secrets_file(tmp_path, "GITLAB_TOKEN=glpat-abc\n")
+    monkeypatch.setenv(box.SECRETS_FILE_ENV, str(secrets))
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
+    config = config_from_values(
+        {"kit": "registry/kit", "model": "claude-opus-5", "secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}},
+        tmp_path,
+    )
+    launch = box.prepare_launch(config, box.build_project(repository), str(token))
+    assert launch.secrets[0].secret == box.OAUTH_SECRET
+    assert launch.secrets[1] == box.SecretValue(secret=GITLAB, value="glpat-abc")
+
+
+def test_prepare_launch_refuses_a_token_the_sandbox_could_read_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    inside = tmp_path / "token"
+    inside.write_text("sk-ant-secret\n")
+    config = config_from_values({"kit": "registry/kit", "model": "claude-opus-5"}, tmp_path)
+    with pytest.raises(box.ConfigError, match="can read everything there"):
+        box.prepare_launch(config, box.build_project(repository), str(inside))
+
+
+def test_show_config_runs_the_secret_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    monkeypatch.delenv(box.SECRETS_FILE_ENV, raising=False)
+    config = config_from_values(
+        {"kit": "registry/kit", "model": "claude-opus-5", "secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}},
+        tmp_path,
+    )
+    with pytest.raises(box.ConfigError, match=box.SECRETS_FILE_ENV):
+        box.show_config(config, box.build_project(repository), "")
+
+
 def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
-    token = tmp_path / "token"
-    token.write_text("sk-ant-secret\n")
-    monkeypatch.setattr(box, "taken_names", lambda: {"demo-1"})
+    token = write_token(tmp_path)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: {"demo-1"})
     prompt = tmp_path / "agent.md"
     prompt.write_text("project rules")
     config = config_from_values(
         {"name": "demo", "kit": "registry/kit", "model": "claude-opus-5", "prompt_file": str(prompt)},
         tmp_path,
     )
-    launch = box.prepare_launch(config, str(token), repository)
+    launch = box.prepare_launch(config, box.build_project(repository), str(token))
     assert launch.sandbox_name == "demo-2"
-    assert launch.token == "sk-ant-secret"
+    assert launch.secrets == (box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),)
     assert launch.agent_args[0] == "--append-system-prompt"
     assert launch.agent_args[1] == f"{box.BASE_PROMPT}\n\nproject rules"
     assert launch.agent_args[2:] == ["--model", "claude-opus-5"]
@@ -1312,27 +2329,27 @@ def test_prepare_launch_resolves_a_name_a_token_and_the_agent_args(
 def test_prepare_launch_rejects_a_directory_that_is_not_a_repository(tmp_path: Path) -> None:
     write_config(tmp_path, {})
     with pytest.raises(box.ConfigError, match="not a git repository"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_prepare_launch_rejects_a_repository_with_no_commits(tmp_path: Path) -> None:
     write_config(git_init(tmp_path), {})
     with pytest.raises(box.ConfigError, match="no commits"):
-        box.prepare_launch(make_config(), "/secrets/token", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_gitignored_mounts_file_is_accepted(tmp_path: Path) -> None:
-    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.MOUNTS_FILE}\n"), "")
 
 
 def test_an_ignored_box_directory_covers_the_mounts_file(tmp_path: Path) -> None:
-    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.BOX_DIR}/\n"))
+    box.require_ignored_local_paths(make_repository(tmp_path, f"{box.BOX_DIR}/\n"), "")
 
 
 def test_a_committable_mounts_file_is_rejected(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "*.log\n")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.require_ignored_local_paths(repository)
+        box.require_ignored_local_paths(repository, "")
 
 
 def test_deps_path_follows_xdg_data_home(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1363,13 +2380,13 @@ def test_the_prompt_says_the_sandbox_runs_linux_whatever_this_machine_runs() -> 
 
 def test_no_mounts_file_needs_no_gitignore_entry(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    box.require_ignored_local_paths(tmp_path)
+    box.require_ignored_local_paths(tmp_path, "")
 
 
 def test_prepare_launch_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.prepare_launch(make_config(), "/secrets/token", repository)
+        box.prepare_launch(make_config(), box.build_project(repository), "/secrets/token")
 
 
 def test_gen_is_a_command() -> None:
@@ -1403,7 +2420,7 @@ def test_show_config_prints_the_settings_and_returns_zero(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     write_config(make_git_repository(tmp_path), {})
-    assert box.show_config(make_config(), "/secrets/token", tmp_path) == 0
+    assert box.show_config(make_config(), box.build_project(tmp_path), "/secrets/token") == 0
     printed = capsys.readouterr().out
     assert "claude-opus-5" in printed
     assert "/secrets/token" in printed
@@ -1413,20 +2430,20 @@ def test_show_config_makes_the_checks_a_run_would(tmp_path: Path) -> None:
     write_config(make_git_repository(tmp_path), {"model": "claude-opus-5"})
     config = config_from_values({"model": "claude-opus-5"}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.show_config(config, "/secrets/token", tmp_path)
+        box.show_config(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_show_config_rejects_a_committable_mounts_file(tmp_path: Path) -> None:
     repository = make_repository(tmp_path, "")
     with pytest.raises(box.ConfigError, match="not ignored by git"):
-        box.show_config(make_config(), "/secrets/token", repository)
+        box.show_config(make_config(), box.build_project(repository), "/secrets/token")
 
 
 def test_show_config_prints_the_settings_before_rejecting_the_project(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with pytest.raises(box.ConfigError):
-        box.show_config(make_config(), "/secrets/token", tmp_path)
+        box.show_config(make_config(), box.build_project(tmp_path), "/secrets/token")
     assert "claude-opus-5" in capsys.readouterr().out
 
 
@@ -1854,7 +2871,13 @@ def test_gen_writes_a_config_box_can_read_back(tmp_path: Path) -> None:
 
 
 def test_the_starter_config_is_every_default_but_the_kit_gen_writes() -> None:
-    assert box.STARTER_CONFIG == {**box.DEFAULTS, "kit": box.KIT_DIR}
+    single = {key: value for key, value in box.DEFAULTS.items() if key not in box.GROUP_SETTINGS}
+    single["kit"] = box.KIT_DIR
+    assert single == box.STARTER_CONFIG
+
+
+def test_the_starter_config_holds_nothing_only_a_group_needs() -> None:
+    assert not set(box.STARTER_CONFIG) & set(box.GROUP_SETTINGS)
 
 
 def test_gen_writes_a_starter_kit(tmp_path: Path) -> None:
@@ -1910,7 +2933,95 @@ def test_gen_keeps_an_existing_mounts_file(tmp_path: Path) -> None:
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
     write_config(tmp_path, {"required_mounts": {"cache": "the build cache"}})
     box.generate(tmp_path)
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"cache": "/cache"}
+    assert box.read_paths_file(tmp_path / box.MOUNTS_FILE) == {"cache": "/cache"}
+
+
+class FakeTerminal:
+    """Stand in for the terminal box gen asks its question at, answering from a fixed list."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self.answers = answers
+        self.questions: list[str] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make stdin a terminal, and answer whatever is asked at it."""
+        monkeypatch.setattr(sys, "stdin", self)
+        monkeypatch.setattr(builtins, "input", self.ask)
+
+    def isatty(self) -> bool:
+        """Say there is someone here to ask, which is what box gen goes by."""
+        return True
+
+    def ask(self, question: str) -> str:
+        """Answer the next question, or end the input when there is nothing left to say."""
+        self.questions.append(question)
+        if not self.answers:
+            raise EOFError
+        return self.answers.pop(0)
+
+
+def test_the_group_starter_is_the_starter_plus_what_only_a_group_needs() -> None:
+    assert box.GROUP_CONFIG == {**box.STARTER_CONFIG, "repos": {}, "secret_hosts": {}, "mcp": []}
+
+
+def test_gen_writes_a_group_config_box_can_read_back(tmp_path: Path) -> None:
+    (tmp_path / box.BOX_DIR).mkdir()
+    box.write_starter_config(tmp_path / box.CONFIG_FILE, box.GROUP_CONFIG)
+    assert box.read_config_file(tmp_path / box.CONFIG_FILE) == box.GROUP_CONFIG
+
+
+def test_gen_asks_nothing_where_there_is_nobody_to_ask(tmp_path: Path) -> None:
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+
+
+def test_gen_writes_the_starter_for_one_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    terminal = FakeTerminal(["1"])
+    terminal.install(monkeypatch)
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+    assert "one project" in terminal.questions[0]
+
+
+def test_an_empty_answer_means_one_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeTerminal([""]).install(monkeypatch)
+    box.generate(tmp_path)
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.STARTER_CONFIG
+
+
+def test_gen_writes_the_group_starter_for_a_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeTerminal(["2"]).install(monkeypatch)
+    assert box.generate(tmp_path) == 0
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.GROUP_CONFIG
+    assert "Next:" in capsys.readouterr().out
+
+
+def test_an_answer_box_does_not_know_is_asked_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    terminal = FakeTerminal(["yes", "2"])
+    terminal.install(monkeypatch)
+    box.generate(tmp_path)
+    assert len(terminal.questions) == 2
+    assert json.loads((tmp_path / box.CONFIG_FILE).read_text()) == box.GROUP_CONFIG
+
+
+def test_gen_writes_nothing_when_the_question_is_never_answered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    FakeTerminal([]).install(monkeypatch)
+    assert box.generate(tmp_path) == 1
+    assert not (tmp_path / box.BOX_DIR).exists()
+
+
+def test_gen_asks_nothing_about_a_project_that_already_has_a_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = FakeTerminal([])
+    terminal.install(monkeypatch)
+    write_config(tmp_path, {"memory": "16g"})
+    assert box.generate(tmp_path) == 0
+    assert terminal.questions == []
 
 
 def test_mount_prompt_is_a_command() -> None:
@@ -1986,7 +3097,7 @@ def test_mount_prompt_prints_nothing_without_declared_mounts(
 def test_gen_scaffolds_a_placeholder_for_every_declared_mount(tmp_path: Path) -> None:
     write_config(tmp_path, {"required_mounts": {"go": "the Go toolchain"}})
     box.generate(tmp_path)
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"go": box.MOUNT_PLACEHOLDER}
+    assert box.read_paths_file(tmp_path / box.MOUNTS_FILE) == {"go": box.MOUNT_PLACEHOLDER}
 
 
 def test_gen_adds_declared_names_the_mounts_file_is_missing(tmp_path: Path) -> None:
@@ -1994,7 +3105,7 @@ def test_gen_adds_declared_names_the_mounts_file_is_missing(tmp_path: Path) -> N
     write_config(tmp_path, {"required_mounts": declared})
     write_box_file(tmp_path, box.MOUNTS_FILE, {"go": "/usr/local/go"})
     box.generate(tmp_path)
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {
+    assert box.read_paths_file(tmp_path / box.MOUNTS_FILE) == {
         "go": "/usr/local/go",
         "cargo": box.MOUNT_PLACEHOLDER,
     }
@@ -2004,7 +3115,7 @@ def test_gen_leaves_an_undeclared_name_for_box_to_reject(tmp_path: Path) -> None
     write_config(tmp_path, {"required_mounts": {}})
     write_box_file(tmp_path, box.MOUNTS_FILE, {"typo": "/cache"})
     box.generate(tmp_path)
-    assert box.read_mounts_file(tmp_path / box.MOUNTS_FILE) == {"typo": "/cache"}
+    assert box.read_paths_file(tmp_path / box.MOUNTS_FILE) == {"typo": "/cache"}
 
 
 def test_gen_warns_about_every_placeholder_it_wrote(
@@ -2022,6 +3133,39 @@ def test_gen_is_silent_when_nothing_needs_filling_in(
     assert capsys.readouterr().err == ""
 
 
+def test_gen_gives_every_declared_member_an_empty_path(tmp_path: Path) -> None:
+    write_config(tmp_path, {"repos": DECLARED})
+    box.generate(tmp_path)
+    assert box.read_paths_file(tmp_path / box.REPOS_FILE) == {"billing-api": ""}
+
+
+def test_gen_keeps_a_members_path_already_filled_in(tmp_path: Path) -> None:
+    write_config(tmp_path, {"repos": DECLARED})
+    write_box_file(tmp_path, box.REPOS_FILE, PLACED)
+    box.generate(tmp_path)
+    assert box.read_paths_file(tmp_path / box.REPOS_FILE) == PLACED
+
+
+def test_gen_names_each_member_still_needing_a_path_and_where_to_clone_it_from(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, {"repos": DECLARED})
+    box.generate(tmp_path)
+    assert "billing-api: https://example.com/billing-api.git" in capsys.readouterr().err
+
+
+def test_gen_writes_no_repos_file_for_one_project(tmp_path: Path) -> None:
+    box.generate(tmp_path)
+    assert not (tmp_path / box.REPOS_FILE).exists()
+
+
+def test_a_committable_repos_file_is_rejected(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path, f"{box.MOUNTS_FILE}\n")
+    write_box_file(repository, box.REPOS_FILE, PLACED)
+    with pytest.raises(box.ConfigError, match="repos.json is not ignored by git"):
+        box.require_ignored_local_paths(repository, "")
+
+
 def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
     (tmp_path / box.BOX_DIR).mkdir()
     assert box.generate(tmp_path) == 0
@@ -2030,14 +3174,14 @@ def test_gen_accepts_an_existing_box_directory(tmp_path: Path) -> None:
 def test_gen_leaves_a_project_box_will_run_in(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
-    box.require_ignored_local_paths(tmp_path)
+    box.require_ignored_local_paths(tmp_path, "")
 
 
 def test_gen_creates_a_gitignore_holding_every_local_path(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     box.generate(tmp_path)
     written = (tmp_path / box.GITIGNORE_FILE).read_text()
-    assert written == f"{box.MOUNTS_FILE}\n"
+    assert written == f"{box.MOUNTS_FILE}\n{box.REPOS_FILE}\n"
 
 
 def test_gen_writes_no_gitignore_outside_a_repository(tmp_path: Path) -> None:
@@ -2058,7 +3202,7 @@ def test_gen_keeps_what_the_gitignore_already_held(tmp_path: Path) -> None:
     (tmp_path / box.GITIGNORE_FILE).write_text("*.log\n")
     box.generate(tmp_path)
     written = (tmp_path / box.GITIGNORE_FILE).read_text()
-    assert written == f"*.log\n{box.MOUNTS_FILE}\n"
+    assert written == f"*.log\n{box.MOUNTS_FILE}\n{box.REPOS_FILE}\n"
 
 
 def test_gen_leaves_an_already_ignored_gitignore_alone(tmp_path: Path) -> None:
@@ -2084,21 +3228,21 @@ def test_append_line_creates_the_file_when_absent(tmp_path: Path) -> None:
 def test_prepare_launch_requires_the_token_environment_variable(tmp_path: Path) -> None:
     write_config(make_git_repository(tmp_path), {})
     with pytest.raises(box.ConfigError, match="CLAUDE_OAUTH_TOKEN_FILE is not set"):
-        box.prepare_launch(make_config(), "", tmp_path)
+        box.prepare_launch(make_config(), box.build_project(tmp_path), "")
 
 
 def test_prepare_launch_requires_a_kit(tmp_path: Path) -> None:
     write_config(tmp_path, {})
     config = config_from_values({}, tmp_path)
     with pytest.raises(box.ConfigError, match="kit is not set"):
-        box.prepare_launch(config, "/secrets/token", tmp_path)
+        box.prepare_launch(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_prepare_launch_requires_a_model(tmp_path: Path) -> None:
     write_config(tmp_path, {"kit": "registry/kit"})
     config = config_from_values({"kit": "registry/kit"}, tmp_path)
     with pytest.raises(box.ConfigError, match="model is not set"):
-        box.prepare_launch(config, "/secrets/token", tmp_path)
+        box.prepare_launch(config, box.build_project(tmp_path), "/secrets/token")
 
 
 def test_a_kit_naming_a_file_is_rejected(tmp_path: Path) -> None:
@@ -2147,7 +3291,8 @@ def test_every_config_key_is_snake_case() -> None:
 def test_config_keys_match_the_config_fields() -> None:
     config = config_from_values({}, Path("/tmp/demo"))
     settings = set(box.DEFAULTS) - {"required_mounts"}
-    assert set(vars(config)) == settings | {"mounts"}
+    # mounts and members are what the two files this machine owns resolve to, so neither is a key.
+    assert set(vars(config)) == settings | {"mounts", "members"}
 
 
 def test_flags_use_the_config_keys_with_hyphens() -> None:
@@ -2165,14 +3310,13 @@ def test_plural_makes_every_other_count_plural() -> None:
     assert box.plural("0", "commit") == "0 commits"
 
 
-def test_resolve_mounts_takes_the_extra_mounts_as_a_list(tmp_path: Path) -> None:
+def test_own_mounts_answers_the_declaration_of_the_directory_box_runs_in(tmp_path: Path) -> None:
     write_box_file(tmp_path, box.MOUNTS_FILE, {"cache": "/cache"})
-    required = {"cache": "the build cache"}
-    assert box.resolve_mounts(["/other"], tmp_path, required) == ["/cache", "/other"]
+    assert box.own_mounts(tmp_path, {"cache": "the build cache"}) == ["/cache"]
 
 
-def test_resolve_mounts_needs_no_extra_mounts(tmp_path: Path) -> None:
-    assert box.resolve_mounts([], tmp_path, {}) == []
+def test_own_mounts_is_empty_without_a_declaration(tmp_path: Path) -> None:
+    assert box.own_mounts(tmp_path, {}) == []
 
 
 def test_read_required_mounts_reads_the_declaration(tmp_path: Path) -> None:
@@ -2237,30 +3381,48 @@ def test_format_value_names_an_empty_mount_list() -> None:
 
 
 def test_format_config_leaves_no_line_ending_in_whitespace(tmp_path: Path) -> None:
-    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    rendered = box.format_config(config_from_values({}, tmp_path), "", "")
     assert box.UNSET in rendered
     assert [line for line in rendered.splitlines() if line != line.rstrip()] == []
 
 
 def test_format_config_shows_the_token_path_with_the_settings() -> None:
-    rendered = box.format_config(make_config(), "/secrets/token")
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
     assert box.TOKEN_FILE_ENV in rendered
     assert "/secrets/token" in rendered
     assert "8g" in rendered
 
 
 def test_format_config_prints_the_template() -> None:
-    rendered = box.format_config(make_config(), "/secrets/token")
+    rendered = box.format_config(make_config(), "/secrets/token", "/secrets/box.env")
     assert re.search(r"^\s+template\s+frlg-sandbox:1$", rendered, re.MULTILINE)
 
 
 def test_format_config_names_an_unset_template(tmp_path: Path) -> None:
-    rendered = box.format_config(config_from_values({}, tmp_path), "")
+    rendered = box.format_config(config_from_values({}, tmp_path), "", "")
     assert re.search(rf"^\s+template\s+{re.escape(box.UNSET)}$", rendered, re.MULTILINE)
 
 
+def test_format_config_names_each_declared_secret_and_where_it_may_go(tmp_path: Path) -> None:
+    config = config_from_values({"secret_hosts": {"GITLAB_TOKEN": "gitlab.com"}}, tmp_path)
+    rendered = box.format_config(config, "/secrets/token", "/secrets/box.env")
+    assert "GITLAB_TOKEN->gitlab.com" in rendered
+    assert re.search(rf"^\s+{box.SECRETS_FILE_ENV}\s+/secrets/box.env$", rendered, re.MULTILINE)
+
+
+def test_format_config_names_what_a_member_brings_of_its_own() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=("/usr/local/go",), kit="", prompt_file="")
+    rendered = box.format_config(config_with_member(settings), "", "")
+    assert "billing-api: /usr/local/go" in rendered
+
+
+def test_format_config_says_when_a_member_brings_nothing() -> None:
+    settings = box.MemberSettings(member=MEMBER, mounts=(), kit="", prompt_file="")
+    assert "billing-api: nothing" in box.format_config(config_with_member(settings), "", "")
+
+
 def test_format_config_aligns_every_value_in_one_column() -> None:
-    lines = box.format_config(make_config(), "/secrets/token").splitlines()[1:]
+    lines = box.format_config(make_config(), "/secrets/token", "/secrets/box.env").splitlines()[1:]
     columns = {len(line) - len(line.lstrip().split(" ", 1)[-1].lstrip()) for line in lines}
     assert len(columns) == 1
 
@@ -2282,11 +3444,11 @@ def test_build_environment_keeps_the_environment_box_was_run_with(
 
 
 def test_warn_dirty_says_how_to_inspect_recover_and_remove(capsys: pytest.CaptureFixture[str]) -> None:
-    box.warn_dirty("demo-1", " M box.py\n")
+    box.warn_dirty(Path("/work/demo"), "demo-1", " M box.py\n")
     printed = capsys.readouterr().err
     assert " M box.py" in printed
-    assert f"Inspect:  sbx exec demo-1 git -C {Path.cwd()} diff" in printed
-    assert f"Recover:  sbx cp demo-1:{Path.cwd()}/<file> ." in printed
+    assert "Inspect:  sbx exec demo-1 git -C /work/demo diff" in printed
+    assert "Recover:  sbx cp demo-1:/work/demo/<file> ." in printed
     assert "sbx rm --force demo-1" in printed
 
 
@@ -2366,16 +3528,16 @@ class FakeSession:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stand in for the secret, the cleanup and every sbx call run_session makes."""
 
-        def drop_secret(sandbox_name: str) -> None:
+        def drop_secrets(secrets: tuple[box.Secret, ...], sandbox_name: str) -> None:
             self.steps.append("drop-secret")
 
-        def store_secret(sandbox_name: str, token: str) -> None:
+        def store_secret(sandbox_name: str, stored: box.SecretValue) -> None:
             self.steps.append("store-secret")
 
-        def cleanup(sandbox_name: str) -> None:
+        def cleanup(config: box.Config, launch: box.Launch) -> None:
             self.steps.append("cleanup")
 
-        monkeypatch.setattr(box, "drop_secret", drop_secret)
+        monkeypatch.setattr(box, "drop_secrets", drop_secrets)
         monkeypatch.setattr(box, "store_secret", store_secret)
         monkeypatch.setattr(box, "cleanup", cleanup)
         monkeypatch.setattr(subprocess, "run", self.run)
@@ -2394,7 +3556,12 @@ class FakeSession:
 
 def make_launch() -> box.Launch:
     """Build what prepare_launch would have resolved for a run."""
-    return box.Launch(sandbox_name="demo-1", token="sk-ant-secret", agent_args=["--model", "claude-opus-5"])
+    return box.Launch(
+        project=make_project(Path("/work/demo")),
+        sandbox_name="demo-1",
+        secrets=(box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),),
+        agent_args=["--model", "claude-opus-5"],
+    )
 
 
 def test_run_session_stores_the_secret_before_creating_the_sandbox(
@@ -2411,6 +3578,22 @@ def test_run_session_creates_runs_and_cleans_up_in_that_order(monkeypatch: pytes
     session.install(monkeypatch)
     assert box.run_session(make_config(), make_launch()) == 0
     assert session.steps == ["drop-secret", "store-secret", "sbx create", "sbx run", "cleanup"]
+
+
+def test_run_session_stores_every_secret_the_sandbox_gets(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    launch = box.Launch(
+        project=make_project(Path("/work/demo")),
+        sandbox_name="demo-1",
+        secrets=(
+            box.SecretValue(secret=box.OAUTH_SECRET, value="sk-ant-secret"),
+            box.SecretValue(secret=GITLAB, value="glpat-abc"),
+        ),
+        agent_args=[],
+    )
+    box.run_session(make_config(), launch)
+    assert session.steps[:4] == ["drop-secret", "store-secret", "store-secret", "sbx create"]
 
 
 def test_run_session_returns_the_agents_own_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2436,14 +3619,43 @@ def test_run_session_reports_a_failed_create_and_starts_nothing(
     assert "never started" in capsys.readouterr().err
 
 
+def test_run_session_clones_every_member_into_the_fresh_sandbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    cloned: list[str] = []
+
+    def clone_member(bundle: box.Bundle, sandbox_name: str) -> bool:
+        cloned.append(bundle.member.name)
+        return True
+
+    monkeypatch.setattr(box, "bundle_members", lambda config, project, directory: [make_bundle(tmp_path)])
+    monkeypatch.setattr(box, "clone_member", clone_member)
+    assert box.run_session(make_config(), make_launch()) == 0
+    assert cloned == [MEMBER.name]
+    assert session.steps == ["drop-secret", "store-secret", "sbx create", "sbx run", "cleanup"]
+
+
+def test_run_session_takes_the_sandbox_back_when_a_member_cannot_be_cloned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = FakeSession(create_fails=False, agent_code=0)
+    session.install(monkeypatch)
+    monkeypatch.setattr(box, "bundle_members", lambda config, project, directory: [make_bundle(tmp_path)])
+    monkeypatch.setattr(box, "clone_member", lambda bundle, sandbox_name: False)
+    assert box.run_session(make_config(), make_launch()) == 1
+    assert "cleanup" not in session.steps
+    assert ["sbx", "rm", "--force", "demo-1"] in session.commands
+    assert MEMBER.name in capsys.readouterr().err
+
+
 def make_runnable_project(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Build a project that passes every check box makes before it starts a sandbox."""
     make_git_repository(directory)
     (directory / box.GITIGNORE_FILE).write_text(f"{box.MOUNTS_FILE}\n")
     write_config(directory, {"kit": "registry/kit", "model": "claude-opus-5"})
-    token = directory / "token"
-    token.write_text("sk-ant-secret\n")
-    monkeypatch.setenv(box.TOKEN_FILE_ENV, str(token))
+    monkeypatch.setenv(box.TOKEN_FILE_ENV, str(write_token(directory)))
     return directory
 
 
@@ -2511,10 +3723,10 @@ def test_main_hands_a_ready_project_to_run_session(tmp_path: Path, monkeypatch: 
         return 7
 
     make_runnable_project(tmp_path, monkeypatch)
-    monkeypatch.setattr(box, "taken_names", set)
+    monkeypatch.setattr(box, "taken_names", lambda checkouts: set())
     monkeypatch.setattr(box, "run_session", run_session)
     assert call_main(monkeypatch, tmp_path, ["run"]) == 7
-    assert launched[0].token == "sk-ant-secret"
+    assert launched[0].secrets[0].value == "sk-ant-secret"
     assert launched[0].agent_args[-2:] == ["--model", "claude-opus-5"]
 
 
