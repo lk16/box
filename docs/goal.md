@@ -89,8 +89,8 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   a clone and a clone holds no ignored files. The host repository is another matter: sbx mounts it
   read-only at `/run/sandbox/source`, ignored files included, so a project directory is no place
   for a secret even when git never sees it.
-- Refuse to run while `.box/mounts.json` exists and `git check-ignore` says it is not ignored,
-  since it would carry a machine's paths into every clone.
+- Refuse to run while `.box/mounts.json` or `.box/repos.json` exists and `git check-ignore` says it
+  is not ignored, since either would carry a machine's paths into every clone.
 - `box gen` writes a starter kit at `.box/kit/spec.yaml` and points `kit` at it, since a hand-written
   network policy is the biggest step in setting box up and "the agent's own API calls and nothing
   else" is where most projects start. It says in the file that it is a starting point, and holds only
@@ -98,9 +98,11 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   like everything else box writes; box's own kit predates it and stays in `.sbx/kit`.
 - `box gen` never changes a value that is already there, so re-running it cannot lose a config or
   a path someone filled in. It adds declared mount names the file is missing, as placeholders it
-  warns about, which is how a machine picks up a mount declared after it was set up. It takes no
-  flags, since it writes defaults to edit rather than settings that were chosen, and it appends
-  the mounts file to `.gitignore`, so what it writes is a project box will run in.
+  warns about, which is how a machine picks up a mount declared after it was set up; a group's
+  members get the same in `.box/repos.json`, as empty paths that are an error until filled in. It
+  takes no flags, since it writes defaults to edit rather than settings that were chosen, and it
+  appends the mounts and repos files to `.gitignore` in every project, group or not, so what it
+  writes is a project box will run in and one list of local files serves both.
 - Prompt text lives in `box.py`, next to `BASE_PROMPT`, so one installed script stays the whole
   of box. `mount-prompt` writes for an agent with a shell on this host: it may run commands to
   find a path and must check it exists, never guess one, and never add `:rw` unless a description
@@ -190,6 +192,23 @@ as a second copy of the mechanics, which is how the two came to disagree about a
   - Each member names the branch its clone starts from, because `origin/HEAD` is written when a
     clone is made and goes stale, and guessing `main` for a repository living on `develop` would
     start every session in the wrong place.
+  - A member is declared by a name, its branch and its `git_origin`, and the gitignored
+    `.box/repos.json` gives each name its path on this machine, the way mounts are declared and
+    supplied: where a clone sits differs between machines, and the config is shared. A name with no
+    path, an empty one or one nobody declared is an error, since a member quietly left out is a
+    question the agent cannot answer, and `box gen` writes an empty path only because the path is
+    the one thing it cannot know. A message about a member's path gives the full path, since a
+    relative one written from inside `.box/` is easy to count one `..` wrong.
+  - Before anything is created, each path's `origin` has to match its `git_origin` once both are
+    reduced to host and path. The user, the port, the scheme and a trailing `.git` say how one
+    teammate reaches a repository rather than which one it is, so every spelling of it must agree,
+    while a different host or path is some other repository, and fetching that would hand the agent
+    the wrong code. The path keeps its case, since not every host ignores it.
+  - Two members with one `git_origin` are refused. Two worktrees of one repository share its refs,
+    so both clones' work would be fetched onto the same `refs/sandboxes/*` names and one would
+    overwrite the other.
+  - A clone's `origin` is the `git_origin` the config names rather than the host's URL, so it names
+    the project the same way for everyone and never carries a credential the host's URL may hold.
   - A member counts new commits against every `origin/*` branch, where the repository box runs in
     keeps counting against `HEAD`. The host checkout of a member is whatever the user left it on,
     so `HEAD..` there would name commits the sandbox never made; the repository box runs in is

@@ -50,7 +50,7 @@ Once per machine:
 
 Once per project, committed for everyone:
 
-- `box gen` — writes `.box/` and the `.gitignore` line box needs. In a folder with no config yet it
+- `box gen` — writes `.box/` and the `.gitignore` lines box needs. In a folder with no config yet it
   asks whether this is one project or a [group](#groups); pressing Enter takes one project
 - `$EDITOR .box/config.json` — fill in `model`; `gen` already wrote the kit it points at
 
@@ -58,6 +58,10 @@ Once per machine per project, if `.box/config.json` declares `required_mounts`:
 
 - `box mount-prompt` — prints a prompt; give it to Claude to fill in the gitignored
   `.box/mounts.json`
+
+Once per machine per group, if `.box/config.json` declares `repos`:
+
+- `box gen`, then fill in the gitignored `.box/repos.json` with where each [member](#groups) sits
 
 Then, to start a sandbox:
 
@@ -75,7 +79,7 @@ watch what it does and step in.
 
 | Command | What it does |
 | --- | --- |
-| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` line box needs, leaving anything already filled in alone. Asks whether the folder is one project or a group, unless it already has a config or nobody is at the terminal |
+| `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` lines box needs, leaving anything already filled in alone. Asks whether the folder is one project or a group, unless it already has a config or nobody is at the terminal |
 | `box config` | prints the settings in effect, including the `CLAUDE_OAUTH_TOKEN_FILE` path, then runs every check a run makes |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](#mounts) |
 | `box run` | creates the sandbox and starts Claude in it |
@@ -126,7 +130,7 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | — | `required_mounts` | `{}` | Mounts the project needs, as name to description (see [Mounts](#mounts)). |
 | — | `secret_hosts` | `{}` | Tokens the agent may use, as variable name to host (see [Secrets](#secrets)). |
 | — | `mcp` | `[]` | MCP servers the sandbox may use, as a list of names (see [Read-only tools](#read-only-tools)). |
-| — | `repos` | `{}` | Other repositories this session works on, as path to branch (see [Groups](#groups)). |
+| — | `repos` | `{}` | Other repositories this session works on, as name to `branch` and `git_origin` (see [Groups](#groups)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
@@ -186,29 +190,47 @@ folder of box setups next to the repositories themselves, one subfolder per grou
 
 `box gen` in `~/work/boxes/billing` asks whether the folder is one project or a group; answering `2`
 writes a config with the group keys already in it. `cd ~/work/boxes/billing && box run` then starts a
-sandbox named after the folder it ran in. `repos` lists the members and the branch each clone
-starts from:
+sandbox named after the folder it ran in. `repos` names the members, the branch each clone starts
+from, and the repository each one is a clone of:
 
 ```json
 {
   "repos": {
-    "../../billing-api": "develop",
-    "../../kubernetes": "main"
+    "billing-api": {"branch": "develop", "git_origin": "git@example.com:team/billing-api.git"},
+    "kubernetes": {"branch": "main", "git_origin": "https://example.com/ops/kubernetes.git"}
   }
 }
 ```
 
-Paths are relative to the folder box runs in, and a leading `~` expands. Groups may share members.
+Where a member sits differs from one machine to the next, so its path lives apart from the shared
+config, in the gitignored `.box/repos.json` beside it, the way mounts do in `.box/mounts.json`:
 
-Before anything is created, box fetches each member — with the terminal attached, so `ssh` can ask
-for a passphrase — and packs its commits into a bundle. Each member then becomes a clone inside the
-sandbox at the same path it has on your machine, starting on the branch you named, with every
-`origin/*` branch present and `origin` pointing where yours does. Nothing can be pushed from inside.
+```json
+{
+  "billing-api": "../../billing-api",
+  "kubernetes": "~/src/kubernetes"
+}
+```
+
+Paths are relative to the folder box runs in, and a leading `~` expands. After adding a member, run
+`box gen`: it gives every declared name an empty path and lists the `git_origin` to clone each one
+from. A name with no path, an empty one, or one the config does not declare is an error. Groups may
+share members.
+
+Before anything is created, box checks that each path is a clone of the `git_origin` it is declared
+with. `git@host:path`, `ssh://user@host:port/path` and `https://host/path` all name the same
+repository, with or without a trailing `.git`; a different host or path is an error naming both URLs
+and the full path. Two members with one `git_origin` are an error too.
+
+box then fetches each member — with the terminal attached, so `ssh` can ask for a passphrase — and
+packs its commits into a bundle. Each member then becomes a clone inside the sandbox at the same path
+it has on your machine, starting on the branch you named, with every `origin/*` branch present and
+`origin` set to its `git_origin`. Nothing can be pushed from inside.
 
 A member is never mounted, so only committed work reaches the sandbox; the fetch itself only writes
 `origin/*`, so your checkout, your index and your own branches are untouched. box refuses a member
-that is not a git repository, has no `origin`, sits inside the repository box runs in, is named
-twice, or is covered by a mount.
+that is not a git repository, has no `origin`, sits inside the repository box runs in, or is covered
+by a mount.
 
 A member may carry a `.box/config.json` of its own, and box reads three things from it: its
 `required_mounts`, answered by its own gitignored `.box/mounts.json`; its `kit`, passed alongside
@@ -382,9 +404,11 @@ The refusals you are most likely to meet, and what to do about each:
 | `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |
 | `quotes its value` | drop the quotes around the value: docker would keep them, so box refuses the line |
 | `has no path on this machine for` | give the mount it lists a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
-| `is no directory on this machine` | fix the path under `repos`; it is relative to the folder box runs in |
+| `is missing a path for` | clone each member it lists, then put where it sits in `.box/repos.json`; `box gen` adds every declared name |
+| `is no directory on this machine` | fix that member's path in `.box/repos.json`; it is relative to the folder box runs in |
+| `whose origin is` | point that member in `.box/repos.json` at a clone of the `git_origin` in `.box/config.json` |
 | `is not a git repository` | a member has to be a git repository with an `origin` remote |
-| `has no branch <name> on origin` | name a branch `origin` really has under `repos` |
+| `has no branch <name> on origin` | set the member's `branch` to one `origin` really has |
 | `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 
 ## Development

@@ -25,6 +25,9 @@ CONFIG_FILE = f"{BOX_DIR}/config.json"
 # Mounts name paths on one machine, so they live apart from the settings a project shares.
 MOUNTS_FILE = f"{BOX_DIR}/mounts.json"
 
+# Where a group's members sit on one machine, kept apart from the shared settings for the same reason.
+REPOS_FILE = f"{BOX_DIR}/repos.json"
+
 GITIGNORE_FILE = ".gitignore"
 
 # The sandbox's network policy, which sbx reads from the directory holding a spec.yaml.
@@ -148,8 +151,12 @@ MOUNTS_IGNORED_HELP = f"""{MOUNTS_FILE} is not ignored by git.
 It names folders on this machine, so committing it would put paths that exist only here into
 everyone else's clone. Add a {MOUNTS_FILE} line to .gitignore."""
 
+REPOS_IGNORED_HELP = f"""{REPOS_FILE} is not ignored by git.
+It names where each member sits on this machine, so committing it would put paths that exist only
+here into everyone else's clone. Add a {REPOS_FILE} line to .gitignore."""
+
 # What box writes that holds one machine's own files, and the reason it must stay uncommitted.
-LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP}
+LOCAL_PATHS = {MOUNTS_FILE: MOUNTS_IGNORED_HELP, REPOS_FILE: REPOS_IGNORED_HELP}
 
 NOT_A_REPOSITORY_HELP = """this is not a git repository.
 box hands the agent a clone of this directory, so there has to be something here to clone. Run
@@ -178,8 +185,14 @@ REQUIRED_MOUNTS = "required_mounts"
 # What every environment variable the sandbox gets a value for may be sent to, as name to host.
 SECRET_HOSTS = "secret_hosts"
 
-# The repositories a group works on besides the one box runs in, as path to the branch to start from.
+# The repositories a group works on besides the one box runs in, as name to what each one is.
 REPOS = "repos"
+
+# What a group's config says about each member, which is the same on every machine.
+MEMBER_BRANCH = "branch"
+MEMBER_ORIGIN = "git_origin"
+MEMBER_KEYS = (MEMBER_BRANCH, MEMBER_ORIGIN)
+MEMBER_SHAPE = f"an object of {MEMBER_BRANCH} and {MEMBER_ORIGIN}"
 
 # The MCP servers registered on this host that the sandbox may use, as a list of their names.
 MCP = "mcp"
@@ -199,13 +212,22 @@ Keep that file outside every repository and every mount, since the sandbox can r
 MEMBER_TEMPLATE_HELP = """{path} sets template, and a sandbox runs one image.
 A member cannot bring its own, so the template the group names has to cover every member of it."""
 
-MEMBER_INSIDE_HELP = f"""{REPOS} names {{path}}, which is inside {{directory}}.
+MEMBER_INSIDE_HELP = """{name} sits at {path}, which is inside {directory}.
 Its clone would sit inside the sandbox's own clone and leave it dirty, so a member has to live
 outside the repository box runs in."""
 
-MEMBER_MOUNTED_HELP = f"""{REPOS} names {{path}}, which the mount {{directory}} would hand over whole.
+MEMBER_MOUNTED_HELP = """{name} sits at {path}, which the mount {directory} would hand over whole.
 A member reaches the sandbox as a bundle of its commits, never as a mount, so nothing it does not
 track can go with it."""
+
+UNPLACED_MEMBERS_HELP = """{repos_file} is missing a path for:
+{members}
+Clone each one this machine does not have yet, then put where it sits there; box gen adds every name."""
+
+ORIGIN_MISMATCH_HELP = f"""{{name}} sits at {{path}}, whose origin is {{origin}},
+but {CONFIG_FILE} gives it the {MEMBER_ORIGIN} {{git_origin}}.
+Point {{name}} in {{repos_file}} at a clone of {{git_origin}},
+or fix {MEMBER_ORIGIN} if the repository moved."""
 
 SECRET_INSIDE_HELP = """{variable} points at {path}, which is inside {directory}.
 The sandbox can read everything there, so the file holding secrets has to sit somewhere else."""
@@ -215,8 +237,10 @@ GROUP_QUESTION = """Is this for one project, or for a group of projects?
   2  a group: several projects next to this folder
 Type 1 or 2 (Enter means 1): """
 
-GROUP_NEXT_STEP = f"""Next: list each project under "{REPOS}" in {CONFIG_FILE}, like "../api": "main",
-where main is the branch to start from."""
+GROUP_NEXT_STEP = f"""Next: list each project under "{REPOS}" in {CONFIG_FILE}, like
+  "api": {{"{MEMBER_BRANCH}": "main", "{MEMBER_ORIGIN}": "git@example.com:team/api.git"}}
+where main is the branch to start from, then run box gen again and fill in where each one sits on
+this machine in {REPOS_FILE}."""
 
 # Sandbox facts that hold for every project, always sent ahead of the project's own prompt file.
 BASE_PROMPT = """You are running unattended in a network-restricted sandbox. Treat the next
@@ -279,6 +303,7 @@ JSON_TYPE_NAMES: dict[type, str] = {
     bool: "a boolean",
     int: "a number",
     float: "a number",
+    str: "text",
     list: "a list",
     dict: "an object",
 }
@@ -336,10 +361,12 @@ class Config:
 
 @dataclass(frozen=True)
 class Member:
-    """One repository a group works on besides the one box runs in, and where its clone starts."""
+    """One repository a group works on besides the one box runs in: what it is, and where it sits here."""
 
+    name: str
+    branch: str
+    git_origin: str
     path: str
-    base: str
 
 
 @dataclass(frozen=True)
@@ -413,7 +440,6 @@ class Bundle:
 
     member: Member
     path: Path
-    origin: str
     bundle_file: Path
 
 
@@ -483,8 +509,8 @@ def read_config_file(path: Path) -> dict[str, object]:
     return values
 
 
-def read_mounts_file(path: Path) -> dict[str, str]:
-    """Read name to path from the mounts file, returning nothing when it is absent."""
+def read_paths_file(path: Path) -> dict[str, str]:
+    """Read name to path from one of this machine's own files, returning nothing when it is absent."""
     loaded = load_json(path)
     if loaded is None:
         return {}
@@ -557,22 +583,103 @@ def to_secrets(value: object) -> tuple[Secret, ...]:
     return tuple(to_secret(name, host) for name, host in declared.items())
 
 
-def to_member(path: str, base: str) -> Member:
-    """Take one member repository, rejecting a clone box would not know where to start."""
-    if not path:
-        raise ConfigError(f"{REPOS} names a repository with no path")
-    # origin/HEAD is written when a clone is made and goes stale, so the branch is named here.
-    if not base:
-        raise ConfigError(f"{REPOS} gives {path} no branch to start from")
-    return Member(path=path, base=base)
+def declared_text(name: str, declaration: dict[object, object], key: str) -> str:
+    """Read one field a member is declared with, rejecting one that is missing or empty."""
+    value = to_text_value(Path(CONFIG_FILE), f"{REPOS} {name} {key}", declaration.get(key, ""))
+    if not value:
+        raise ConfigError(f"{REPOS} gives {name} no {key}")
+    return value
 
 
-def to_members(value: object) -> tuple[Member, ...]:
+def to_member(name: str, declaration: object, paths: dict[str, str]) -> Member:
+    """Take one declared member, placed wherever this machine's repos file says it sits."""
+    if not name:
+        raise ConfigError(f"{REPOS} names a member with no name")
+    if not isinstance(declaration, dict):
+        raise ConfigError(f"{REPOS} gives {name} {name_of_type(declaration)}, where {MEMBER_SHAPE} belongs")
+    unknown = sorted(str(key) for key in set(declaration) - set(MEMBER_KEYS))
+    if unknown:
+        raise ConfigError(f"{REPOS} gives {name} unknown keys: {', '.join(unknown)}")
+    return Member(
+        name=name,
+        # origin/HEAD is written when a clone is made and goes stale, so the branch is named here.
+        branch=declared_text(name, declaration, MEMBER_BRANCH),
+        git_origin=declared_text(name, declaration, MEMBER_ORIGIN),
+        path=paths.get(name, ""),
+    )
+
+
+def to_members(value: object, paths: dict[str, str]) -> tuple[Member, ...]:
     """Normalise the repos value into the members of this group, in the order they were declared."""
     if not isinstance(value, dict):
-        raise ConfigError(f"{REPOS} must be a JSON object of path to branch")
-    declared = as_text_values(Path(CONFIG_FILE), value)
-    return tuple(to_member(path, base) for path, base in declared.items())
+        raise ConfigError(f"{REPOS} must be a JSON object of name to {MEMBER_SHAPE}")
+    return tuple(to_member(str(name), declaration, paths) for name, declaration in value.items())
+
+
+def is_scp_origin(url: str) -> bool:
+    """Whether a URL is git's scp-like host:path, which git reads only with no slash before the colon."""
+    before, colon, _ = url.partition(":")
+    return bool(colon) and "/" not in before
+
+
+def split_origin(url: str) -> tuple[str, str]:
+    """Split a remote URL into who it reaches and where, and the path of the repository there."""
+    if "://" in url:
+        authority, _, path = url.partition("://")[2].partition("/")
+        return authority, path
+    authority, _, path = url.partition(":")
+    return authority, path
+
+
+def normalize_origin(url: str) -> str:
+    """Reduce an origin to host and path, so the ssh, scp-like and https spellings of one repository agree."""
+    text = url.strip().rstrip("/").removesuffix(".git")
+    # A local path names a directory on this disk, which has no other spelling to agree with.
+    if "://" not in text and not is_scp_origin(text):
+        return text
+    authority, path = split_origin(text)
+    # The user and the port say how to reach the host, not which repository it holds.
+    host = authority.rpartition("@")[2].partition(":")[0].lower()
+    return f"{host}/{path.strip('/')}"
+
+
+def require_distinct_origins(members: tuple[Member, ...]) -> None:
+    """Refuse two members that are one repository, whose work would come back onto the same refs."""
+    seen: dict[str, str] = {}
+    for member in members:
+        origin = normalize_origin(member.git_origin)
+        if origin in seen:
+            raise ConfigError(
+                f"{REPOS} gives {seen[origin]} and {member.name} one {MEMBER_ORIGIN}, and two clones of "
+                "one repository would bring their work back over each other"
+            )
+        seen[origin] = member.name
+
+
+def describe_members(members: list[Member]) -> str:
+    """List members by name, each with the origin to clone it from."""
+    return "\n".join(f"  {member.name}: {member.git_origin}" for member in members)
+
+
+def require_placed_members(members: tuple[Member, ...], paths: dict[str, str], repos_file: Path) -> None:
+    """Refuse a repos file that does not give every declared member a path, and only those."""
+    unknown = sorted(set(paths) - {member.name for member in members})
+    if unknown:
+        raise ConfigError(f"{repos_file} names members {CONFIG_FILE} does not declare: {', '.join(unknown)}")
+    unplaced = [member for member in members if not member.path]
+    if not unplaced:
+        return
+    raise ConfigError(UNPLACED_MEMBERS_HELP.format(repos_file=repos_file, members=describe_members(unplaced)))
+
+
+def read_repos(working_directory: Path, value: object) -> tuple[Member, ...]:
+    """Read the declared members, each placed where this machine's repos file says it sits."""
+    repos_file = working_directory / REPOS_FILE
+    paths = read_paths_file(repos_file)
+    members = to_members(value, paths)
+    require_distinct_origins(members)
+    require_placed_members(members, paths, repos_file)
+    return members
 
 
 def to_mcp_server(name: object) -> str:
@@ -672,7 +779,7 @@ def build_config(
         mcp=to_mcp_servers(values[MCP]),
         mounts=to_workspaces(mounts),
         secret_hosts=to_secrets(values[SECRET_HOSTS]),
-        repos=to_members(values[REPOS]),
+        repos=tuple(settings.member for settings in members),
         members=members,
     )
 
@@ -727,8 +834,8 @@ def format_secret(secret: Secret) -> str:
 
 
 def format_member(member: Member) -> str:
-    """Name one member repository and the branch its clone starts from."""
-    return f"{member.path}@{member.base}"
+    """Name one member, the branch its clone starts from, and where it sits on this machine."""
+    return f"{member.name}@{member.branch}->{member.path}"
 
 
 def format_member_settings(settings: MemberSettings) -> str:
@@ -739,8 +846,8 @@ def format_member_settings(settings: MemberSettings) -> str:
     if settings.prompt_file:
         added.append(f"prompt_file={settings.prompt_file}")
     if not added:
-        return f"{settings.member.path}: nothing"
-    return f"{settings.member.path}: {' '.join(added)}"
+        return f"{settings.member.name}: nothing"
+    return f"{settings.member.name}: {' '.join(added)}"
 
 
 def format_config(config: Config, token_file: str, secrets_file: str) -> str:
@@ -896,7 +1003,7 @@ def build_members_prompt(config: Config, project: Project) -> str:
     if not config.repos:
         return ""
     directory = project.working_directory
-    where = [f"  {member_path(directory, member)} on {member.base}" for member in config.repos]
+    where = [f"  {member_path(directory, member)} on {member.branch}" for member in config.repos]
     return MEMBERS_PROMPT.format(members="\n".join(where))
 
 
@@ -1221,13 +1328,13 @@ def bundle_member(project: Project, member: Member, number: int, directory: Path
     """Fetch one member and pack the history its clone is made from into the bundle directory."""
     path = member_path(project.working_directory, member)
     fetch_member(path)
-    if not has_base(path, member.base):
-        raise ConfigError(f"{member.path} has no branch {member.base} on origin")
+    if not has_base(path, member.branch):
+        raise ConfigError(f"{member.name} at {path} has no branch {member.branch} on origin")
     bundle_file = directory / f"{number}-{path.name}.bundle"
     command = ["git", "-C", str(path), "bundle", "create", str(bundle_file), "--remotes=origin"]
     if not succeeds(command):
-        raise ConfigError(f"git could not bundle {member.path}")
-    return Bundle(member=member, path=path, origin=member_origin(path), bundle_file=bundle_file)
+        raise ConfigError(f"git could not bundle {member.name} at {path}")
+    return Bundle(member=member, path=path, bundle_file=bundle_file)
 
 
 def bundle_members(config: Config, project: Project, directory: Path) -> list[Bundle]:
@@ -1242,7 +1349,7 @@ def build_clone_commands(bundle: Bundle, sandbox_name: str) -> list[list[str]]:
     """Assemble what turns a copied bundle into a clone on the member's own host path."""
     inside = f"{SANDBOX_TEMP}/{bundle.bundle_file.name}"
     path = str(bundle.path)
-    base = bundle.member.base
+    base = bundle.member.branch
     root = ["sbx", "exec", "-u", "root", sandbox_name]
     user = ["sbx", "exec", sandbox_name]
     return [
@@ -1251,7 +1358,8 @@ def build_clone_commands(bundle: Bundle, sandbox_name: str) -> list[list[str]]:
         [*root, "mkdir", "-p", path],
         [*root, "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path],
         [*user, "git", "init", "-q", path],
-        [*user, "git", "-C", path, "remote", "add", "origin", bundle.origin],
+        # The declared origin names the project alike for everyone, and never holds a host's credentials.
+        [*user, "git", "-C", path, "remote", "add", "origin", bundle.member.git_origin],
         [*user, "git", "-C", path, "fetch", "-q", inside, "refs/remotes/origin/*:refs/remotes/origin/*"],
         [*user, "git", "-C", path, "switch", "-q", "-c", base, "--track", f"origin/{base}"],
     ]
@@ -1355,7 +1463,7 @@ def cleanup(config: Config, launch: Launch) -> None:
 
 def own_mounts(working_directory: Path, required: dict[str, str]) -> list[str]:
     """Read the mounts one .box/ declares and this machine answers, in declaration order."""
-    provided = read_mounts_file(working_directory / MOUNTS_FILE)
+    provided = read_paths_file(working_directory / MOUNTS_FILE)
     return order_mounts(required, provided)
 
 
@@ -1386,10 +1494,10 @@ def read_member_settings(working_directory: Path, member: Member) -> MemberSetti
         return MemberSettings(member=member, mounts=(), kit="", prompt_file="")
     values = read_config_file(path)
     if member_setting(values, "template"):
-        raise ConfigError(MEMBER_TEMPLATE_HELP.format(path=member.path))
+        raise ConfigError(MEMBER_TEMPLATE_HELP.format(path=path))
     required = as_descriptions(values.get(REQUIRED_MOUNTS, {}))
-    provided = read_mounts_file(directory / MOUNTS_FILE)
-    mounts = order_mounts(scoped(member.path, required), scoped(member.path, provided))
+    provided = read_paths_file(directory / MOUNTS_FILE)
+    mounts = order_mounts(scoped(member.name, required), scoped(member.name, provided))
     prompt_file = member_setting(values, "prompt_file")
     if prompt_file:
         prompt_file = str(directory / resolve_path(prompt_file))
@@ -1419,7 +1527,7 @@ def load_config(arguments: argparse.Namespace, working_directory: Path) -> Confi
     cli_values = {key: value for key, value in vars(arguments).items() if key in DEFAULTS}
     file_values = read_config_file(working_directory / CONFIG_FILE)
     values = merge_values(file_values, cli_values)
-    members = read_members(working_directory, to_members(values[REPOS]))
+    members = read_members(working_directory, read_repos(working_directory, values[REPOS]))
     own = own_mounts(working_directory, as_descriptions(values[REQUIRED_MOUNTS]))
     # The flags come last, since they are this one run's rather than anyone's settings.
     mounts = own + member_mounts(members) + list(arguments.mounts or [])
@@ -1474,38 +1582,46 @@ def require_secret_outside(variable: str, secret_file: str, reachable: list[Path
         raise ConfigError(SECRET_INSIDE_HELP.format(variable=variable, path=path, directory=directory))
 
 
-def has_origin(path: Path) -> bool:
-    """Whether a repository has the remote its clone is made from and counts its commits against."""
-    return succeeds(["git", "-C", str(path), "remote", "get-url", "origin"])
-
-
 def require_unmounted(config: Config, member: Member, path: Path) -> None:
     """Refuse a mount that would hand the sandbox everything a member holds, tracked or not."""
     for workspace in config.mounts:
         directory = mount_target(workspace)
         if not is_inside(path, directory):
             continue
-        raise ConfigError(MEMBER_MOUNTED_HELP.format(path=member.path, directory=directory))
+        raise ConfigError(MEMBER_MOUNTED_HELP.format(name=member.name, path=path, directory=directory))
+
+
+def require_origin(member: Member, path: Path, repos_file: Path) -> None:
+    """Refuse a path holding some other repository than the one the member is declared as."""
+    origin = member_origin(path)
+    if not origin:
+        raise ConfigError(f"{member.name} sits at {path}, which has no origin remote")
+    # How a teammate spells the URL is theirs, so only the host and the path have to agree.
+    if normalize_origin(origin) == normalize_origin(member.git_origin):
+        return
+    raise ConfigError(
+        ORIGIN_MISMATCH_HELP.format(
+            name=member.name, path=path, origin=origin, git_origin=member.git_origin, repos_file=repos_file
+        )
+    )
 
 
 def require_members(config: Config, project: Project) -> None:
-    """Refuse a member box could not clone, and two members that would land on one another."""
-    seen: dict[Path, str] = {}
+    """Refuse a member box could not clone, or whose path on this machine holds another repository."""
+    repos_file = project.working_directory / REPOS_FILE
     for member in config.repos:
         path = member_path(project.working_directory, member)
         if not path.is_dir():
-            raise ConfigError(f"{REPOS} names {member.path}, which is no directory on this machine")
+            raise ConfigError(
+                f"{repos_file} puts {member.name} at {path}, which is no directory on this machine"
+            )
         if not is_git_repository(path):
-            raise ConfigError(f"{REPOS} names {member.path}, which is not a git repository")
-        if not has_origin(path):
-            raise ConfigError(f"{REPOS} names {member.path}, which has no origin remote")
+            raise ConfigError(f"{member.name} sits at {path}, which is not a git repository")
+        require_origin(member, path, repos_file)
         if is_inside(path, project.root):
-            raise ConfigError(MEMBER_INSIDE_HELP.format(path=member.path, directory=project.root))
-        if path in seen:
-            raise ConfigError(f"{REPOS} names one repository twice: {seen[path]} and {member.path}")
-        seen[path] = member.path
+            raise ConfigError(MEMBER_INSIDE_HELP.format(name=member.name, path=path, directory=project.root))
         require_unmounted(config, member, path)
-        require_ignored_local_paths(path, f"{member.path}: ")
+        require_ignored_local_paths(path, f"{path}: ")
 
 
 def require_secrets(config: Config, project: Project, token_file: str) -> None:
@@ -1529,7 +1645,7 @@ def require_settings(config: Config) -> None:
         raise ConfigError(KIT_FILE_HELP)
     for settings in config.members:
         if resolve_path(settings.kit).is_file():
-            raise ConfigError(f"{settings.member.path}: {KIT_FILE_HELP}")
+            raise ConfigError(f"{settings.member.name}: {KIT_FILE_HELP}")
     if not config.model:
         raise ConfigError(MODEL_HELP)
 
@@ -1699,7 +1815,7 @@ def clone_members(config: Config, launch: Launch, bundles: list[Bundle]) -> int:
     for bundle in bundles:
         if clone_member(bundle, launch.sandbox_name):
             continue
-        return remove_sandbox(config, launch, f"{bundle.member.path} could not be cloned")
+        return remove_sandbox(config, launch, f"{bundle.member.name} could not be cloned")
     return 0
 
 
@@ -1856,7 +1972,7 @@ def warn_placeholders(required: dict[str, str], filled: dict[str, str]) -> None:
 def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
     """Add a placeholder for every declared mount the file leaves unanswered."""
     path = working_directory / MOUNTS_FILE
-    provided = read_mounts_file(path)
+    provided = read_paths_file(path)
     filled = fill_mounts(required, provided)
     if path.is_file() and filled == provided:
         print(f"kept    {MOUNTS_FILE}")
@@ -1864,6 +1980,42 @@ def write_mounts(working_directory: Path, required: dict[str, str]) -> None:
     path.write_text(to_json(filled))
     print(f"written {MOUNTS_FILE}")
     warn_placeholders(required, filled)
+
+
+def fill_repos(members: tuple[Member, ...], provided: dict[str, str]) -> dict[str, str]:
+    """Answer every declared member, keeping the paths already filled in and leaving the rest empty."""
+    filled = dict(provided)
+    for member in members:
+        if member.name in filled:
+            continue
+        filled[member.name] = ""
+    return filled
+
+
+def warn_unplaced(members: tuple[Member, ...]) -> None:
+    """Name the members whose path only this machine's owner knows, with the origin to clone each from."""
+    unplaced = [member for member in members if not member.path]
+    if not unplaced:
+        return
+    print(f"WARNING: fill in where each of these sits on this machine in {REPOS_FILE}:", file=sys.stderr)
+    print(describe_members(unplaced), file=sys.stderr)
+
+
+def write_repos(working_directory: Path, values: dict[str, object]) -> None:
+    """Add an empty path for every member a group declares and its repos file leaves unanswered."""
+    # A single project has no members, so it gets no file to fill in.
+    if REPOS not in values:
+        return
+    path = working_directory / REPOS_FILE
+    provided = read_paths_file(path)
+    members = to_members(values[REPOS], provided)
+    filled = fill_repos(members, provided)
+    warn_unplaced(members)
+    if path.is_file() and filled == provided:
+        print(f"kept    {REPOS_FILE}")
+        return
+    path.write_text(to_json(filled))
+    print(f"written {REPOS_FILE}")
 
 
 def generate(working_directory: Path) -> int:
@@ -1876,6 +2028,7 @@ def generate(working_directory: Path) -> int:
     write_starter_config(working_directory / CONFIG_FILE, starter)
     write_starter_kit(working_directory)
     write_mounts(working_directory, read_required_mounts(working_directory))
+    write_repos(working_directory, read_config_file(working_directory / CONFIG_FILE))
     ignore_local_paths(working_directory)
     if REPOS in starter:
         print(GROUP_NEXT_STEP)
@@ -1928,7 +2081,7 @@ Add :rw only where the description asks for write access. Change nothing else.""
 def mount_prompt(working_directory: Path) -> int:
     """Print the prompt for filling in this machine's mounts, or nothing when none are missing."""
     required = read_required_mounts(working_directory)
-    provided = read_mounts_file(working_directory / MOUNTS_FILE)
+    provided = read_paths_file(working_directory / MOUNTS_FILE)
     names = unfilled_mounts(required, provided)
     if not names:
         print(f"every mount in {MOUNTS_FILE} already has a path", file=sys.stderr)
