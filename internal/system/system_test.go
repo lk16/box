@@ -1,8 +1,10 @@
 package system_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +151,64 @@ func TestAFileIsNoTerminal(t *testing.T) {
 	defer func() { _ = opened.Close() }()
 	if system.IsTerminal(opened) {
 		t.Fatal("a file was taken for a terminal")
+	}
+}
+
+func TestACtrlCExitsWithWhatAShellReportsForOne(t *testing.T) {
+	console := &bytes.Buffer{}
+	var exited []int
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	close(signals)
+	system.Interrupts{
+		Console:  system.Console{Out: console, Err: console},
+		Attached: func() bool { return false },
+		Exit:     func(code int) { exited = append(exited, code) },
+	}.Watch(signals)
+	if len(exited) != 1 || exited[0] != system.Interrupted {
+		t.Fatalf("exited %v", exited)
+	}
+	if !strings.Contains(console.String(), "box: interrupted.") {
+		t.Fatalf("said %q", console.String())
+	}
+}
+
+func TestACtrlCWhileAChildOwnsTheTerminalIsLeftToTheChild(t *testing.T) {
+	console := &bytes.Buffer{}
+	var exited []int
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	close(signals)
+	system.Interrupts{
+		Console:  system.Console{Out: console, Err: console},
+		Attached: func() bool { return true },
+		Exit:     func(code int) { exited = append(exited, code) },
+	}.Watch(signals)
+	if len(exited) != 0 || console.String() != "" {
+		t.Fatalf("exited %v and said %q", exited, console.String())
+	}
+}
+
+func TestAnAttachedChildIsCountedWhileItRuns(t *testing.T) {
+	if system.ChildAttached() {
+		t.Fatal("a child was counted before one was started")
+	}
+	held := make(chan bool, 1)
+	go func() {
+		// The script outlives the poll below, so the count has to be up while it runs.
+		(system.Commands{}).Attach(script(t, "sleep 0.5\n"), nil)
+		held <- true
+	}()
+	attached := false
+	for attempt := 0; attempt < 50 && !attached; attempt++ {
+		attached = system.ChildAttached()
+		time.Sleep(10 * time.Millisecond)
+	}
+	<-held
+	if !attached {
+		t.Fatal("a child holding the terminal was never counted")
+	}
+	if system.ChildAttached() {
+		t.Fatal("a child was still counted after it finished")
 	}
 }

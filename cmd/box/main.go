@@ -13,9 +13,6 @@ import (
 	"github.com/lk16/box/internal/update"
 )
 
-// Interrupted is what a Ctrl-C exits with, which is what a shell reports for the same thing.
-const Interrupted = 130
-
 func main() {
 	os.Exit(run())
 }
@@ -49,13 +46,5 @@ func release() string {
 func watchInterrupts(console system.Console) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
-	for range signals {
-		// A child on the terminal was sent the same Ctrl-C and answers it itself, so box waits
-		// for it to finish and cleans up after it. See docs/signals.md.
-		if system.ChildAttached() {
-			continue
-		}
-		console.Warn("box: interrupted.")
-		os.Exit(Interrupted)
-	}
+	system.Interrupts{Console: console, Attached: system.ChildAttached, Exit: os.Exit}.Watch(signals)
 }
