@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// RawValue is one JSON value as the file spells it.
+type RawValue = json.RawMessage
+
 // Pair is one member of a JSON object, at the position the file gave it.
 type Pair struct {
 	Key   string
