@@ -10,19 +10,25 @@ import (
 )
 
 // Terminal is the Prompter that reads the real stdin.
-type Terminal struct{}
+type Terminal struct {
+	// lines is kept across questions, since a fresh reader would drop what the last one buffered.
+	lines *bufio.Reader
+}
 
 // Interactive says whether stdin is a terminal, which is where there is someone to ask.
-func (Terminal) Interactive() bool {
+func (*Terminal) Interactive() bool {
 	return IsTerminal(os.Stdin)
 }
 
 // Ask puts a question on stdout and reads the line typed back, or reports the input ending.
-func (Terminal) Ask(question string) (string, bool) {
+func (t *Terminal) Ask(question string) (string, bool) {
 	if _, err := io.WriteString(os.Stdout, question); err != nil {
 		return "", false
 	}
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if t.lines == nil {
+		t.lines = bufio.NewReader(os.Stdin)
+	}
+	line, err := t.lines.ReadString('\n')
 	if err != nil && line == "" {
 		return "", false
 	}

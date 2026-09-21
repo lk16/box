@@ -32,7 +32,7 @@ func run() int {
 	deps := system.Deps{
 		Run:      system.Commands{},
 		Console:  console,
-		Ask:      system.Terminal{},
+		Ask:      &system.Terminal{},
 		Download: system.Web{Timeout: update.Timeout},
 		Now:      time.Now,
 	}

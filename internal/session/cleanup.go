@@ -18,7 +18,8 @@ func (s Session) printRecovery(path, sandboxName string) {
 // warnDirty tells the user how to recover uncommitted work left behind in a sandbox.
 func (s Session) warnDirty(path, sandboxName, dirty string) {
 	s.Deps.Console.Warn("WARNING: %s in sandbox %s has uncommitted changes -- not removing it.", path, sandboxName)
-	s.Deps.Console.Warn("%s", strings.TrimRight(dirty, "\n"))
+	// git status ends in a newline, and the blank line it leaves separates it from what follows.
+	s.Deps.Console.Warn("%s", dirty)
 	s.printRecovery(path, sandboxName)
 }
 
