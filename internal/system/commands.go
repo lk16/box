@@ -6,8 +6,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,8 +37,8 @@ func (Commands) Attach(arguments []string, environment []string) Result {
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = environment
 	// The child owns the terminal, so its own Ctrl-C must not take box down with it.
-	signal.Ignore(os.Interrupt)
-	defer signal.Reset(os.Interrupt)
+	attached.Add(1)
+	defer attached.Add(-1)
 	return Result{Code: codeOf(command.Run())}
 }
 
@@ -75,4 +75,12 @@ func codeOf(err error) int {
 		return exit.ExitCode()
 	}
 	return NotRun
+}
+
+// attached counts the children that own the terminal right now, so Ctrl-C reaches them alone.
+var attached atomic.Int32
+
+// ChildAttached says whether a command box started is holding the terminal at this moment.
+func ChildAttached() bool {
+	return attached.Load() > 0
 }
