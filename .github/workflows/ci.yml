@@ -12,28 +12,25 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # The floor pyproject.toml declares, and the newest box is expected to run on.
-        python-version: ["3.9", "3.14"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
         with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Lint
-        run: uv run ruff check
+          go-version-file: go.mod
+          cache: true
 
       - name: Format
-        run: uv run ruff format --check
+        run: test -z "$(gofmt -l .)"
 
-      - name: Types
-        run: uv run mypy --strict
+      - name: Vet
+        run: go vet ./...
+
+      - name: Tidy
+        run: go mod tidy && git diff --exit-code go.mod
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
 
       - name: Tests
-        run: uv run pytest
+        run: go test ./...
