@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -113,5 +114,31 @@ func TestFormatSaysWhenAMemberBringsNothing(t *testing.T) {
 	settings := config.MemberSettings{Member: member}
 	if !strings.Contains(config.Format(configWithMember(t, settings), "", ""), "billing-api: nothing") {
 		t.Fatal("a member bringing nothing is not said so")
+	}
+}
+
+func TestFormatNamesAnEmptyListOfMounts(t *testing.T) {
+	built := fullConfig()
+	built.Mounts = nil
+	if !regexp.MustCompile(`(?m)^\s+mounts\s+` + regexp.QuoteMeta(config.Unset) + `$`).MatchString(config.Format(built, "", "")) {
+		t.Fatal("an empty mount list is not named as unset")
+	}
+}
+
+func TestEveryConfigKeyIsAFieldOfTheConfigAndTheOtherWayAround(t *testing.T) {
+	rendered := config.Format(fullConfig(), "", "")
+	// required_mounts is answered by the mounts file, so it resolves to mounts rather than staying.
+	for _, key := range append(slices.Clone(config.SettingKeys), config.MCP, config.SecretHosts, config.Repos) {
+		if !regexp.MustCompile(`(?m)^\s+` + key + `\s`).MatchString(rendered) {
+			t.Errorf("%s is missing from the rendered config", key)
+		}
+	}
+	if regexp.MustCompile(`(?m)^\s+` + config.RequiredMounts + `\s`).MatchString(rendered) {
+		t.Errorf("%s is rendered, though it resolves to mounts", config.RequiredMounts)
+	}
+	for _, field := range []string{"mounts", "members"} {
+		if !regexp.MustCompile(`(?m)^\s+` + field + `\s`).MatchString(rendered) {
+			t.Errorf("%s is missing from the rendered config", field)
+		}
 	}
 }
