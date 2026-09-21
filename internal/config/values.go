@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -84,21 +85,38 @@ func Merge(file, cli Values) Values {
 	return merged
 }
 
-// homePrefix is what a path starting in the shell's home directory begins with.
-var homePrefix = regexp.MustCompile(`^~(/|$)`)
-
 // ResolvePath expands a configured path so a leading ~ works the same as in the shell.
 func ResolvePath(text string) string {
 	if text == "" {
 		return ""
 	}
-	if homePrefix.MatchString(text) {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			text = filepath.Join(home, strings.TrimPrefix(text, "~"))
-		}
+	return filepath.Clean(expandHome(text))
+}
+
+// expandHome turns a leading ~ or ~name into the home directory it stands for.
+func expandHome(text string) string {
+	if !strings.HasPrefix(text, "~") {
+		return text
 	}
-	return filepath.Clean(text)
+	name, rest, _ := strings.Cut(strings.TrimPrefix(text, "~"), "/")
+	home, err := homeOf(name)
+	// A user this machine does not have is no home, so the path stays the text it was written as.
+	if err != nil {
+		return text
+	}
+	return filepath.Join(home, rest)
+}
+
+// homeOf is a named user's home directory, or the home of whoever runs box when none is named.
+func homeOf(name string) (string, error) {
+	if name == "" {
+		return os.UserHomeDir()
+	}
+	account, err := user.Lookup(name)
+	if err != nil {
+		return "", err
+	}
+	return account.HomeDir, nil
 }
 
 // separators are the runs of characters a kebab-cased name collapses into single hyphens.

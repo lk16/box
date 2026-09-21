@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,6 +135,36 @@ func TestResolvePathExpandsALeadingTilde(t *testing.T) {
 
 func TestResolvePathLeavesAnAbsolutePathAlone(t *testing.T) {
 	if got := config.ResolvePath("/usr/local/go"); got != "/usr/local/go" {
+		t.Fatalf("resolved to %q", got)
+	}
+}
+
+func TestResolvePathExpandsATildeOnItsOwn(t *testing.T) {
+	t.Setenv("HOME", "/home/someone")
+	if got := config.ResolvePath("~"); got != "/home/someone" {
+		t.Fatalf("resolved to %q", got)
+	}
+}
+
+func TestResolvePathExpandsANamedUsersHome(t *testing.T) {
+	account, err := user.Current()
+	if err != nil {
+		t.Skip("this machine has no current user to look up")
+	}
+	want := filepath.Join(account.HomeDir, "cache")
+	if got := config.ResolvePath("~" + account.Username + "/cache"); got != want {
+		t.Fatalf("resolved to %q, want %q", got, want)
+	}
+}
+
+func TestResolvePathLeavesAUserThisMachineDoesNotHaveAlone(t *testing.T) {
+	if got := config.ResolvePath("~definitely-not-a-user/cache"); got != "~definitely-not-a-user/cache" {
+		t.Fatalf("resolved to %q", got)
+	}
+}
+
+func TestResolvePathLeavesATildeInsideAPathAlone(t *testing.T) {
+	if got := config.ResolvePath("/data/~backup"); got != "/data/~backup" {
 		t.Fatalf("resolved to %q", got)
 	}
 }

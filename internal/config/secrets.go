@@ -84,7 +84,7 @@ func isQuoted(value string) bool {
 // ParseSecretsFile reads NAME=value lines the way docker --env-file does, so one file serves both.
 func ParseSecretsFile(path, contents string) (Pairs, error) {
 	var values Pairs
-	for number, line := range strings.Split(strings.TrimSuffix(contents, "\n"), "\n") {
+	for number, line := range lines(contents) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -102,6 +102,12 @@ func ParseSecretsFile(path, contents string) (Pairs, error) {
 		values = append(values, Pair{Name: name, Value: value})
 	}
 	return values, nil
+}
+
+// lines splits a file the way a reader of text does, so a file saved on Windows reads the same.
+func lines(contents string) []string {
+	unified := strings.ReplaceAll(strings.ReplaceAll(contents, "\r\n", "\n"), "\r", "\n")
+	return strings.Split(strings.TrimSuffix(unified, "\n"), "\n")
 }
 
 // ReadSecretsFile reads the values behind the declared secrets, which box never prints.

@@ -220,3 +220,15 @@ func readToken(t *testing.T, contents string) string {
 	}
 	return token
 }
+
+func TestParseSecretsFileReadsAFileSavedOnWindows(t *testing.T) {
+	read, err := config.ParseSecretsFile("box.env", "GITLAB_TOKEN=glpat-abc\r\nOTHER=2\r\n")
+	if err != nil || read.Get("GITLAB_TOKEN") != "glpat-abc" || read.Get("OTHER") != "2" {
+		t.Fatalf("read %v, %v", read, err)
+	}
+}
+
+func TestParseSecretsFileNumbersALineOfAWindowsFileTheSameWay(t *testing.T) {
+	_, err := config.ParseSecretsFile("box.env", "A=1\r\nGITLAB_TOKEN\r\n")
+	wantError(t, err, "line 2 is not NAME=value")
+}
