@@ -5,13 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+
+	"github.com/lk16/box/internal/system"
 
 	"github.com/lk16/box/internal/config"
 )
 
 // HostDescription names what a build has to match: the platform and the architecture, never one alone.
-func HostDescription() string {
-	return runtime.GOOS + " " + runtime.GOARCH
+func (s Setup) HostDescription() string {
+	return runtime.GOOS + " " + s.machine()
+}
+
+// machine is the architecture the way uname spells it, which is what the agent will see itself.
+func (s Setup) machine() string {
+	printed := strings.TrimSpace(system.Capture(s.Deps.Run, []string{"uname", "-m"}))
+	// A machine without uname is no reason to print nothing, and Go's own name is close enough.
+	if printed == "" {
+		return runtime.GOARCH
+	}
+	return printed
 }
 
 // DepsPath is where a dependency lands that this machine cannot supply, following XDG_DATA_HOME.
@@ -46,6 +59,6 @@ func (s Setup) MountPrompt(workingDirectory string) (int, error) {
 		s.Deps.Console.Warn("every mount in %s already has a path", config.MountsFile)
 		return 0, nil
 	}
-	s.Deps.Console.Print("%s", BuildMountPrompt(required, names, HostDescription(), DepsPath()))
+	s.Deps.Console.Print("%s", BuildMountPrompt(required, names, s.HostDescription(), DepsPath()))
 	return 0, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/lk16/box/internal/boxtest"
 	"github.com/lk16/box/internal/config"
 	"github.com/lk16/box/internal/setup"
+	"github.com/lk16/box/internal/system"
 )
 
 // goToolchain is the one declared mount these tests ask an agent to fill in.
@@ -68,8 +69,18 @@ func TestThePromptHoldsTheRulesBoxEnforces(t *testing.T) {
 	}
 }
 
-func TestTheHostDescriptionHoldsThePlatformAndTheArchitecture(t *testing.T) {
-	if got := setup.HostDescription(); got != runtime.GOOS+" "+runtime.GOARCH {
+func TestTheHostDescriptionHoldsThePlatformAndTheArchitectureUnameNames(t *testing.T) {
+	run := newFixture(false)
+	uname := strings.TrimSpace(system.Capture(system.Commands{}, []string{"uname", "-m"}))
+	if got := run.setup.HostDescription(); got != runtime.GOOS+" "+uname {
+		t.Fatalf("the host is described as %q, want %q", got, runtime.GOOS+" "+uname)
+	}
+}
+
+func TestTheHostDescriptionFallsBackToGoOwnArchitecture(t *testing.T) {
+	run := newFixture(false)
+	run.setup.Deps.Run = &boxtest.Runner{}
+	if got := run.setup.HostDescription(); got != runtime.GOOS+" "+runtime.GOARCH {
 		t.Fatalf("the host is described as %q", got)
 	}
 }
@@ -136,7 +147,7 @@ func TestMountPromptWritesNoMountsFile(t *testing.T) {
 func TestMountPromptNamesThePlatformAndArchitectureThisMachineRuns(t *testing.T) {
 	directory := t.TempDir()
 	writeConfig(t, directory, `{"required_mounts": {"go": "the Go toolchain"}}`)
-	if !strings.Contains(mountPrompt(t, directory).console.Printed(), setup.HostDescription()) {
+	if !strings.Contains(mountPrompt(t, directory).console.Printed(), setupFor(t).HostDescription()) {
 		t.Fatal("the host is missing from the prompt")
 	}
 }
@@ -155,4 +166,10 @@ func TestReadRequiredMountsIsEmptyWithoutAConfig(t *testing.T) {
 	if err != nil || len(read) != 0 {
 		t.Fatalf("read %v, %v", read, err)
 	}
+}
+
+// setupFor is a setup that really runs commands, for the host description a test compares with.
+func setupFor(t *testing.T) setup.Setup {
+	t.Helper()
+	return newFixture(false).setup
 }

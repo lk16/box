@@ -113,3 +113,41 @@ func TestOnPathMissesACommandNobodyHas(t *testing.T) {
 		t.Fatal("a command nobody has was found on PATH")
 	}
 }
+
+func TestAPipeIsNoTerminal(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close(); _ = writer.Close() }()
+	if system.IsTerminal(reader) {
+		t.Fatal("a pipe was taken for a terminal")
+	}
+}
+
+func TestDevNullIsNoTerminal(t *testing.T) {
+	empty, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = empty.Close() }()
+	// A stat calls /dev/null a character device, which is why box asks the kernel instead.
+	if system.IsTerminal(empty) {
+		t.Fatal("/dev/null was taken for a terminal")
+	}
+}
+
+func TestAFileIsNoTerminal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = opened.Close() }()
+	if system.IsTerminal(opened) {
+		t.Fatal("a file was taken for a terminal")
+	}
+}

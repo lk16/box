@@ -14,8 +14,7 @@ type Terminal struct{}
 
 // Interactive says whether stdin is a terminal, which is where there is someone to ask.
 func (Terminal) Interactive() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return IsTerminal(os.Stdin)
 }
 
 // Ask puts a question on stdout and reads the line typed back, or reports the input ending.
@@ -58,10 +57,4 @@ type httpError struct {
 // Error names the URL and what it answered with.
 func (e *httpError) Error() string {
 	return e.url + " answered " + e.status
-}
-
-// IsTerminal says whether a file is a terminal, which is what decides whether a notice is coloured.
-func IsTerminal(file *os.File) bool {
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
