@@ -35,14 +35,14 @@ func TestConfigKeysMatchTheConfigFields(t *testing.T) {
 	for index := range value.NumField() {
 		fields = append(fields, configKey(value.Field(index).Name))
 	}
-	// required_mounts is a declaration the mounts file answers, so it resolves to mounts instead;
-	// members is what each declared member's own .box/ resolves to.
+	// required_mounts is a declaration the mounts file answers, so it is no field of its own.
 	want := []string{}
 	for _, key := range append(slices.Clone(config.SettingKeys), config.ContainerKeys...) {
 		if key != config.RequiredMounts {
 			want = append(want, key)
 		}
 	}
+	// mounts and members are what the two files this machine owns resolve to.
 	want = append(want, "mounts", "members")
 	sort.Strings(fields)
 	sort.Strings(want)
