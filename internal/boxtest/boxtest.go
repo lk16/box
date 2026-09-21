@@ -229,3 +229,13 @@ func Symlink(t *testing.T, target, link string) {
 		t.Fatal(err)
 	}
 }
+
+// Unset removes an environment variable for one test, putting it back when the test ends.
+func Unset(t *testing.T, name string) {
+	t.Helper()
+	// Setting it first registers the cleanup that restores whatever the developer really has.
+	t.Setenv(name, "")
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatal(err)
+	}
+}
