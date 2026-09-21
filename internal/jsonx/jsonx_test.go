@@ -139,3 +139,14 @@ func TestNothingAtAllIsNamedAsSuch(t *testing.T) {
 		t.Fatalf("named %q", got)
 	}
 }
+
+func TestWriteSpellsEveryCharacterTheWayAJSONWriterDoes(t *testing.T) {
+	object := jsonx.Object{
+		{Key: "josé", Value: jsonx.Text("a <b> & c")},
+		{Key: "emoji", Value: jsonx.Text("grin 😀")},
+	}
+	want := "{\n  \"jos\\u00e9\": \"a <b> & c\",\n  \"emoji\": \"grin \\ud83d\\ude00\"\n}\n"
+	if got := string(jsonx.Write(object)); got != want {
+		t.Fatalf("written as %q, want %q", got, want)
+	}
+}

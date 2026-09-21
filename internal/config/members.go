@@ -130,9 +130,9 @@ func NormalizeOrigin(url string) string {
 		return text
 	}
 	authority, path := splitOrigin(text)
-	// The user and the port say how to reach the host, not which repository it holds.
-	if _, after, found := strings.Cut(authority, "@"); found {
-		authority = after
+	// A user, a password and a port say how to reach a host, so the host follows the last @.
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		authority = authority[at+1:]
 	}
 	host, _, _ := strings.Cut(authority, ":")
 	return strings.ToLower(host) + "/" + strings.Trim(path, "/")

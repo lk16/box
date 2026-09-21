@@ -168,3 +168,37 @@ func TestResolvePathLeavesATildeInsideAPathAlone(t *testing.T) {
 		t.Fatalf("resolved to %q", got)
 	}
 }
+
+func TestResolvePathKeepsEveryDotDot(t *testing.T) {
+	// Collapsing them here would name a different directory whenever a symlink is in the way.
+	for path, want := range map[string]string{
+		"/usr/local/../lib": "/usr/local/../lib",
+		"../rel":            "../rel",
+		"/a//b":             "/a/b",
+		"/a/./b":            "/a/b",
+		"/a/b/":             "/a/b",
+		"./x":               "x",
+		"/":                 "/",
+		"a/b":               "a/b",
+	} {
+		if got := config.ResolvePath(path); got != want {
+			t.Errorf("%s resolved to %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestResolvePathKeepsADotDotBelowAnExpandedHome(t *testing.T) {
+	t.Setenv("HOME", "/home/someone")
+	if got := config.ResolvePath("~/a/../b"); got != "/home/someone/a/../b" {
+		t.Fatalf("resolved to %q", got)
+	}
+}
+
+func TestUnderKeepsADotDotItJoinsOn(t *testing.T) {
+	if got := config.Under("/work/boxes", "../billing-api"); got != "/work/boxes/../billing-api" {
+		t.Fatalf("joined to %q", got)
+	}
+	if got := config.Under("/work/boxes", "/elsewhere"); got != "/elsewhere" {
+		t.Fatalf("an absolute path joined to %q", got)
+	}
+}

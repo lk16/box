@@ -308,3 +308,15 @@ func configWithMember(t *testing.T, settings config.MemberSettings) config.Confi
 	}
 	return built
 }
+
+func TestAnOriginIsTheHostAfterTheLastAt(t *testing.T) {
+	// A user, a password and a port all sit before the host, and any of them may hold an @.
+	for url, want := range map[string]string{
+		"https://a@b@example.com/team/api.git":   "example.com/team/api",
+		"ssh://user:pw@host@example.com/t/a.git": "example.com/t/a",
+	} {
+		if got := config.NormalizeOrigin(url); got != want {
+			t.Errorf("%s reduced to %q, want %q", url, got, want)
+		}
+	}
+}

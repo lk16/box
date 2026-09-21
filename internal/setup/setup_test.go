@@ -452,3 +452,15 @@ func TestGenAsksNothingAboutAProjectThatAlreadyHasAConfig(t *testing.T) {
 		t.Fatalf("gen asked %v", run.prompter.Questions)
 	}
 }
+
+func TestGenWarnsAboutAPlaceholderOnlyOnTheFileItWrote(t *testing.T) {
+	directory := t.TempDir()
+	writeConfig(t, directory, `{"required_mounts": {"go": "the Go toolchain"}}`)
+	if warned := generate(t, directory).console.Warned(); !strings.Contains(warned, "go: the Go toolchain") {
+		t.Fatalf("the first gen warned:\n%s", warned)
+	}
+	// The second gen keeps the file, and the user has already been told about the placeholder.
+	if warned := generate(t, directory).console.Warned(); warned != "" {
+		t.Fatalf("the second gen warned:\n%s", warned)
+	}
+}

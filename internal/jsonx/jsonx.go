@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // RawValue is one JSON value as the file spells it.
@@ -172,14 +174,44 @@ func TypeName(raw json.RawMessage) string {
 	return "a number"
 }
 
-// Text renders a value as JSON.
-func Text(value any) json.RawMessage {
-	encoded, err := json.Marshal(value)
+// Text renders a value the way a reader of JSON writes it back: ASCII only, and no HTML escaping.
+func Text(value any) RawValue {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	// A config file is read by more than Go, and only Go escapes < > and & inside a string.
+	encoder.SetEscapeHTML(false)
 	// Every value box writes is a string, a list or an object, none of which can fail to encode.
-	if err != nil {
+	if err := encoder.Encode(value); err != nil {
 		panic(err)
 	}
-	return encoded
+	return escapeNonASCII(bytes.TrimRight(out.Bytes(), "\n"))
+}
+
+// escapeNonASCII spells every character above ASCII as \uXXXX, which is what a JSON writer does.
+func escapeNonASCII(encoded []byte) []byte {
+	if !bytes.ContainsFunc(encoded, func(letter rune) bool { return letter >= utf8.RuneSelf }) {
+		return encoded
+	}
+	var out bytes.Buffer
+	for _, letter := range string(encoded) {
+		writeEscaped(&out, letter)
+	}
+	return out.Bytes()
+}
+
+// writeEscaped writes one character, as itself below ASCII and as its code points above it.
+func writeEscaped(out *bytes.Buffer, letter rune) {
+	if letter < utf8.RuneSelf {
+		out.WriteRune(letter)
+		return
+	}
+	// A character outside the basic plane is written as the surrogate pair that stands for it.
+	if letter > 0xFFFF {
+		first, second := utf16.EncodeRune(letter)
+		fmt.Fprintf(out, "\\u%04x\\u%04x", first, second)
+		return
+	}
+	fmt.Fprintf(out, "\\u%04x", letter)
 }
 
 // Write renders an object the way a hand-edited file spells it: two spaces in, newline at the end.
@@ -190,8 +222,7 @@ func Write(object Object) []byte {
 	var out bytes.Buffer
 	out.WriteString("{\n")
 	for index, pair := range object {
-		key, _ := json.Marshal(pair.Key)
-		out.WriteString("  " + string(key) + ": " + indent(pair.Value))
+		out.WriteString("  " + string(Text(pair.Key)) + ": " + indent(pair.Value))
 		if index < len(object)-1 {
 			out.WriteString(",")
 		}

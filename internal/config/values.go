@@ -90,7 +90,26 @@ func ResolvePath(text string) string {
 	if text == "" {
 		return ""
 	}
-	return filepath.Clean(expandHome(text))
+	return tidy(expandHome(text))
+}
+
+// tidy drops what a reader of a path drops -- repeated slashes and "." -- and keeps every "..".
+func tidy(path string) string {
+	var kept []string
+	for _, part := range strings.Split(path, "/") {
+		// Collapsing ".." here would name a different directory whenever a symlink is in the way.
+		if part != "" && part != "." {
+			kept = append(kept, part)
+		}
+	}
+	joined := strings.Join(kept, "/")
+	if strings.HasPrefix(path, "/") {
+		return "/" + joined
+	}
+	if joined == "" {
+		return "."
+	}
+	return joined
 }
 
 // expandHome turns a leading ~ or ~name into the home directory it stands for.
@@ -98,13 +117,16 @@ func expandHome(text string) string {
 	if !strings.HasPrefix(text, "~") {
 		return text
 	}
-	name, rest, _ := strings.Cut(strings.TrimPrefix(text, "~"), "/")
+	name, rest, below := strings.Cut(strings.TrimPrefix(text, "~"), "/")
 	home, err := homeOf(name)
 	// A user this machine does not have is no home, so the path stays the text it was written as.
 	if err != nil {
 		return text
 	}
-	return filepath.Join(home, rest)
+	if !below {
+		return home
+	}
+	return home + "/" + rest
 }
 
 // homeOf is a named user's home directory, or the home of whoever runs box when none is named.

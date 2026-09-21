@@ -7,10 +7,10 @@ import (
 
 // Under joins a path to a directory, except that an absolute path names itself and wins outright.
 func Under(directory, path string) string {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
+	if strings.HasPrefix(path, "/") {
+		return tidy(path)
 	}
-	return filepath.Join(directory, path)
+	return tidy(directory + "/" + path)
 }
 
 // Resolve makes a path absolute with its symlinks followed, as far as the path exists.

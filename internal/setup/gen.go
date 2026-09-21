@@ -102,8 +102,13 @@ func (s Setup) writeMounts(workingDirectory string) error {
 		return err
 	}
 	filled := fill(provided, config.Pairs(required).Names(), config.MountPlaceholder)
-	if err := s.write(path, config.MountsFile, asJSON(filled), isFile(path) && len(filled) == len(provided)); err != nil {
+	kept := isFile(path) && len(filled) == len(provided)
+	if err := s.write(path, config.MountsFile, asJSON(filled), kept); err != nil {
 		return err
+	}
+	// A file gen left alone is one the user has already been warned about, so it is left quiet.
+	if kept {
+		return nil
 	}
 	s.warnPlaceholders(required, filled)
 	return nil
