@@ -21,6 +21,7 @@ func script(t *testing.T, body string) []string {
 	return []string{path}
 }
 
+// missingBinary is a name no machine has, which is how a command that cannot start is asked for.
 const missingBinary = "definitely-not-a-binary-on-this-machine"
 
 func TestCaptureReturnsWhatTheCommandPrinted(t *testing.T) {
