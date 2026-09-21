@@ -16,8 +16,7 @@ type Interrupts struct {
 // Watch answers every Ctrl-C that arrives until the channel closes.
 func (i Interrupts) Watch(signals <-chan os.Signal) {
 	for range signals {
-		// A child on the terminal was sent the same Ctrl-C and answers it itself, so box waits
-		// for it to finish and cleans up after it. See docs/signals.md.
+		// A child on the terminal answers its own Ctrl-C, so box waits. See docs/signals.md.
 		if i.Attached() {
 			continue
 		}

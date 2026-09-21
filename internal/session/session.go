@@ -131,8 +131,7 @@ func (s Session) start(settings config.Config, launch Launch, bundles []Bundle) 
 	create := CreateCommand(settings, launch.Project, launch.SandboxName)
 	// sbx has already said why it failed, and there is no sandbox to run in, clean up or keep.
 	if s.Deps.Run.Attach(create, environment).Code != 0 {
-		// Two runs can pick one name and the loser drops the winner's secret, which sbx has
-		// already injected into the running sandbox, so the winner keeps working regardless.
+		// The loser of a name race drops a secret sbx already injected, so the winner works on.
 		s.DropSecrets(settings.SecretHosts, launch.SandboxName)
 		s.Deps.Console.Warn("box: sbx create failed, so %s was never started.", launch.SandboxName)
 		return 1

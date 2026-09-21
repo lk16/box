@@ -70,13 +70,12 @@ func IsInstalled(version string) bool {
 	return version != "" && version != Devel
 }
 
-// Release is what a box was installed as: the version go install stamped, or nothing for a checkout.
+// Release is what a box was installed as: what go install stamped, or nothing for a checkout.
 func Release(info *debug.BuildInfo) string {
 	if info == nil {
 		return ""
 	}
-	// go install module@version embeds no VCS data, where a build from a checkout always does,
-	// and that copy is someone's work in progress. See docs/updates.md.
+	// Only a build from a checkout carries VCS data, and that copy is someone's work in progress.
 	for _, setting := range info.Settings {
 		if setting.Key == vcsRevision {
 			return ""
