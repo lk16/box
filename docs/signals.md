@@ -1,6 +1,7 @@
 # Ctrl-C
 
-`box run` exits 130 on a Ctrl-C, and the whole of the handling is in `cmd/box/main.go`.
+`box run` exits 130 on a Ctrl-C. `cmd/box/main.go` wires the signal up; what box does with
+one is in `internal/system/interrupts.go`.
 
 The subtlety is that `box run` hands the terminal to an interactive Claude session, and a Ctrl-C
 typed there goes to the whole foreground process group: box and the agent both get it. The agent

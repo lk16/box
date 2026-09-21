@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/lk16/box/internal/boxtest"
 	"github.com/lk16/box/internal/config"
 	"github.com/lk16/box/internal/jsonx"
+	"github.com/lk16/box/internal/project"
 	"github.com/lk16/box/internal/setup"
 	"github.com/lk16/box/internal/system"
 )
@@ -462,5 +464,54 @@ func TestGenWarnsAboutAPlaceholderOnlyOnTheFileItWrote(t *testing.T) {
 	// The second gen keeps the file, and the user has already been told about the placeholder.
 	if warned := generate(t, directory).console.Warned(); warned != "" {
 		t.Fatalf("the second gen warned:\n%s", warned)
+	}
+}
+
+func TestTheStarterConfigIsEveryDefaultButTheKitGenWrites(t *testing.T) {
+	want := []string{}
+	for _, key := range append(slices.Clone(config.SettingKeys), config.ContainerKeys...) {
+		if !slices.Contains(config.GroupSettings, key) {
+			want = append(want, key)
+		}
+	}
+	starter := setup.StarterConfig()
+	if !slices.Equal(starter.Keys(), want) {
+		t.Fatalf("the starter holds %v, want %v", starter.Keys(), want)
+	}
+	for _, key := range want {
+		held, _ := starter.Get(key)
+		// The kit is the one value gen fills in, since gen also writes the kit it points at.
+		if key == "kit" {
+			if string(held) != `"`+config.KitDir+`"` {
+				t.Fatalf("the starter gives kit %s", held)
+			}
+			continue
+		}
+		if wanted := string(jsonx.Text(config.Defaults[key])); key != config.RequiredMounts && string(held) != wanted {
+			t.Errorf("the starter gives %s %s, want %s", key, held, wanted)
+		}
+	}
+	if held, _ := starter.Get(config.RequiredMounts); string(held) != "{}" {
+		t.Errorf("the starter gives %s %s", config.RequiredMounts, held)
+	}
+}
+
+func TestGenLeavesAProjectBoxWillRunIn(t *testing.T) {
+	boxtest.Isolate(t)
+	directory := boxtest.GitInit(t, t.TempDir())
+	generate(t, directory)
+	// gen writes the .gitignore lines box would otherwise refuse to run without.
+	if err := project.RequireIgnoredLocalPaths(system.Commands{}, directory, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenLeavesAGroupBoxWillRunIn(t *testing.T) {
+	boxtest.Isolate(t)
+	directory := boxtest.GitInit(t, t.TempDir())
+	writeConfig(t, directory, `{"repos": `+declared+`}`)
+	generate(t, directory)
+	if err := project.RequireIgnoredLocalPaths(system.Commands{}, directory, ""); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/lk16/box/internal/update"
 )
 
+// main exits with whatever the command box was asked to run left behind.
 func main() {
 	os.Exit(run())
 }

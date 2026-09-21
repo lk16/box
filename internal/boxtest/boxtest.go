@@ -22,6 +22,8 @@ type Runner struct {
 	Unstartable func(arguments []string) error
 	Commands    [][]string
 	Stdin       []string
+	// Waits are the deadlines each timed command was given, in the order they were run.
+	Waits []time.Duration
 }
 
 // Capture records a command and answers it.
@@ -29,8 +31,9 @@ func (r *Runner) Capture(arguments []string) system.Result {
 	return r.record(arguments)
 }
 
-// Timed records a command and answers it, since a fake never runs out of time.
-func (r *Runner) Timed(arguments []string, _ time.Duration) system.Result {
+// Timed records a command and the wait it was given, since a fake never runs out of time.
+func (r *Runner) Timed(arguments []string, wait time.Duration) system.Result {
+	r.Waits = append(r.Waits, wait)
 	return r.record(arguments)
 }
 

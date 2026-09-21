@@ -412,3 +412,12 @@ func TestSettleSandboxRefsPutsARealSandboxsWorkOnARealBranch(t *testing.T) {
 		t.Fatalf("the ref is still there: %v", got)
 	}
 }
+
+func TestSuggestBranchNameGivesClaudeOneTurnAndNoMore(t *testing.T) {
+	run := newFixture(func([]string) system.Result { return system.Result{Stdout: "add-retry-logic\n"} })
+	run.session.SuggestBranchName("Add retry logic")
+	// Naming a branch is a courtesy, so the agent gets one turn and the run is not held up.
+	if len(run.runner.Waits) != 1 || run.runner.Waits[0] != session.BranchNameTimeout {
+		t.Fatalf("claude was given %v", run.runner.Waits)
+	}
+}

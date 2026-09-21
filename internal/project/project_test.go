@@ -594,3 +594,39 @@ func TestRequireMatchingVersionsSkipsAMachineWithoutSbx(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRequireSettingsAcceptsACompleteConfig(t *testing.T) {
+	settings := config.Config{
+		Name: "demo", Memory: "8g", CPUs: "2", Model: "claude-opus-5", Kit: "registry/kit",
+		Template: "frlg-sandbox:1", Mounts: []string{"/cache:ro"},
+	}
+	if err := project.RequireSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOwnMountsAnswerTheDeclarationOfTheDirectoryBoxRunsIn(t *testing.T) {
+	directory := t.TempDir()
+	boxtest.WriteFile(t, filepath.Join(directory, config.MountsFile), `{"cache": "/cache"}`)
+	provided, err := config.ReadPathsFile(filepath.Join(directory, config.MountsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := config.Pairs{{Name: "cache", Value: "the build cache"}}
+	ordered, err := config.OrderMounts(required, provided)
+	if err != nil || len(ordered) != 1 || ordered[0] != "/cache" {
+		t.Fatalf("ordered %v, %v", ordered, err)
+	}
+}
+
+func TestOwnMountsAreEmptyWithoutADeclaration(t *testing.T) {
+	directory := t.TempDir()
+	provided, err := config.ReadPathsFile(filepath.Join(directory, config.MountsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordered, err := config.OrderMounts(nil, provided)
+	if err != nil || len(ordered) != 0 {
+		t.Fatalf("ordered %v, %v", ordered, err)
+	}
+}
