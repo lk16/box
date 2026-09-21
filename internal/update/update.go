@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/lk16/box/internal/config"
@@ -21,6 +22,9 @@ const (
 
 // Devel is what go build stamps a binary with, which is a checkout rather than an install.
 const Devel = "(devel)"
+
+// vcsRevision is the build setting only a binary built from a checkout carries.
+const vcsRevision = "vcs.revision"
 
 // How often the check runs, and how long it waits, so a command is never held up by it.
 const (
@@ -64,6 +68,24 @@ func CachePath() string {
 // IsInstalled says whether this box came from go install, which is the only copy worth nagging.
 func IsInstalled(version string) bool {
 	return version != "" && version != Devel
+}
+
+// Release is what a box was installed as: the version go install stamped, or nothing for a checkout.
+func Release(info *debug.BuildInfo) string {
+	if info == nil {
+		return ""
+	}
+	// go install module@version embeds no VCS data, where a build from a checkout always does,
+	// and that copy is someone's work in progress. See docs/updates.md.
+	for _, setting := range info.Settings {
+		if setting.Key == vcsRevision {
+			return ""
+		}
+	}
+	if info.Main.Version == Devel {
+		return ""
+	}
+	return info.Main.Version
 }
 
 // ParseLatest pulls the newest release out of what the module proxy answered.

@@ -36,16 +36,13 @@ func run() int {
 		Download: system.Web{Timeout: update.Timeout},
 		Now:      time.Now,
 	}
-	return cli.CLI{Deps: deps, Version: version()}.Main(os.Args[1:], workingDirectory)
+	return cli.CLI{Deps: deps, Version: release()}.Main(os.Args[1:], workingDirectory)
 }
 
-// version is the release go install stamped this binary with, or "(devel)" for a checkout.
-func version() string {
-	info, read := debug.ReadBuildInfo()
-	if !read {
-		return ""
-	}
-	return info.Main.Version
+// release is what this box was installed as, which is nothing at all when it came from a checkout.
+func release() string {
+	info, _ := debug.ReadBuildInfo()
+	return update.Release(info)
 }
 
 // watchInterrupts turns a Ctrl-C into an exit code rather than a half-finished run.

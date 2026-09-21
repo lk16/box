@@ -10,10 +10,13 @@ way a single script could. It compares **releases** instead: the version the bin
 with at install time, against the newest version the module proxy knows.
 
 - The running version comes from `runtime/debug.ReadBuildInfo`. `go install <module>@<tag>` stamps
-  the tag; `go build` in a checkout stamps `(devel)`.
-- `(devel)` is a copy someone is working on, and git is how that one is updated, so the check says
-  nothing about it and `box self-update` refuses it. This is the binary's equivalent of the script
-  refusing a `box.py` that git tracks.
+  the tag and embeds no VCS data; a build from a checkout embeds `vcs.revision`, and stamps either
+  `(devel)` or a pseudo-version derived from the commit.
+- So a binary carrying `vcs.revision` is a copy someone is working on, whatever version it claims,
+  and git is how that one is updated: the check says nothing about it and `box self-update` refuses
+  it. This is the binary's equivalent of the script refusing a `box.py` that git tracks. Going by
+  the version string alone is not enough — `go install ./cmd/box` in a clone stamps a
+  pseudo-version that looks exactly like a release.
 - The newest version comes from `https://proxy.golang.org/<module>/@latest`, whose JSON answer
   holds a `Version` field. `BOX_UPDATE_URL` points the check at something else — a fork, a private
   proxy — and an empty value switches it off, costing no round trip at all.

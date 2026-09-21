@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -374,5 +375,40 @@ func TestSelfUpdateSaysWhenGoIsNotOnPathToTakeIt(t *testing.T) {
 	}
 	if len(run.runner.Commands) != 0 {
 		t.Fatalf("ran %v", run.runner.Commands)
+	}
+}
+
+// buildInfo is what the runtime hands back for a binary built one way or another.
+func buildInfo(version string, settings ...string) *debug.BuildInfo {
+	info := &debug.BuildInfo{Main: debug.Module{Version: version}}
+	for index := 0; index+1 < len(settings); index += 2 {
+		info.Settings = append(info.Settings, debug.BuildSetting{Key: settings[index], Value: settings[index+1]})
+	}
+	return info
+}
+
+func TestAReleaseIsWhatGoInstallStamped(t *testing.T) {
+	if got := update.Release(buildInfo("v0.2.0")); got != "v0.2.0" {
+		t.Fatalf("read %q", got)
+	}
+}
+
+func TestABuildFromACheckoutIsNoRelease(t *testing.T) {
+	// go install ./cmd/box in a clone stamps a pseudo-version that looks exactly like a release.
+	pseudo := buildInfo("v0.0.0-20260921141901-ead7317999b4", "vcs", "git", "vcs.revision", "ead7317")
+	if got := update.Release(pseudo); got != "" {
+		t.Fatalf("a checkout read as release %q", got)
+	}
+}
+
+func TestADevelBuildIsNoRelease(t *testing.T) {
+	if got := update.Release(buildInfo(update.Devel)); got != "" {
+		t.Fatalf("a devel build read as release %q", got)
+	}
+}
+
+func TestABinaryWithNoBuildInfoIsNoRelease(t *testing.T) {
+	if got := update.Release(nil); got != "" {
+		t.Fatalf("read %q", got)
 	}
 }
