@@ -1,33 +1,47 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.0.1
+    rev: v4.5.0
     hooks:
-      - id: check-merge-conflict
-      - id: debug-statements
-      - id: check-yaml
-      - id: check-json
       - id: trailing-whitespace
       - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
       - id: mixed-line-ending
-        args: ["--fix=lf"]
+        args: [--fix=lf]
 
+  # Go hooks using the toolchain already on PATH, so there is nothing extra to install.
   - repo: local
     hooks:
-      - id: ruff-check
-        name: ruff check
-        entry: uv run ruff check --fix
+      - id: go-fmt
+        name: go fmt
+        description: Format Go code
+        entry: go fmt ./...
         language: system
-        types: [python]
+        types: [go]
+        pass_filenames: false
 
-      - id: ruff-format
-        name: ruff format
-        entry: uv run ruff format
+      - id: go-vet
+        name: go vet
+        description: Check Go code for correctness
+        entry: go vet ./...
         language: system
-        types: [python]
+        types: [go]
+        pass_filenames: false
 
-      - id: mypy
-        name: mypy --strict
-        entry: uv run mypy --strict
+      - id: go-mod-tidy
+        name: go mod tidy
+        description: Tidy Go modules
+        entry: go mod tidy
         language: system
-        types: [python]
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: run golangci-lint
+        description: Lint Go code
+        entry: golangci-lint run --fix ./...
+        language: system
+        types: [go]
         pass_filenames: false
