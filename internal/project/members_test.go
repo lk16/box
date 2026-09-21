@@ -107,3 +107,68 @@ func TestRequireSendsAProjectWithNoConfigToGen(t *testing.T) {
 	directory := t.TempDir()
 	wantError(t, project.Require(real, config.Config{}, projectAt(directory), "/secrets/token"), "Run box gen")
 }
+
+// secretsFor builds the settings of a project declaring one secret, and nothing else.
+func secretsFor(t *testing.T, declared bool) config.Config {
+	t.Helper()
+	if !declared {
+		return config.Config{}
+	}
+	return config.Config{SecretHosts: []config.Secret{{Name: "GITLAB_TOKEN", Host: "gitlab.com"}}}
+}
+
+func TestSecretsAreNotLookedForWhenTheProjectDeclaresNone(t *testing.T) {
+	boxtest.Unset(t, config.SecretsEnv)
+	if err := project.RequireSecrets(secretsFor(t, false), projectAt(t.TempDir()), ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestADeclaredSecretWithNoValuesFileIsRejected(t *testing.T) {
+	boxtest.Unset(t, config.SecretsEnv)
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(t.TempDir()), "")
+	wantError(t, err, config.SecretsEnv)
+}
+
+func TestAValuesFileInsideTheRepositoryIsRejected(t *testing.T) {
+	directory := t.TempDir()
+	inside := filepath.Join(directory, "box.env")
+	boxtest.WriteFile(t, inside, "GITLAB_TOKEN=glpat-abc\n")
+	t.Setenv(config.SecretsEnv, inside)
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), "")
+	wantError(t, err, "can read everything there")
+}
+
+func TestAValuesFileOutsideEverythingTheSandboxReadsIsAccepted(t *testing.T) {
+	directory := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "box.env")
+	boxtest.WriteFile(t, outside, "GITLAB_TOKEN=glpat-abc\n")
+	t.Setenv(config.SecretsEnv, outside)
+	if err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAValuesFileMissingADeclaredNameIsRejected(t *testing.T) {
+	directory := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "box.env")
+	boxtest.WriteFile(t, outside, "OTHER=1\n")
+	t.Setenv(config.SecretsEnv, outside)
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), "")
+	wantError(t, err, "no value for GITLAB_TOKEN")
+}
+
+func TestATokenFileInsideTheRepositoryIsRejectedEvenWithNoDeclaredSecrets(t *testing.T) {
+	directory := t.TempDir()
+	inside := filepath.Join(directory, "token")
+	boxtest.WriteFile(t, inside, "sk-ant-secret\n")
+	err := project.RequireSecrets(secretsFor(t, false), projectAt(directory), inside)
+	wantError(t, err, "can read everything there")
+}
+
+func TestTheLocalPathsBoxRefusesToCommitAreTheMountsAndTheReposFiles(t *testing.T) {
+	names := project.LocalPathNames()
+	if len(names) != 2 || names[0] != config.MountsFile || names[1] != config.ReposFile {
+		t.Fatalf("the local paths are %v", names)
+	}
+}
