@@ -77,7 +77,8 @@ func AsObject(raw json.RawMessage) (Object, bool) {
 		if err := decoder.Decode(&value); err != nil {
 			return nil, false
 		}
-		object = append(object, Pair{Key: fmt.Sprint(key), Value: value})
+		// A repeated key is the later value at the earlier place, which is what a reader keeps.
+		object = object.Set(fmt.Sprint(key), value)
 	}
 	return object, true
 }

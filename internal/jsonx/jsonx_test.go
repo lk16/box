@@ -96,3 +96,16 @@ func TestANumberIsSpelledTheWayAJSONReaderSpellsIt(t *testing.T) {
 		}
 	}
 }
+
+func TestARepeatedKeyKeepsTheLastValueAtTheFirstPlace(t *testing.T) {
+	object, ok := jsonx.AsObject(json.RawMessage(`{"a": 1, "b": 2, "a": 3}`))
+	if !ok {
+		t.Fatal("an object was not read as one")
+	}
+	if got := object.Keys(); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("keys came back as %v", got)
+	}
+	if value, _ := object.Get("a"); string(value) != "3" {
+		t.Fatalf("a came back as %s", value)
+	}
+}
