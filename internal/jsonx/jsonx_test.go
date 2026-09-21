@@ -83,3 +83,16 @@ func TestAnEmptyObjectIsWrittenAsOne(t *testing.T) {
 		t.Fatalf("written as %q", got)
 	}
 }
+
+func TestANumberIsSpelledTheWayAJSONReaderSpellsIt(t *testing.T) {
+	for raw, want := range map[string]string{
+		"4": "4", "-1": "-1", "-0": "0", "4.5": "4.5", "4.0": "4.0",
+		"1e3": "1000.0", "1e20": "1e+20", "0.1": "0.1",
+		"123456789012345678901234567890": "123456789012345678901234567890",
+	} {
+		got, ok := jsonx.AsNumber(json.RawMessage(raw))
+		if !ok || got != want {
+			t.Errorf("%s spelled %q, want %q", raw, got, want)
+		}
+	}
+}

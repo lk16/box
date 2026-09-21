@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -110,7 +111,7 @@ func AsString(raw json.RawMessage) (string, bool) {
 	return text, true
 }
 
-// AsNumber returns a number exactly as the file spelled it, and says whether it was one.
+// AsNumber spells a number the way a JSON reader does, and says whether it was one.
 func AsNumber(raw json.RawMessage) (string, bool) {
 	if isNull(raw) {
 		return "", false
@@ -119,7 +120,34 @@ func AsNumber(raw json.RawMessage) (string, bool) {
 	if err := json.Unmarshal(raw, &number); err != nil {
 		return "", false
 	}
-	return number.String(), true
+	text := number.String()
+	// A whole number spells itself, however long, since no float could hold all of its digits.
+	if !strings.ContainsAny(text, ".eE") {
+		return wholeNumber(text), true
+	}
+	return fraction(number)
+}
+
+// wholeNumber drops what a reader of the digits would not write back, such as the sign on -0.
+func wholeNumber(text string) string {
+	whole, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return text
+	}
+	return strconv.FormatInt(whole, 10)
+}
+
+// fraction spells a number written with a point or an exponent, which always reads back with one.
+func fraction(number json.Number) (string, bool) {
+	value, err := number.Float64()
+	if err != nil {
+		return number.String(), true
+	}
+	text := strconv.FormatFloat(value, 'g', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		text += ".0"
+	}
+	return text, true
 }
 
 // TypeName names a value's type the way the file that holds it spells it.
