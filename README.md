@@ -10,6 +10,8 @@ box runs Claude Code inside a disposable Docker sandbox ([sbx](https://docs.dock
 
 ## Install
 
+With Go 1.24 or newer:
+
 ```sh
 go install github.com/lk16/box/cmd/box@latest
 ```
@@ -34,9 +36,9 @@ Everything below runs from the root of the repository you want an agent to work 
 **Once per machine** — point box at a Claude token:
 
 ```sh
-claude setup-token                                          # prints a token
-mkdir -p ~/.secrets && $EDITOR ~/.secrets/claude-oauth.token   # save it there
-export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token   # direnv is a good home for this
+claude setup-token                                            # prints a token
+mkdir -p ~/.secrets && $EDITOR ~/.secrets/claude-oauth.token  # save it there
+export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token  # direnv is a good home for this
 ```
 
 **Once per project** — write the setup and commit it:
