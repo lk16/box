@@ -2,6 +2,8 @@ package system_test
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,4 +214,89 @@ func TestAnAttachedChildIsCountedWhileItRuns(t *testing.T) {
 	if system.ChildAttached() {
 		t.Fatal("a child was still counted after it finished")
 	}
+}
+
+func TestPrintWritesOneLineToStdout(t *testing.T) {
+	var out, problems bytes.Buffer
+	console := system.Console{Out: &out, Err: &problems}
+	console.Print("wrote %s", "the file")
+	if out.String() != "wrote the file\n" || problems.Len() != 0 {
+		t.Fatalf("printed %q and warned %q", out.String(), problems.String())
+	}
+}
+
+func TestGetReadsWhatTheURLServes(t *testing.T) {
+	served := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"Version": "v0.2.0"}`))
+	}))
+	defer served.Close()
+	body, err := system.Web{Timeout: 5 * time.Second}.Get(served.URL)
+	if err != nil || string(body) != `{"Version": "v0.2.0"}` {
+		t.Fatalf("read %q, %v", body, err)
+	}
+}
+
+func TestGetRefusesAnAnswerThatIsNotASuccess(t *testing.T) {
+	served := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusForbidden)
+	}))
+	defer served.Close()
+	_, err := system.Web{Timeout: 5 * time.Second}.Get(served.URL)
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("answered %v", err)
+	}
+}
+
+func TestGetReportsAURLItCannotReach(t *testing.T) {
+	if _, err := (system.Web{Timeout: time.Second}).Get("http://127.0.0.1:1/nothing"); err == nil {
+		t.Fatal("an unreachable URL was read")
+	}
+}
+
+func TestTheTerminalReadsTheLineTypedBackAtIt(t *testing.T) {
+	withStdin(t, "2\n")
+	prompter := &system.Terminal{}
+	if answer, asked := prompter.Ask("one or two? "); !asked || answer != "2" {
+		t.Fatalf("answered %q, %v", answer, asked)
+	}
+}
+
+func TestTheTerminalKeepsItsPlaceAcrossQuestions(t *testing.T) {
+	withStdin(t, "yes\n2\n")
+	prompter := &system.Terminal{}
+	first, _ := prompter.Ask("one or two? ")
+	second, asked := prompter.Ask("one or two? ")
+	if first != "yes" || second != "2" || !asked {
+		t.Fatalf("answered %q then %q", first, second)
+	}
+}
+
+func TestTheTerminalReportsInputThatEnded(t *testing.T) {
+	withStdin(t, "")
+	if _, asked := (&system.Terminal{}).Ask("one or two? "); asked {
+		t.Fatal("an ended input was read as an answer")
+	}
+}
+
+func TestAPipeIsNobodyToAsk(t *testing.T) {
+	withStdin(t, "2\n")
+	if (&system.Terminal{}).Interactive() {
+		t.Fatal("a pipe was taken for someone to ask")
+	}
+}
+
+// withStdin points os.Stdin at a pipe holding the given text for the length of one test.
+func withStdin(t *testing.T, contents string) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString(contents); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	was := os.Stdin
+	os.Stdin = reader
+	t.Cleanup(func() { os.Stdin = was; _ = reader.Close() })
 }

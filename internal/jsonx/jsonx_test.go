@@ -109,3 +109,33 @@ func TestARepeatedKeyKeepsTheLastValueAtTheFirstPlace(t *testing.T) {
 		t.Fatalf("a came back as %s", value)
 	}
 }
+
+func TestAListIsReadAsItsValues(t *testing.T) {
+	values, ok := jsonx.AsArray(json.RawMessage(`["a", "b"]`))
+	if !ok || len(values) != 2 || string(values[0]) != `"a"` {
+		t.Fatalf("read %v, %v", values, ok)
+	}
+	if _, ok := jsonx.AsArray(json.RawMessage(`{"a": 1}`)); ok {
+		t.Fatal("an object was read as a list")
+	}
+	if _, ok := jsonx.AsArray(json.RawMessage(`null`)); ok {
+		t.Fatal("null was read as a list")
+	}
+}
+
+func TestTextIsReadAsTheStringItHolds(t *testing.T) {
+	if text, ok := jsonx.AsString(json.RawMessage(`"hello"`)); !ok || text != "hello" {
+		t.Fatalf("read %q, %v", text, ok)
+	}
+	for _, raw := range []string{`5`, `null`, `["a"]`} {
+		if _, ok := jsonx.AsString(json.RawMessage(raw)); ok {
+			t.Errorf("%s was read as text", raw)
+		}
+	}
+}
+
+func TestNothingAtAllIsNamedAsSuch(t *testing.T) {
+	if got := jsonx.TypeName(json.RawMessage("  ")); got != "nothing" {
+		t.Fatalf("named %q", got)
+	}
+}
