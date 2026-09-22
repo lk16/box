@@ -125,6 +125,18 @@ func TestRunClonesEveryMemberIntoTheFreshSandbox(t *testing.T) {
 	wantCommand(t, run.runner, "sbx", "exec", "demo-1", "git", "init", "-q", memberPathUnder(directory))
 }
 
+func TestRunSaysWhichMemberThisMachineDoesNotHave(t *testing.T) {
+	boxtest.Isolate(t)
+	directory := t.TempDir()
+	boxes := boxtest.MakeRepository(t, filepath.Join(directory, "boxes"))
+	settings := groupConfig(t, boxes, missingMember())
+	run, code := runSession(t, settings, session.Launch{Project: projectAt(boxes), SandboxName: "demo-1"}, sandboxRun(false, 0))
+	if code != 0 {
+		t.Fatalf("exited %d", code)
+	}
+	wantWarning(t, run.console, "billing-api is not on this machine")
+}
+
 func TestRunTakesTheSandboxBackWhenAMemberCannotBeCloned(t *testing.T) {
 	boxtest.Isolate(t)
 	directory := t.TempDir()

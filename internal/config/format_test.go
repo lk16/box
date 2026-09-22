@@ -117,6 +117,14 @@ func TestFormatSaysWhenAMemberBringsNothing(t *testing.T) {
 	}
 }
 
+func TestFormatSaysAMemberIsNotOnThisMachine(t *testing.T) {
+	settings := config.MemberSettings{Member: missingMember()}
+	rendered := config.Format(configWithMember(t, settings), "", "")
+	if !strings.Contains(rendered, "billing-api: "+config.MissingHere) {
+		t.Fatalf("a member this machine does not have reads:\n%s", rendered)
+	}
+}
+
 func TestFormatNamesAnEmptyListOfMounts(t *testing.T) {
 	built := fullConfig()
 	built.Mounts = nil

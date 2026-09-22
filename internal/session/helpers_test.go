@@ -20,6 +20,13 @@ var member = config.Member{
 	Path:      "../billing-api",
 }
 
+// missingMember is that same member as one this machine does not have at all.
+func missingMember() config.Member {
+	absent := member
+	absent.Path, absent.Missing = "", true
+	return absent
+}
+
 // fixture is one run's fakes, and the session that reaches the system only through them.
 type fixture struct {
 	runner  *boxtest.Runner

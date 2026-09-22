@@ -23,6 +23,13 @@ var member = config.Member{
 	Path:      "../billing-api",
 }
 
+// absent builds the same member as one this machine does not have at all.
+func absent() config.Member {
+	missing := member
+	missing.Path, missing.Missing = "", true
+	return missing
+}
+
 // at builds the same member kept somewhere else on this machine.
 func at(path string) config.Member {
 	moved := member
@@ -209,6 +216,29 @@ func TestThePromptNamesEachMemberAndWhatItStartsOn(t *testing.T) {
 	want := config.Resolve(filepath.Join(directory, "billing-api")) + " on develop"
 	if !strings.Contains(prompt, want) || !strings.Contains(prompt, "comes back to the host") {
 		t.Fatalf("the prompt reads:\n%s", prompt)
+	}
+}
+
+func TestThePromptNamesEveryRepositoryThisHostDoesNotHave(t *testing.T) {
+	prompt := project.MissingMembersPrompt(groupConfig(t, t.TempDir(), absent()))
+	if !strings.Contains(prompt, "  billing-api: "+member.GitOrigin) || !strings.Contains(prompt, "no clone") {
+		t.Fatalf("the prompt reads:\n%s", prompt)
+	}
+}
+
+func TestThePromptSaysNothingAboutMissingMembersWhenThisHostHasThemAll(t *testing.T) {
+	if got := project.MissingMembersPrompt(groupConfig(t, t.TempDir(), member)); got != "" {
+		t.Fatalf("said %q", got)
+	}
+}
+
+func TestAMemberThisHostDoesNotHaveIsNoPathTheSandboxReads(t *testing.T) {
+	settings := groupConfig(t, "/work/boxes", absent())
+	if got := project.ReachablePaths(settings, projectAt("/work/boxes")); len(got) != 1 {
+		t.Fatalf("reachable: %v", got)
+	}
+	if got := project.Checkouts(settings, projectAt("/work/boxes")); len(got) != 1 {
+		t.Fatalf("work comes back to: %v", got)
 	}
 }
 

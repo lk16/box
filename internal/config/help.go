@@ -68,7 +68,8 @@ track can go with it.`
 
 	UnplacedMembersHelp = `%s is missing a path for:
 %s
-Clone each one this machine does not have yet, then put where it sits there; box gen adds every name.`
+Clone each one this machine does not have yet, then put where it sits there; box gen adds every name.
+Give a member null instead of a path to run without it on this machine.`
 
 	OriginMismatchHelp = `%s sits at %s, whose origin is %s,
 but ` + ConfigFile + ` gives it the ` + MemberOrigin + ` %s.

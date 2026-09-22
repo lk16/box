@@ -18,6 +18,8 @@ type Member struct {
 	Branch    string
 	GitOrigin string
 	Path      string
+	// Missing is what a null in the repos file says: this machine does not have this member.
+	Missing bool
 }
 
 // MemberSettings is what a member's own .box/ adds to the session it is part of.
@@ -68,7 +70,10 @@ func ToMember(name string, raw json.RawMessage, paths Pairs) (Member, error) {
 	if err != nil {
 		return Member{}, err
 	}
-	return Member{Name: name, Branch: branch, GitOrigin: origin, Path: paths.Get(name)}, nil
+	return Member{
+		Name: name, Branch: branch, GitOrigin: origin,
+		Path: paths.Get(name), Missing: paths.Null(name),
+	}, nil
 }
 
 // rejectUnknownMemberKeys refuses a declaration holding a field box would silently ignore.
@@ -161,6 +166,33 @@ func DescribeMembers(members []Member) string {
 	return strings.Join(lines, "\n")
 }
 
+// asPlacements reads a repos file's values, where a null stands for a member this machine has none of.
+func asPlacements(path string, object jsonx.Object) (Pairs, error) {
+	placements := make(Pairs, 0, len(object))
+	for _, member := range object {
+		// A null is the one answer that is no path: this machine does not have this member at all.
+		if jsonx.IsNull(member.Value) {
+			placements = append(placements, Pair{Name: member.Key, Null: true})
+			continue
+		}
+		text, err := asText(path, member.Key, member.Value)
+		if err != nil {
+			return nil, err
+		}
+		placements = append(placements, Pair{Name: member.Key, Value: text})
+	}
+	return placements, nil
+}
+
+// ReadReposFile reads where each member sits on this machine, or nothing when there is no file.
+func ReadReposFile(path string) (Pairs, error) {
+	object, err := readNamedPaths(path)
+	if object == nil || err != nil {
+		return nil, err
+	}
+	return asPlacements(path, object)
+}
+
 // RequirePlacedMembers refuses a repos file that does not give every declared member a path, and only those.
 func RequirePlacedMembers(members []Member, paths Pairs, reposFile string) error {
 	var unknown []string
@@ -175,7 +207,8 @@ func RequirePlacedMembers(members []Member, paths Pairs, reposFile string) error
 	}
 	var unplaced []Member
 	for _, member := range members {
-		if member.Path == "" {
+		// A member answered with a null is placed: this machine deliberately does not have it.
+		if member.Path == "" && !member.Missing {
 			unplaced = append(unplaced, member)
 		}
 	}
@@ -188,7 +221,7 @@ func RequirePlacedMembers(members []Member, paths Pairs, reposFile string) error
 // ReadRepos reads the declared members, each placed where this machine's repos file says it sits.
 func ReadRepos(workingDirectory string, raw json.RawMessage) ([]Member, error) {
 	reposFile := filepath.Join(workingDirectory, ReposFile)
-	paths, err := ReadPathsFile(reposFile)
+	paths, err := ReadReposFile(reposFile)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +255,10 @@ func memberKit(directory, kit string) string {
 
 // ReadMemberSettings reads what a member's own .box/ adds, which is nothing at all when it has none.
 func ReadMemberSettings(workingDirectory string, member Member) (MemberSettings, error) {
+	// A member this machine does not have sits nowhere, so there is no .box/ of its own to read.
+	if member.Missing {
+		return MemberSettings{Member: member}, nil
+	}
 	directory := MemberPath(workingDirectory, member)
 	path := filepath.Join(directory, ConfigFile)
 	// A member with no box setup of its own is a repository to clone and nothing more.

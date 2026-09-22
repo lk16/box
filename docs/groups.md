@@ -42,6 +42,21 @@ Paths are relative to the folder box runs in, and a leading `~` expands. After a
 from. A name with no path, an empty one, or one the config does not declare is an error. Groups may
 share members.
 
+A machine that does not have a member at all answers it with `null` rather than a path:
+
+```json
+{
+  "billing-api": "../../billing-api",
+  "kubernetes": null
+}
+```
+
+That member is left out of the whole run: it is never checked, fetched, cloned into the sandbox or
+fetched back from it, and nothing it declares of its own is read. box says on stderr which members
+it is running without, and the agent is told they are declared but not there, so it can say what it
+could not do. `box gen` never writes a `null` itself — it writes the empty path that is an error
+until someone fills it in — and it keeps a `null` that is already there.
+
 ## What box checks and does
 
 Before anything is created, box checks that each path is a clone of the `git_origin` it is declared

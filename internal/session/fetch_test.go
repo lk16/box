@@ -109,6 +109,26 @@ func TestWhatGitSaidAboutAFetchFollowsTheMemberItIsAbout(t *testing.T) {
 	}
 }
 
+func TestOnlyTheMembersThisMachineHasAreFetchedAtOnce(t *testing.T) {
+	// The fetches run at once, so what they are for is collected the way they run.
+	var asking sync.Mutex
+	var fetched []string
+	run := newFixture(func(arguments []string) system.Result {
+		if path := fetchedPath(arguments); path != "" {
+			asking.Lock()
+			defer asking.Unlock()
+			fetched = append(fetched, path)
+		}
+		return system.Result{}
+	})
+	if err := bundleGroup(t, run, append(membersNamed("alpha"), missingMember())...); err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched) != 1 || !strings.HasSuffix(fetched[0], "alpha") {
+		t.Fatalf("the fetches were for %v", fetched)
+	}
+}
+
 func TestAFetchThatFailedIsAskedAgainWithTheTerminal(t *testing.T) {
 	run := newFixture(failFirstFetch())
 	if err := bundleGroup(t, run, membersNamed("alpha")...); err != nil {

@@ -85,14 +85,17 @@ func AsObject(raw json.RawMessage) (Object, bool) {
 	return object, true
 }
 
-// isNull says whether a value is JSON's null, which unmarshals into anything without complaint.
-func isNull(raw json.RawMessage) bool {
+// Null is JSON's null, which a file writes where it has no value to give at all.
+var Null = RawValue("null")
+
+// IsNull says whether a value is JSON's null, which unmarshals into anything without complaint.
+func IsNull(raw json.RawMessage) bool {
 	return strings.TrimSpace(string(raw)) == "null"
 }
 
 // AsArray reads a value as a list of raw values, and says whether it was one.
 func AsArray(raw json.RawMessage) ([]json.RawMessage, bool) {
-	if isNull(raw) {
+	if IsNull(raw) {
 		return nil, false
 	}
 	var values []json.RawMessage
@@ -104,7 +107,7 @@ func AsArray(raw json.RawMessage) ([]json.RawMessage, bool) {
 
 // AsString reads a value as text, and says whether it was text.
 func AsString(raw json.RawMessage) (string, bool) {
-	if isNull(raw) {
+	if IsNull(raw) {
 		return "", false
 	}
 	var text string
@@ -116,7 +119,7 @@ func AsString(raw json.RawMessage) (string, bool) {
 
 // AsNumber spells a number the way a JSON reader does, and says whether it was one.
 func AsNumber(raw json.RawMessage) (string, bool) {
-	if isNull(raw) {
+	if IsNull(raw) {
 		return "", false
 	}
 	var number json.Number

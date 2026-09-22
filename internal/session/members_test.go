@@ -90,6 +90,19 @@ func TestNothingIsFetchedWithoutMembers(t *testing.T) {
 	}
 }
 
+func TestAMemberThisMachineDoesNotHaveIsNeverFetched(t *testing.T) {
+	directory := t.TempDir()
+	boxes := boxtest.MakeRepository(t, filepath.Join(directory, "boxes"))
+	run := newFixture(func([]string) system.Result { return system.Result{} })
+	bundles, err := run.session.BundleMembers(groupConfig(t, boxes, missingMember()), projectAt(boxes), directory)
+	if err != nil || len(bundles) != 0 {
+		t.Fatalf("bundled %v, %v", bundles, err)
+	}
+	if len(run.runner.Commands) != 0 {
+		t.Fatalf("a member this machine does not have ran %v", run.runner.Commands)
+	}
+}
+
 func TestTheCloneCommandsCopyTheBundleAndBuildACloneFromIt(t *testing.T) {
 	directory := t.TempDir()
 	commands := session.CloneCommands(bundleAt(directory), "demo-1")

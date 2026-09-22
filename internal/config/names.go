@@ -19,6 +19,9 @@ const (
 	KitSpecFile = KitDir + "/spec.yaml"
 )
 
+// MissingHere is what box config shows for a member the repos file answers with a null.
+const MissingHere = "not on this machine"
+
 // MountPlaceholder is what box gen writes where it cannot know the path, so an unfilled mount fails loudly.
 const MountPlaceholder = "/placeholder/for/real/path"
 

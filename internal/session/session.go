@@ -96,6 +96,7 @@ func systemPrompt(settings config.Config, proj project.Project) (string, error) 
 		proj.StartedInPrompt(),
 		own,
 		project.MembersPrompt(settings, proj),
+		project.MissingMembersPrompt(settings),
 	}
 	return config.BuildSystemPrompt(append(parts, members...)), nil
 }
@@ -109,12 +110,20 @@ func (s Session) Run(settings config.Config, launch Launch) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
+	s.warnMissingMembers(settings)
 	bundles, err := s.BundleMembers(settings, launch.Project, directory)
 	if err != nil {
 		s.Deps.Console.Warn("box: %s", err)
 		return 1
 	}
 	return s.start(settings, launch, bundles)
+}
+
+// warnMissingMembers names the members this machine has none of, so a run is never quietly short one.
+func (s Session) warnMissingMembers(settings config.Config) {
+	for _, member := range settings.MissingRepos() {
+		s.Deps.Console.Warn("box: %s is not on this machine, so this sandbox runs without it", member.Name)
+	}
 }
 
 // start creates the sandbox, clones the members into it, runs Claude, and cleans up afterwards.

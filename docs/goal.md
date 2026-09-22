@@ -242,6 +242,14 @@ members `repos` names.
   quietly left out is a question the agent cannot answer, and `box gen` writes an empty path only
   because the path is the one thing it cannot know. A message about a member's path gives the full
   path, since a relative one written from inside `.box/` is easy to count one `..` wrong.
+- A `null` path is the one way to run without a member, and only a person writes it: a machine that
+  does not have a repository the group declares says so once, rather than a teammate editing the
+  shared config every time. Such a member is left out of everything the run creates, and nothing of
+  its own is read, since there is no path to read it from. It is not quiet about it either — box
+  names it on stderr and the agent is told it is declared and absent, so the difference between
+  "left out on purpose" and "forgotten" never reaches the agent as a puzzle.
+  `box gen` writes the empty path that is an error and never a `null`, since the file it is filling
+  in cannot say what this machine has; it keeps a `null` a person wrote.
 - Before anything is created, each path's `origin` has to match its `git_origin` once both are
   reduced to host and path. The user, the port, the scheme and a trailing `.git` say how one
   teammate reaches a repository rather than which one it is, so every spelling of it must agree,
