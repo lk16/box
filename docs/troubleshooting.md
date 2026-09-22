@@ -13,7 +13,7 @@ The refusals you are most likely to meet, and what to do about each:
 | `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |
 | `quotes its value` | drop the quotes around the value: docker would keep them, so box refuses the line |
 | `has no path on this machine for` | give the mount it lists a path in `.box/mounts.json`, or have an agent do it with `box mount-prompt` |
-| `is missing a path for` | clone each member it lists, then put where it sits in `.box/repos.json`; `box gen` adds every declared name |
+| `is missing a path for` | clone each member it lists, then put where it sits in `.box/repos.json`; `box gen` adds every declared name, and `null` runs without one this machine does not have |
 | `is no directory on this machine` | fix that member's path in `.box/repos.json`; it is relative to the folder box runs in |
 | `whose origin is` | point that member in `.box/repos.json` at a clone of the `git_origin` in `.box/config.json` |
 | `is not a git repository` | a member has to be a git repository with an `origin` remote |

@@ -117,6 +117,18 @@ func TestReadPathsFileRejectsAPathThatIsNotAString(t *testing.T) {
 	wantError(t, err, "gives cache null, which is not text or a number")
 }
 
+// A null says a member is not on this machine, which a mount has no answer of its own for.
+func TestOnlyTheReposFileReadsANullAsAnAnswer(t *testing.T) {
+	path := writeBoxFile(t, t.TempDir(), config.ReposFile, map[string]any{"billing-api": nil})
+	read, err := config.ReadReposFile(path)
+	if err != nil || !read.Null("billing-api") || read.Get("billing-api") != "" {
+		t.Fatalf("read %v, %v", read, err)
+	}
+	if _, err := config.ReadPathsFile(path); err == nil {
+		t.Fatal("a mount was answered with a null")
+	}
+}
+
 func TestAsDescriptionsRejectsADescriptionThatIsNotText(t *testing.T) {
 	_, err := config.AsDescriptions(raw(map[string]any{"go": []string{"the Go toolchain"}}))
 	wantError(t, err, "gives go a list, which is not text or a number")

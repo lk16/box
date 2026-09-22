@@ -28,6 +28,13 @@ func placedPairs() config.Pairs {
 	return pairs("billing-api", "../billing-api")
 }
 
+// missingMember builds the same member as one this machine does not have at all.
+func missingMember() config.Member {
+	absent := member
+	absent.Path, absent.Missing = "", true
+	return absent
+}
+
 // memberAt builds the same member kept somewhere else on this machine.
 func memberAt(path string) config.Member {
 	moved := member
@@ -116,6 +123,47 @@ func TestAMemberWithAnEmptyPathIsRejected(t *testing.T) {
 	writeBoxFile(t, directory, config.ReposFile, map[string]string{"billing-api": ""})
 	_, err := config.ReadRepos(directory, raw(declared))
 	wantError(t, err, "is missing a path for")
+}
+
+func TestAMemberAnsweredWithANullIsOneThisMachineDoesNotHave(t *testing.T) {
+	directory := t.TempDir()
+	writeBoxFile(t, directory, config.ReposFile, map[string]any{"billing-api": nil})
+	members, err := config.ReadRepos(directory, raw(declared))
+	if err != nil || !slices.Equal(members, []config.Member{missingMember()}) {
+		t.Fatalf("read %v, %v", members, err)
+	}
+}
+
+func TestANullForAMemberTheConfigDoesNotDeclareIsRejected(t *testing.T) {
+	directory := t.TempDir()
+	writeBoxFile(t, directory, config.ReposFile, map[string]any{"billing-api": "../billing-api", "typo": nil})
+	_, err := config.ReadRepos(directory, raw(declared))
+	wantError(t, err, "does not declare: typo")
+}
+
+func TestTheRefusalForAnUnplacedMemberOffersTheNullForOneThisMachineLacks(t *testing.T) {
+	_, err := config.ReadRepos(t.TempDir(), raw(declared))
+	wantError(t, err, "Give a member null instead of a path")
+}
+
+func TestAMemberThisMachineDoesNotHaveIsLeftOutOfTheRunItIsDeclaredIn(t *testing.T) {
+	built := configWithMember(t, config.MemberSettings{Member: missingMember()})
+	if len(built.Repos) != 0 {
+		t.Fatalf("the run works on %v", built.Repos)
+	}
+	if !slices.Equal(built.MissingRepos(), []config.Member{missingMember()}) {
+		t.Fatalf("missing %v", built.MissingRepos())
+	}
+}
+
+func TestAMemberThisMachineDoesNotHaveBringsNothingOfTheGroupsOwn(t *testing.T) {
+	directory := t.TempDir()
+	// A path of nothing would resolve to the group itself, whose own template a member may not set.
+	writeConfig(t, directory, map[string]string{"template": "frlg-sandbox:1"})
+	settings, err := config.ReadMemberSettings(directory, missingMember())
+	if err != nil || settings.Kit != "" || settings.PromptFile != "" || len(settings.Mounts) != 0 {
+		t.Fatalf("read %v, %v", settings, err)
+	}
 }
 
 func TestAPathForAMemberTheConfigDoesNotDeclareIsRejected(t *testing.T) {

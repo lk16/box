@@ -137,7 +137,7 @@ func (s Setup) writeRepos(workingDirectory string) error {
 		return nil
 	}
 	path := filepath.Join(workingDirectory, config.ReposFile)
-	provided, err := config.ReadPathsFile(path)
+	provided, err := config.ReadReposFile(path)
 	if err != nil {
 		return err
 	}
@@ -154,7 +154,8 @@ func (s Setup) writeRepos(workingDirectory string) error {
 func (s Setup) warnUnplaced(members []config.Member) {
 	var unplaced []config.Member
 	for _, member := range members {
-		if member.Path == "" {
+		// A member already answered with a null is one this machine is known not to have.
+		if member.Path == "" && !member.Missing {
 			unplaced = append(unplaced, member)
 		}
 	}
@@ -241,13 +242,21 @@ func memberNames(members []config.Member) []string {
 	return names
 }
 
-// asJSON renders name-to-text the way a hand-edited file spells it.
+// asJSON renders name-to-text the way a hand-edited file spells it, keeping a null a null.
 func asJSON(pairs config.Pairs) []byte {
 	object := jsonx.Object{}
 	for _, pair := range pairs {
-		object = object.Set(pair.Name, jsonx.Text(pair.Value))
+		object = object.Set(pair.Name, written(pair))
 	}
 	return jsonx.Write(object)
+}
+
+// written is what one pair is written back as, which gen never turns into a null of its own.
+func written(pair config.Pair) jsonx.RawValue {
+	if pair.Null {
+		return jsonx.Null
+	}
+	return jsonx.Text(pair.Value)
 }
 
 // isFile says whether a path names a file rather than a directory or nothing at all.

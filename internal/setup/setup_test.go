@@ -16,8 +16,14 @@ import (
 	"github.com/lk16/box/internal/system"
 )
 
+// The two members these tests declare, as they read in a group's config file.
+const (
+	billingAPI = `{"branch": "develop", "git_origin": "https://example.com/billing-api.git"}`
+	kubernetes = `{"branch": "main", "git_origin": "https://example.com/kubernetes.git"}`
+)
+
 // declared is how one member reads in a group's config file.
-const declared = `{"billing-api": {"branch": "develop", "git_origin": "https://example.com/billing-api.git"}}`
+const declared = `{"billing-api": ` + billingAPI + `}`
 
 // fixture is one gen run's fakes, and the setup that reaches the system only through them.
 type fixture struct {
@@ -277,6 +283,41 @@ func TestGenKeepsAMembersPathAlreadyFilledIn(t *testing.T) {
 	generate(t, directory)
 	if got := readJSON(t, filepath.Join(directory, config.ReposFile)); got["billing-api"] != "../billing-api" {
 		t.Fatalf("the repos file reads %v", got)
+	}
+}
+
+func TestGenNeverWritesANullOfItsOwn(t *testing.T) {
+	directory := t.TempDir()
+	writeConfig(t, directory, `{"repos": `+declared+`}`)
+	generate(t, directory)
+	written, err := os.ReadFile(filepath.Join(directory, config.ReposFile))
+	if err != nil || strings.Contains(string(written), "null") {
+		t.Fatalf("the repos file reads %s, %v", written, err)
+	}
+}
+
+func TestGenKeepsAMemberThisMachineDoesNotHaveAsANull(t *testing.T) {
+	directory := t.TempDir()
+	// A second member the file has no answer for is what makes gen write the file again at all.
+	writeConfig(t, directory, `{"repos": {"billing-api": `+billingAPI+`, "kubernetes": `+kubernetes+`}}`)
+	boxtest.WriteFile(t, filepath.Join(directory, config.ReposFile), `{"billing-api": null}`)
+	generate(t, directory)
+	read := readJSON(t, filepath.Join(directory, config.ReposFile))
+	if path, given := read["billing-api"]; !given || path != nil {
+		t.Fatalf("the repos file reads %v", read)
+	}
+	if read["kubernetes"] != "" {
+		t.Fatalf("the repos file reads %v", read)
+	}
+}
+
+func TestGenSaysNothingAboutAMemberThisMachineDoesNotHave(t *testing.T) {
+	directory := t.TempDir()
+	writeConfig(t, directory, `{"repos": `+declared+`}`)
+	boxtest.WriteFile(t, filepath.Join(directory, config.ReposFile), `{"billing-api": null}`)
+	run := generate(t, directory)
+	if strings.Contains(run.console.Warned(), "billing-api") {
+		t.Fatalf("gen warned:\n%s", run.console.Warned())
 	}
 }
 

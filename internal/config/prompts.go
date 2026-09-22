@@ -39,6 +39,14 @@ Each one sits at the path it has on the host, on the branch named beside it, wit
 branch there too. Nothing can be pushed anywhere. Commit on a branch, and every branch holding new
 commits comes back to the host as a branch in that repository.`
 
+// MissingMembersPrompt names the repositories a group works on that this host does not have.
+const MissingMembersPrompt = `The group also works on the repositories below, which this host does not
+have, so this sandbox holds no clone of them:
+
+%s
+
+Work on what is here, and say what you could not do without them.`
+
 // BranchNamePrompt has a headless agent name the branch a sandbox's work lands on.
 const BranchNamePrompt = `Name a git branch after the work these commit subjects describe.
 Answer with the name and nothing else: kebab-case, at most 5 words, shorter is

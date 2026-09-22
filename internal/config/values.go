@@ -14,10 +14,12 @@ import (
 	"github.com/lk16/box/internal/jsonx"
 )
 
-// Pair is one name and the text a file gives it.
+// Pair is one name and the text a file gives it, or the null it answers with instead.
 type Pair struct {
 	Name  string
 	Value string
+	// Null is what only a repos file writes: a member this machine does not have at all.
+	Null bool
 }
 
 // Pairs are name to text, in the order the file that holds them wrote them.
@@ -36,6 +38,16 @@ func (p Pairs) Get(name string) string {
 // Has says whether a name is present at all, which an empty value still is.
 func (p Pairs) Has(name string) bool {
 	return slices.ContainsFunc(p, func(pair Pair) bool { return pair.Name == name })
+}
+
+// Null says whether a name is answered with JSON's null rather than with text.
+func (p Pairs) Null(name string) bool {
+	for _, pair := range p {
+		if pair.Name == name {
+			return pair.Null
+		}
+	}
+	return false
 }
 
 // Names lists the names in the order the file wrote them.
@@ -239,8 +251,8 @@ func rejectUnknownKeys(path string, object jsonx.Object) error {
 	return fail.Errorf("%s has unknown keys: %s", path, strings.Join(unknown, ", "))
 }
 
-// ReadPathsFile reads name to path from one of this machine's own files, or nothing when absent.
-func ReadPathsFile(path string) (Pairs, error) {
+// readNamedPaths reads one of this machine's own files as the JSON object of name to path it holds.
+func readNamedPaths(path string) (jsonx.Object, error) {
 	raw, err := LoadJSON(path)
 	if raw == nil || err != nil {
 		return nil, err
@@ -248,6 +260,15 @@ func ReadPathsFile(path string) (Pairs, error) {
 	object, ok := jsonx.AsObject(raw)
 	if !ok {
 		return nil, fail.Errorf("%s must contain a JSON object of name to path", path)
+	}
+	return object, nil
+}
+
+// ReadPathsFile reads name to path from one of this machine's own files, or nothing when absent.
+func ReadPathsFile(path string) (Pairs, error) {
+	object, err := readNamedPaths(path)
+	if object == nil || err != nil {
+		return nil, err
 	}
 	return asPairs(path, object)
 }

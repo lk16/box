@@ -36,6 +36,9 @@ func formatMember(member Member) string {
 
 // formatMemberSettings names what one member's own .box/ adds, which for most members is nothing.
 func formatMemberSettings(settings MemberSettings) string {
+	if settings.Member.Missing {
+		return settings.Member.Name + ": " + MissingHere
+	}
 	added := append([]string{}, settings.Mounts...)
 	if settings.Kit != "" {
 		added = append(added, "kit="+settings.Kit)

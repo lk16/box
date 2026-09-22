@@ -84,6 +84,10 @@ func Build(values Values, mounts []string, members []MemberSettings, workingDire
 	}
 	repos := make([]Member, 0, len(members))
 	for _, settings := range members {
+		// A member this machine does not have is left out of everything this run creates.
+		if settings.Member.Missing {
+			continue
+		}
 		repos = append(repos, settings.Member)
 	}
 	return Config{
@@ -93,6 +97,17 @@ func Build(values Values, mounts []string, members []MemberSettings, workingDire
 		Kit: values.Setting("kit"), Template: values.Setting("template"),
 		MCP: servers, Mounts: workspaces, SecretHosts: secrets, Repos: repos, Members: members,
 	}, nil
+}
+
+// MissingRepos are the declared members this machine does not have, which this run works without.
+func (c Config) MissingRepos() []Member {
+	var missing []Member
+	for _, settings := range c.Members {
+		if settings.Member.Missing {
+			missing = append(missing, settings.Member)
+		}
+	}
+	return missing
 }
 
 // Kits lists the kits a sandbox runs under: the group's, then each member's, and each one once.

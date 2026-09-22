@@ -125,6 +125,19 @@ func TestLoadConfigReadsTheMembersAndWhereThisMachineKeepsThem(t *testing.T) {
 	}
 }
 
+func TestAMemberAnsweredWithANullIsLoadedAsOneThisMachineDoesNotHave(t *testing.T) {
+	directory := t.TempDir()
+	writeBox(t, directory, config.ConfigFile, `{"repos": `+declared+`}`)
+	writeBox(t, directory, config.ReposFile, `{"billing-api": null}`)
+	settings := loadFrom(t, directory, "run")
+	if len(settings.Repos) != 0 {
+		t.Fatalf("the run works on %v", settings.Repos)
+	}
+	if missing := settings.MissingRepos(); len(missing) != 1 || missing[0].Name != "billing-api" {
+		t.Fatalf("missing %v", missing)
+	}
+}
+
 func TestAMembersMountsComeAfterTheGroupsAndBeforeTheFlags(t *testing.T) {
 	root := t.TempDir()
 	member := filepath.Join(root, "billing-api")

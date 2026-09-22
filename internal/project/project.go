@@ -89,6 +89,15 @@ func MembersPrompt(settings config.Config, project Project) string {
 	return fmt.Sprintf(config.MembersPrompt, strings.Join(where, "\n"))
 }
 
+// MissingMembersPrompt says which repositories the group works on this host has no clone of.
+func MissingMembersPrompt(settings config.Config) string {
+	missing := settings.MissingRepos()
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(config.MissingMembersPrompt, config.DescribeMembers(missing))
+}
+
 // MemberPrompts reads each member's own prompt, headed with the path its clone sits at.
 func MemberPrompts(settings config.Config, project Project) ([]string, error) {
 	var prompts []string
