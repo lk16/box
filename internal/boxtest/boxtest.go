@@ -24,7 +24,9 @@ type Runner struct {
 	// Unstartable says which commands could not be started at all, which only Feed can report.
 	Unstartable func(arguments []string) error
 	Commands    [][]string
-	Stdin       []string
+	// Attached is the commands the fake was asked to run on the terminal, and nothing else.
+	Attached [][]string
+	Stdin    []string
 	// Waits are the deadlines each timed command was given, in the order they were run.
 	Waits []time.Duration
 }
@@ -42,8 +44,11 @@ func (r *Runner) Timed(arguments []string, wait time.Duration) system.Result {
 	return r.record(arguments)
 }
 
-// Attach records a command and answers it, since a fake has no terminal to hand over.
+// Attach records a command as one that owned the terminal, since a fake has none to hand over.
 func (r *Runner) Attach(arguments []string, _ []string) system.Result {
+	r.order.Lock()
+	r.Attached = append(r.Attached, arguments)
+	r.order.Unlock()
 	return r.record(arguments)
 }
 

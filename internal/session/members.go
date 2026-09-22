@@ -16,27 +16,13 @@ type Bundle struct {
 	BundleFile string
 }
 
-// fetchMember brings a member's origin refs up to date, terminal attached so ssh can ask for a key.
-func (s Session) fetchMember(path string) error {
-	s.Deps.Console.Warn("box: fetching %s", path)
-	// A fetch writes the origin/* refs and their objects and nothing else, so the checkout is untouched.
-	if s.Deps.Run.Attach(git(path, "fetch", "origin"), nil).Code != 0 {
-		return fail.Errorf("git fetch origin failed in %s", path)
-	}
-	return nil
-}
-
 // hasBase says whether the branch a member's clone starts from is one origin has.
 func (s Session) hasBase(path, base string) bool {
 	return s.succeeds(git(path, "rev-parse", "--verify", "refs/remotes/origin/"+base))
 }
 
-// BundleMember fetches one member and packs the history its clone is made from into the directory.
-func (s Session) BundleMember(proj project.Project, member config.Member, number int, directory string) (Bundle, error) {
-	path := config.MemberPath(proj.WorkingDirectory, member)
-	if err := s.fetchMember(path); err != nil {
-		return Bundle{}, err
-	}
+// bundleMember packs the history one member's clone is made from into the directory.
+func (s Session) bundleMember(member config.Member, path string, number int, directory string) (Bundle, error) {
 	if !s.hasBase(path, member.Branch) {
 		return Bundle{}, fail.Errorf("%s at %s has no branch %s on origin", member.Name, path, member.Branch)
 	}
@@ -47,17 +33,30 @@ func (s Session) BundleMember(proj project.Project, member config.Member, number
 	return Bundle{Member: member, Path: path, BundleFile: bundleFile}, nil
 }
 
-// BundleMembers fetches every member one at a time, and packs what each clone is made from.
+// BundleMembers fetches every member at once, then packs what each clone is made from.
 func (s Session) BundleMembers(settings config.Config, proj project.Project, directory string) ([]Bundle, error) {
+	paths := MemberPaths(settings, proj)
+	if err := s.fetchMembers(paths); err != nil {
+		return nil, err
+	}
 	var bundles []Bundle
 	for number, member := range settings.Repos {
-		bundle, err := s.BundleMember(proj, member, number+1, directory)
+		bundle, err := s.bundleMember(member, paths[number], number+1, directory)
 		if err != nil {
 			return nil, err
 		}
 		bundles = append(bundles, bundle)
 	}
 	return bundles, nil
+}
+
+// MemberPaths is where each member sits on this machine, in the order repos names them.
+func MemberPaths(settings config.Config, proj project.Project) []string {
+	paths := make([]string, 0, len(settings.Repos))
+	for _, checkout := range project.MemberCheckouts(settings, proj) {
+		paths = append(paths, checkout.Path)
+	}
+	return paths
 }
 
 // CloneCommands assemble what turns a copied bundle into a clone on the member's own host path.

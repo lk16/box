@@ -42,6 +42,13 @@ const (
 	DockerSizeEnv = "DOCKER_SANDBOXES_DOCKER_SIZE"
 )
 
+// A fetch that shares the terminal with every other fetch may ask nothing. See docs/fetching.md.
+const (
+	GitPromptEnv     = "GIT_TERMINAL_PROMPT"
+	GitSSHCommandEnv = "GIT_SSH_COMMAND"
+	BatchModeSSH     = " -o BatchMode=yes"
+)
+
 // Unset is what box config shows for a setting nothing was given for, rather than an empty column.
 const Unset = "(unset)"
 

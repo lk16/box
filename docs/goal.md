@@ -225,10 +225,14 @@ members `repos` names.
   and mounts every other one as it is, and a mount would hand over everything a member holds,
   ignored files included. A bundle carries committed history and nothing else, which is exactly
   what a clone is made from, so a member is never mounted and a mount holding one is refused.
-- box fetches every member before it bundles one, with the terminal attached so ssh can ask for
-  a passphrase, and refuses a base the fetch did not produce. Current data is the whole point of
-  the session, and a fetch writes the `origin/*` refs and nothing else, so the user's own
-  checkout, index and branches are left exactly as they were.
+- box fetches every member before it bundles one, and refuses a base the fetch did not produce.
+  Current data is the whole point of the session, and a fetch writes the `origin/*` refs and
+  nothing else, so the user's own checkout, index and branches are left exactly as they were.
+- The fetches run at once, since each one waits on a network rather than on this machine. None of
+  them owns the terminal, so none can ask anything and none prints over another: what each one
+  said is kept and reported in the order `repos` names the members, once they are all in. A fetch
+  that failed is asked again on its own with the terminal, which is where ssh still gets to ask
+  for a passphrase. See [fetching.md](fetching.md).
 - Each member names the branch its clone starts from, because `origin/HEAD` is written when a
   clone is made and goes stale, and guessing `main` for a repository living on `develop` would
   start every session in the wrong place.

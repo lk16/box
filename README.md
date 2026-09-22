@@ -84,7 +84,7 @@ whenever a run refuses and you want the full picture.
 - [Troubleshooting](docs/troubleshooting.md) — the refusals you are most likely to meet
 
 Why box is built the way it is: [goal](docs/goal.md), [updates](docs/updates.md),
-[terminals](docs/terminals.md), [Ctrl-C](docs/signals.md).
+[terminals](docs/terminals.md), [Ctrl-C](docs/signals.md), [fetching](docs/fetching.md).
 
 ## Development
 
