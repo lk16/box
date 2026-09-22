@@ -1,24 +1,20 @@
-# box's own kit, not a template: it is built around this repository's mounted uv cache, so a project
-# that copies it gets a sandbox where every dependency download 403s. `box gen` writes a starter
-# policy at .box/kit/spec.yaml -- begin there instead.
+# box's own kit, not a template: it is built around this repository's mounted Go toolchain, so a
+# project that copies it gets a sandbox where every dependency download 403s. `box gen` writes a
+# starter policy at .box/kit/spec.yaml -- begin there instead.
 schemaVersion: "2"
 kind: mixin
 name: box-network-policy
 displayName: box network policy
-description: The agent's own API calls and nothing else; every dependency comes off a mounted cache
+description: The agent's own API calls and nothing else; box depends on the standard library alone
 
 permissions:
   network:
     allow:
       - api.anthropic.com:443   # the agent's own API calls (not auto-included by the claude kit)
-      # Nothing else is allowlisted, and the checks still run: uv installs from the host's uv
-      # cache, mounted read-only and copied in below, with UV_OFFLINE=1. That holds only while
-      # the host has synced against the image's Python at least once, since a cache holds wheels
-      # built for one tag -- see docs/sandbox.md.
-      #
-      # pypi.org and github.com are deliberately absent, so `pre-commit run -a` does not work
-      # here: its upstream hook repo would be cloned from github and given an environment built
-      # from PyPI. docs/sandbox.md has the checks to run instead. Run pre-commit on the host.
+      # Nothing else is allowlisted, and the checks still run: box imports only the standard
+      # library, so `go build` and `go test` need nothing from the network. proxy.golang.org is
+      # deliberately absent -- if a build here wants it, a dependency crept in, which
+      # docs/goal.md says must not happen.
 
 setup:
   startup:
@@ -29,28 +25,16 @@ setup:
         - "-c"
         - |
           # A mount keeps the path it has on the host, which differs per machine, so find the
-          # two by what they contain rather than by where anyone happens to keep them.
+          # toolchain by what it contains rather than by where anyone happens to keep it. The
+          # image ships its own Go, which may be older than go.mod asks for, so the host's wins.
           for mount in $(grep " virtiofs " /proc/mounts | cut -d" " -f2); do
-            if [ -x "$mount/uv" ] && [ ! -e /usr/local/bin/uv.host ]; then
-              # The image ships an older uv that reads a different cache layout, so the host's
-              # own binary has to win: same version that wrote the cache, same version reading it.
-              sudo ln -sf "$mount/uv" /usr/local/bin/uv
-              sudo touch /usr/local/bin/uv.host
-            fi
-            if [ -f "$mount/CACHEDIR.TAG" ] && [ -d "$mount/archive-v0" ] && [ ! -e "$HOME/.cache/uv" ]; then
-              mkdir -p "$HOME/.cache"
-              # Copy aside and move into place, since this runs while the agent may already be
-              # working: a half-copied cache must never be visible as one uv will trust.
-              rm -rf "$HOME/.cache/uv.incoming"
-              cp -r "$mount" "$HOME/.cache/uv.incoming" || continue
-              [ -e "$HOME/.cache/uv" ] || mv "$HOME/.cache/uv.incoming" "$HOME/.cache/uv"
-              rm -rf "$HOME/.cache/uv.incoming"
+            if [ -x "$mount/bin/go" ] && [ ! -e /usr/local/bin/go.host ]; then
+              sudo ln -sf "$mount/bin/go" /usr/local/bin/go
+              sudo touch /usr/local/bin/go.host
             fi
           done
       description: >-
-        Point uv at the host's binary and give it a writable copy of the host's
-        cache. uv refuses a read-only cache outright -- it creates marker files
-        at startup and fails with "Failed to initialize cache" -- and an overlay
-        over the mount is not available here either, so a plain copy is what is
-        left. With no PyPI on the allowlist this is where every dependency comes
-        from, not merely a way to save downloads.
+        Put the host's Go toolchain first on PATH, so the sandbox builds with
+        the version go.mod asks for rather than whatever the image ships. With
+        no proxy.golang.org on the allowlist there is no way to download one,
+        and golangci-lint is mounted or absent for the same reason.

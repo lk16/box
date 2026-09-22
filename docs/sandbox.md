@@ -2,38 +2,30 @@
 
 What is true of this repository inside a box sandbox. The constraints the code must keep are in
 [goal.md](goal.md), the rules for writing it in [style.md](style.md); read both before changing
-`box.py`.
+anything under `internal/`.
 
 The allowlist holds api.anthropic.com and nothing else, so no dependency can be downloaded here.
-Everything comes off the host's uv cache, mounted read-only and copied into your home at startup,
-with the host's own uv wired in over the image's older one. Both are already in place when you
-start, so the whole setup is:
+box depends on nothing outside the standard library, so nothing needs downloading: the Go toolchain
+and the module cache are mounted read-only from the host, and `go build` and `go test` work offline
+as they are.
 
-    export UV_OFFLINE=1
-    uv sync            # the clone has no .venv/
+`pre-commit` cannot run here: its upstream hook repository would be cloned from github and given an
+environment built from PyPI, and neither is reachable. Run the checks directly instead:
 
-Run the checks before starting a change and again once it is finished:
+```sh
+./check.sh
+```
 
-    uv run ruff check --fix
-    uv run ruff format
-    uv run mypy --strict
-    uv run pytest -q
+That is the same set the hooks run, plus the tests. It leaves no trailing whitespace and ends every
+file with a newline for you, which is what the whitespace hooks would otherwise catch; the host's
+own `pre-commit run -a` before merging is what catches the rest.
 
-`uv run pre-commit run -a`, which [style.md](style.md) asks for, does not work here: its upstream
-hook repo is cloned from github and given an environment built from PyPI, and neither is
-reachable. The four commands above are that run minus its whitespace hooks, so leave no trailing
-whitespace and end every file with a newline; the host's own run before merging is what catches
-those.
+`go test -race` needs a C compiler, and the image ships none, so it cannot run here. The only
+concurrency box has is the signal watcher reading an atomic counter, so there is little for it to
+find; run it on the host if you add more.
 
-A cache holds wheels built for the Python that filled it, and the image's Python is newer than
-what a host normally runs, so the host warms the cache for it once with `uv sync --python 3.14`.
-If `uv sync` fails here on a missing wheel while the host is fine, that is what has gone stale:
-say so, and ask for that command to be run on the host against the Python this image now ships —
-`python3 -V` here names it.
+The tests fake `sbx` rather than calling it, and they run `git` for real in temporary directories,
+so nothing here creates a sandbox from inside one. Do not try to run `sbx`.
 
-`box.py` imports the standard library only, and must keep doing so — everything in
-`pyproject.toml` is for the checks, never for a run. The tests fake `sbx` and `git` rather than
-calling them, so nothing here creates a sandbox from inside one; do not try to run `sbx`.
-
-`README.md` documents box for its users. A change to a flag, a config key or a message belongs
-there in the same commit.
+`README.md` documents box for its users, and `docs/` for everyone else. A change to a flag, a
+config key or a message belongs in the right one of those in the same commit.

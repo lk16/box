@@ -1,0 +1,81 @@
+# Groups
+
+One task often spans several repositories. A group is one sandbox that works on all of them: keep a
+folder of box setups next to the repositories themselves, one subfolder per group.
+
+```
+~/work/
+  boxes/                    one git repository, shared by the team
+    billing/.box/config.json
+    search/.box/config.json
+  billing-api/              the members sit next to boxes
+  billing-worker/
+  kubernetes/
+```
+
+`box gen` in `~/work/boxes/billing` asks whether the folder is one project or a group; answering `2`
+writes a config with the group keys already in it. `cd ~/work/boxes/billing && box run` then starts a
+sandbox named after the folder it ran in. `repos` names the members, the branch each clone starts
+from, and the repository each one is a clone of:
+
+```json
+{
+  "repos": {
+    "billing-api": {"branch": "develop", "git_origin": "git@example.com:team/billing-api.git"},
+    "kubernetes": {"branch": "main", "git_origin": "https://example.com/ops/kubernetes.git"}
+  }
+}
+```
+
+Where a member sits differs from one machine to the next, so its path lives apart from the shared
+config, in the gitignored `.box/repos.json` beside it, the way mounts do in `.box/mounts.json`:
+
+```json
+{
+  "billing-api": "../../billing-api",
+  "kubernetes": "~/src/kubernetes"
+}
+```
+
+Paths are relative to the folder box runs in, and a leading `~` expands. After adding a member, run
+`box gen`: it gives every declared name an empty path and lists the `git_origin` to clone each one
+from. A name with no path, an empty one, or one the config does not declare is an error. Groups may
+share members.
+
+## What box checks and does
+
+Before anything is created, box checks that each path is a clone of the `git_origin` it is declared
+with. `git@host:path`, `ssh://user@host:port/path` and `https://host/path` all name the same
+repository, with or without a trailing `.git`; a different host or path is an error naming both URLs
+and the full path. Two members with one `git_origin` are an error too, since two clones of one
+repository would bring their work back over each other.
+
+box then fetches each member — with the terminal attached, so `ssh` can ask for a passphrase — and
+packs its commits into a bundle. Each member then becomes a clone inside the sandbox at the same path
+it has on your machine, starting on the branch you named, with every `origin/*` branch present and
+`origin` set to its `git_origin`. Nothing can be pushed from inside.
+
+A member is never mounted, so only committed work reaches the sandbox; the fetch itself only writes
+`origin/*`, so your checkout, your index and your own branches are untouched. box refuses a member
+that is not a git repository, has no `origin`, sits inside the repository box runs in, or is covered
+by a mount.
+
+## A member's own settings
+
+A member may carry a `.box/config.json` of its own, and box reads three things from it: its
+`required_mounts`, answered by its own gitignored `.box/mounts.json`; its `kit`, passed alongside
+the group's, since two kits add up to one allowlist; and its `prompt_file`, appended to the prompt
+under the path its clone sits at. Paths in it are relative to the member. Everything else is
+ignored — a member's own `repos`, `secret_hosts` and `mcp` included, so groups never nest — except
+`template`, which is an error: one sandbox runs one image, so the group's template has to cover
+every member.
+
+Mounts reach the sandbox in that order: the group's, then each member's, then any `--mount` flags.
+
+## What comes back
+
+On exit each member's committed work comes back the way the main repository's does: onto a branch a
+headless `claude` names, in that member's own repository. A member counts as new whatever none of
+its `origin/*` branches hold, so commits you had not pushed yourself do not end up on a sandbox
+branch. Every clone has to be committed before the sandbox is removed — a dirty member keeps it,
+and the warning names which one.

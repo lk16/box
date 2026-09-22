@@ -4,51 +4,53 @@ Write code a reader understands on the first pass.
 
 ## Rules
 
-- No optional arguments. A function takes exactly what it needs, always.
-- No long argument lists. Pass the `Config` object instead of its fields.
-- No ternaries. Use a plain `if` with an early return.
+- Short functions. One job each, and a name that says which.
+- No long argument lists. Pass the `Config`, the `Project` or the `Deps` rather than their fields.
 - No deep nesting. Return early; keep function bodies close to the left margin.
-- Keep functions testable: separate the pure parts (parsing, merging, building command lists)
-  from the parts that touch the system (`subprocess`, the filesystem).
-- Command builders return a `list[str]` and run nothing, so tests can assert on them.
+- Keep functions testable: separate the pure parts (parsing, merging, building command lists) from
+  the parts that touch the system.
+- Command builders return a `[]string` and run nothing, so tests can assert on them.
+- Everything that touches the outside world goes through an interface in `internal/system`, so a
+  test stands a fake in front of it rather than in front of the real `sbx`.
 
 ## Comments
 
-Comments are one liners. Never longer. They say why something exists, not what the next line
-does. Every function in `box.py` has a one-line docstring. In the tests, the helpers and the fakes
-have one and the `test_*` functions do not: their names are the documentation, and a docstring
-would only say the name again.
+Comments are one liners. Never longer. They say why something exists, not what the next line does.
+Every declaration has a one-line doc comment, starting with its own name, as `go doc` expects.
 
-ruff enforces that: `D` is selected, with `D103` and `D107` ignored under `tests/`, so a missing
-docstring is a failed check rather than something a reader has to notice. A fake's class docstring
-covers its `__init__`, which is why `D107` is off there too.
+A decision that needs a paragraph is not a comment: write it in `docs/` and point at the file from
+a one-line comment where the code implements it. [terminals.md](terminals.md),
+[signals.md](signals.md) and [updates.md](updates.md) exist for exactly that reason.
+
+In the tests, the helpers and the fakes have a doc comment and the `Test*` functions do not: their
+names are the documentation, and a comment would only say the name again. Name a test after the
+behaviour it pins down, not after the function it calls.
 
 ## Naming
 
-Full words, no abbreviations: `sandbox_name`, not `sbx_nm`.
+Full words, no abbreviations: `sandboxName`, not `sbxNm`.
 
-Config settings carry one name in three places, and it is snake_case everywhere: the
-`.box/config.json` key (`root_size`), the `Config` field (`root_size`) and the flag, which is the
-same name with hyphens (`--root-size`). No translation layer, and argparse derives every `dest`
-on its own. When you add a setting, pick a snake_case name and use it verbatim in `DEFAULTS`,
-`Config` and the flag.
-
-`--mount` is the one exception, since it is repeatable and collects a list: its `dest` is
-`mounts`, and `MOUNT_FLAG` and `MOUNT_DEST` hold the two names so a message can name the flag the
-user typed rather than the dest argparse stored it under.
+A config setting carries one name in three places: the `.box/config.json` key (`root_size`), the
+`Config` field (`RootSize`) and the flag, which is the key with hyphens (`--root-size`). The one
+translation is `cli.ConfigKey`, which turns a flag name into its config key by swapping hyphens for
+underscores; nothing else maps between the three.
 
 ## Checks
 
-Run the checks locally **before starting any new change**, not only before committing. A clean
-run first tells you that anything that breaks afterwards is yours:
+Run the checks **before starting any new change**, not only before committing. A clean run first
+tells you that anything that breaks afterwards is yours:
 
 ```sh
-uv run pre-commit run -a
-uv run pytest -q
+./check.sh
 ```
 
-Both must pass, and both run again once the change is finished. `pre-commit` covers ruff,
-`mypy --strict` and a set of whitespace and syntax hooks. CI runs the first three on Linux and
-macOS, against both ends of the Python range `pyproject.toml` allows, so the whitespace hooks are
-caught by a local run and nowhere else. Inside a box sandbox `pre-commit` cannot run at all --
-[sandbox.md](sandbox.md) gives the commands that replace it.
+That is `go fmt`, `go vet`, `go mod tidy`, `golangci-lint` and `go test`, which is everything
+`pre-commit run -a` does plus the tests. Both the hooks and CI run the same set, so a local run
+catches what CI would.
+
+## Dependencies
+
+box depends on nothing outside the standard library, and must keep doing so. `go.mod` has no
+`require` block, so a `go install` fetches one module and nothing else. Where the standard library
+genuinely has no answer — telling a terminal from a pipe — box writes the few lines itself behind a
+build tag and says why in `docs/`.
