@@ -29,7 +29,7 @@ func batchModeSSH() string {
 	if command == "" {
 		command = "ssh"
 	}
-	return command + config.BatchModeSSH
+	return command + " " + config.BatchModeSSH
 }
 
 // fetchMembers brings every member's refs up to date at once, since each fetch waits on a network.
