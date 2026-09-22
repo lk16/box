@@ -35,12 +35,13 @@ func batchModeSSH() string {
 // fetchMembers brings every member's refs up to date at once, since each fetch waits on a network.
 func (s Session) fetchMembers(paths []string) error {
 	results := make([]system.Result, len(paths))
+	environment := FetchEnvironment()
 	var fetching sync.WaitGroup
 	for index, path := range paths {
 		fetching.Add(1)
 		go func() {
 			defer fetching.Done()
-			results[index] = s.Deps.Run.Capture(FetchCommand(path), FetchEnvironment())
+			results[index] = s.Deps.Run.Capture(FetchCommand(path), environment)
 		}()
 	}
 	fetching.Wait()
