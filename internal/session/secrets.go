@@ -22,7 +22,7 @@ func DistinctHosts(secrets []config.Secret) []string {
 // DropSecrets removes every stored secret for this sandbox name, ignoring failures.
 func (s Session) DropSecrets(secrets []config.Secret, sandboxName string) {
 	for _, host := range DistinctHosts(secrets) {
-		s.Deps.Run.Capture([]string{"sbx", "secret", "rm", "--sandbox", sandboxName, "--host", host, "-f"})
+		s.Deps.Run.Capture([]string{"sbx", "secret", "rm", "--sandbox", sandboxName, "--host", host, "-f"}, nil)
 	}
 }
 

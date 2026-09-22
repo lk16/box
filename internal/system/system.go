@@ -19,8 +19,8 @@ type Result struct {
 
 // Runner runs the external commands box shells out to.
 type Runner interface {
-	// Capture runs a command without showing its output.
-	Capture(arguments []string) Result
+	// Capture runs a command without showing its output, with the given environment.
+	Capture(arguments []string, environment []string) Result
 	// Timed runs a command without showing its output, ending it after the given wait.
 	Timed(arguments []string, wait time.Duration) Result
 	// Attach runs a command with box's own terminal and the given environment.
@@ -66,7 +66,7 @@ func OnPath(name string) bool {
 
 // Capture runs a command and returns its stdout, or nothing when it failed.
 func Capture(runner Runner, arguments []string) string {
-	result := runner.Capture(arguments)
+	result := runner.Capture(arguments, nil)
 	if result.Code != 0 {
 		return ""
 	}
@@ -75,5 +75,5 @@ func Capture(runner Runner, arguments []string) string {
 
 // Succeeds runs a command and says only whether it worked, which is all some callers need.
 func Succeeds(runner Runner, arguments []string) bool {
-	return runner.Capture(arguments).Code == 0
+	return runner.Capture(arguments, nil).Code == 0
 }

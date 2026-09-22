@@ -44,8 +44,23 @@ func TestCaptureIsEmptyWhenTheCommandIsNotInstalled(t *testing.T) {
 	}
 }
 
+func TestCaptureRunsTheCommandInTheEnvironmentItWasGiven(t *testing.T) {
+	command := script(t, "echo $BOX_FETCH_TEST\n")
+	if got := (system.Commands{}).Capture(command, []string{"BOX_FETCH_TEST=set"}).Stdout; got != "set\n" {
+		t.Fatalf("captured %q", got)
+	}
+}
+
+func TestCaptureWithoutAnEnvironmentKeepsBoxOwn(t *testing.T) {
+	t.Setenv("BOX_FETCH_TEST", "inherited")
+	command := script(t, "echo $BOX_FETCH_TEST\n")
+	if got := (system.Commands{}).Capture(command, nil).Stdout; got != "inherited\n" {
+		t.Fatalf("captured %q", got)
+	}
+}
+
 func TestAMissingBinaryReadsAsTheCodeAShellReports(t *testing.T) {
-	if got := (system.Commands{}).Capture([]string{missingBinary}).Code; got != system.NotRun {
+	if got := (system.Commands{}).Capture([]string{missingBinary}, nil).Code; got != system.NotRun {
 		t.Fatalf("exited %d, want %d", got, system.NotRun)
 	}
 }

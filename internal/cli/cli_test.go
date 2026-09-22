@@ -50,7 +50,7 @@ func withRealGit(arguments []string) system.Result {
 	if arguments[0] == "sbx" {
 		return system.Result{}
 	}
-	return system.Commands{}.Capture(arguments)
+	return system.Commands{}.Capture(arguments, nil)
 }
 
 // runnableProject builds a project that passes every check box makes before it starts a sandbox.

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,38 +17,51 @@ import (
 
 // Runner answers every command from one function, and records what it was asked to run.
 type Runner struct {
+	// order guards the records, since a group's fetches reach one fake from several goroutines.
+	order sync.Mutex
 	// Answer says what a command leaves behind; a nil one means every command worked silently.
 	Answer func(arguments []string) system.Result
 	// Unstartable says which commands could not be started at all, which only Feed can report.
 	Unstartable func(arguments []string) error
 	Commands    [][]string
-	Stdin       []string
+	// Attached is the commands the fake was asked to run on the terminal, and nothing else.
+	Attached [][]string
+	Stdin    []string
 	// Waits are the deadlines each timed command was given, in the order they were run.
 	Waits []time.Duration
 }
 
-// Capture records a command and answers it.
-func (r *Runner) Capture(arguments []string) system.Result {
+// Capture records a command and answers it, since a fake has no environment to run it in.
+func (r *Runner) Capture(arguments []string, _ []string) system.Result {
 	return r.record(arguments)
 }
 
 // Timed records a command and the wait it was given, since a fake never runs out of time.
 func (r *Runner) Timed(arguments []string, wait time.Duration) system.Result {
+	r.order.Lock()
 	r.Waits = append(r.Waits, wait)
+	r.order.Unlock()
 	return r.record(arguments)
 }
 
-// Attach records a command and answers it, since a fake has no terminal to hand over.
+// Attach records a command as one that owned the terminal, since a fake has none to hand over.
 func (r *Runner) Attach(arguments []string, _ []string) system.Result {
+	r.order.Lock()
+	r.Attached = append(r.Attached, arguments)
+	r.order.Unlock()
 	return r.record(arguments)
 }
 
 // Feed records a command and the text it was fed, reporting one that could not be started.
 func (r *Runner) Feed(arguments []string, stdin string) (system.Result, error) {
+	r.order.Lock()
 	r.Stdin = append(r.Stdin, stdin)
+	r.order.Unlock()
 	if r.Unstartable != nil {
 		if err := r.Unstartable(arguments); err != nil {
+			r.order.Lock()
 			r.Commands = append(r.Commands, arguments)
+			r.order.Unlock()
 			return system.Result{}, err
 		}
 	}
@@ -56,7 +70,9 @@ func (r *Runner) Feed(arguments []string, stdin string) (system.Result, error) {
 
 // record keeps a command and works out what this fake answers it with.
 func (r *Runner) record(arguments []string) system.Result {
+	r.order.Lock()
 	r.Commands = append(r.Commands, arguments)
+	r.order.Unlock()
 	if r.Answer == nil {
 		return system.Result{}
 	}

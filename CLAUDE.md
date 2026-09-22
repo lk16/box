@@ -21,7 +21,8 @@ The toolchain is Go and nothing else. box imports only the standard library, and
   this repository's own `prompt_file`, so editing it edits the system prompt of every box run here
 
 Decisions that needed more than a comment: [docs/updates.md](docs/updates.md),
-[docs/terminals.md](docs/terminals.md), [docs/signals.md](docs/signals.md).
+[docs/terminals.md](docs/terminals.md), [docs/signals.md](docs/signals.md),
+[docs/fetching.md](docs/fetching.md).
 
 User-facing documentation lives in [README.md](README.md) and the pages it links to.
 

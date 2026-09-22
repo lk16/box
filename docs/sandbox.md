@@ -20,9 +20,10 @@ That is the same set the hooks run, plus the tests. It leaves no trailing whites
 file with a newline for you, which is what the whitespace hooks would otherwise catch; the host's
 own `pre-commit run -a` before merging is what catches the rest.
 
-`go test -race` needs a C compiler, and the image ships none, so it cannot run here. The only
-concurrency box has is the signal watcher reading an atomic counter, so there is little for it to
-find; run it on the host if you add more.
+`go test -race` needs a C compiler, and the image ships none, so it cannot run here. The concurrency
+box has is the signal watcher reading an atomic counter and the group fetches writing one result
+slot each ([fetching.md](fetching.md)), so there is little for it to find; run it on the host after
+touching either, and after adding any more.
 
 The tests fake `sbx` rather than calling it, and they run `git` for real in temporary directories,
 so nothing here creates a sandbox from inside one. Do not try to run `sbx`.
