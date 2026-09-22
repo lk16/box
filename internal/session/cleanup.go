@@ -33,7 +33,7 @@ func (s Session) warnUnchecked(path, sandboxName, reason string) {
 // clonesAreCommitted says whether every clone is committed, warning about the first that is not.
 func (s Session) clonesAreCommitted(checkouts []project.Checkout, sandboxName string) bool {
 	for _, checkout := range checkouts {
-		status := s.Deps.Run.Capture(StatusCommand(checkout.Path, sandboxName))
+		status := s.Deps.Run.Capture(StatusCommand(checkout.Path, sandboxName), nil)
 		if status.Code != 0 {
 			s.warnUnchecked(checkout.Path, sandboxName, "sbx exec could not read the sandbox's git status")
 			return false

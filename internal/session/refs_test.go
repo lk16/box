@@ -401,7 +401,7 @@ func TestSettleSandboxRefsPutsARealSandboxsWorkOnARealBranch(t *testing.T) {
 		if arguments[0] == "claude" {
 			return system.Result{Stdout: "add-retry-logic\n"}
 		}
-		return system.Commands{}.Capture(arguments)
+		return system.Commands{}.Capture(arguments, nil)
 	}
 	run := newFixture(naming)
 	run.session.SettleSandboxRefs(checkoutAt(directory), "demo-1")

@@ -169,6 +169,6 @@ func sandboxWithRealGit(string) func([]string) system.Result {
 		if arguments[0] == "sbx" {
 			return system.Result{}
 		}
-		return system.Commands{}.Capture(arguments)
+		return system.Commands{}.Capture(arguments, nil)
 	}
 }

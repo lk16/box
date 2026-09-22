@@ -15,8 +15,10 @@ import (
 type Commands struct{}
 
 // Capture runs a command without showing its output, reporting a missing binary as a failed run.
-func (Commands) Capture(arguments []string) Result {
-	return collect(exec.Command(arguments[0], arguments[1:]...))
+func (Commands) Capture(arguments []string, environment []string) Result {
+	command := exec.Command(arguments[0], arguments[1:]...)
+	command.Env = environment
+	return collect(command)
 }
 
 // Timed runs a command without showing its output, killing it once the wait is up.

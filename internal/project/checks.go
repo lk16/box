@@ -179,7 +179,7 @@ func RequireMatchingVersions(runner system.Runner) error {
 		return nil
 	}
 	// A daemon that is not running is no mismatch: sbx starts its own version when it needs one.
-	mismatch := ParseVersionMismatch(runner.Capture(DiagnoseCommand()).Stdout)
+	mismatch := ParseVersionMismatch(runner.Capture(DiagnoseCommand(), nil).Stdout)
 	if mismatch == "" {
 		return nil
 	}

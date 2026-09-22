@@ -56,7 +56,7 @@ func preparing(t *testing.T, settings config.Config, proj project.Project, token
 		if arguments[0] == "sbx" && arguments[1] == "ls" {
 			return system.Result{Stdout: taken}
 		}
-		return system.Commands{}.Capture(arguments)
+		return system.Commands{}.Capture(arguments, nil)
 	})
 	return run.session.PrepareLaunch(settings, proj, tokenFile)
 }
