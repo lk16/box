@@ -52,6 +52,10 @@ disagree about a timeout once.
   goes through an interface in `internal/system`. That is what lets the tests fake `sbx` rather
   than run it, and it is why no package below `cmd/` reaches for `os/exec` or `net/http` itself.
 - Linux and macOS. Nothing else is supported, and the one platform-specific file says so.
+- Every sandbox is created with `--no-share-skills`. `sbx` otherwise mounts one skills directory
+  read-write into every sandbox it makes, so a file one run writes there is read by the next, and a
+  skill an agent plants is loaded by every later run on the machine. A sandbox writes to the host
+  only where a mount asked for it, so a write path nobody asked for is one box does not pass on.
 - This is a small project. Add a setting or an abstraction only when something needs it.
 
 ### Settings
