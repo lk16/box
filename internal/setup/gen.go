@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/config"
-	"github.com/lk16/box/internal/jsonx"
 	"github.com/lk16/box/internal/project"
 	"github.com/lk16/box/internal/system"
 )
@@ -42,23 +41,23 @@ func (s Setup) Generate(workingDirectory string) (int, error) {
 	if err := s.ignoreLocalPaths(workingDirectory); err != nil {
 		return 1, err
 	}
-	if _, group := starter.Get(config.Repos); group {
+	if _, group := starter[config.Repos]; group {
 		s.Deps.Console.Print("%s", config.GroupNextStep)
 	}
 	return 0, nil
 }
 
 // chooseStarterConfig picks the defaults box gen writes, asking only where there is someone to answer.
-func (s Setup) chooseStarterConfig(workingDirectory string) (jsonx.Object, bool) {
+func (s Setup) chooseStarterConfig(workingDirectory string) (map[string]any, bool) {
 	// A config that is already there is kept whatever the answer would be, so nobody is asked.
-	if isFile(filepath.Join(workingDirectory, config.ConfigFile)) || !s.Deps.Ask.Interactive() {
+	if config.IsFile(filepath.Join(workingDirectory, config.ConfigFile)) || !s.Deps.Ask.Interactive() {
 		return StarterConfig(), true
 	}
 	return s.askWhatThisIsFor()
 }
 
 // askWhatThisIsFor asks which defaults to write until the answer is one of the two, or input ends.
-func (s Setup) askWhatThisIsFor() (jsonx.Object, bool) {
+func (s Setup) askWhatThisIsFor() (map[string]any, bool) {
 	for {
 		answer, asked := s.Deps.Ask.Ask(config.GroupQuestion)
 		if !asked {
@@ -74,15 +73,15 @@ func (s Setup) askWhatThisIsFor() (jsonx.Object, bool) {
 }
 
 // writeStarterConfig writes every setting at its default, unless the project already has a config.
-func (s Setup) writeStarterConfig(path string, starter jsonx.Object) error {
-	return s.write(path, config.ConfigFile, jsonx.Write(starter), isFile(path))
+func (s Setup) writeStarterConfig(path string, starter map[string]any) error {
+	return s.write(path, config.ConfigFile, asFile(starter), config.IsFile(path))
 }
 
 // writeStarterKit writes a policy allowing the agent's own API calls, unless the project has one.
 func (s Setup) writeStarterKit(workingDirectory string) error {
 	path := filepath.Join(workingDirectory, config.KitSpecFile)
 	spec := BuildKitSpec(config.DefaultBaseName(config.Resolve(workingDirectory)))
-	return s.write(path, config.KitSpecFile, []byte(spec), isFile(path))
+	return s.write(path, config.KitSpecFile, []byte(spec), config.IsFile(path))
 }
 
 // BuildKitSpec renders the starter network policy, named after the project it belongs to.
@@ -102,7 +101,7 @@ func (s Setup) writeMounts(workingDirectory string) error {
 		return err
 	}
 	filled := fill(provided, config.Pairs(required).Names(), config.MountPlaceholder)
-	kept := isFile(path) && len(filled) == len(provided)
+	kept := config.IsFile(path) && len(filled) == len(provided)
 	if err := s.write(path, config.MountsFile, asJSON(filled), kept); err != nil {
 		return err
 	}
@@ -132,7 +131,7 @@ func (s Setup) writeRepos(workingDirectory string) error {
 		return err
 	}
 	// A single project has no members, so it gets no file to fill in.
-	declared := values.Container(config.Repos)
+	declared := values.Raw[config.Repos]
 	if declared == nil {
 		return nil
 	}
@@ -147,7 +146,7 @@ func (s Setup) writeRepos(workingDirectory string) error {
 	}
 	filled := fill(provided, memberNames(members), "")
 	s.warnUnplaced(members)
-	return s.write(path, config.ReposFile, asJSON(filled), isFile(path) && len(filled) == len(provided))
+	return s.write(path, config.ReposFile, asJSON(filled), config.IsFile(path) && len(filled) == len(provided))
 }
 
 // warnUnplaced names the members whose path only this machine's owner knows, with each origin.
@@ -219,7 +218,7 @@ func ReadRequiredMounts(workingDirectory string) (config.Pairs, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.AsDescriptions(values.Container(config.RequiredMounts))
+	return config.AsDescriptions(values.Raw[config.RequiredMounts])
 }
 
 // fill answers every declared name, keeping the paths already filled in.
@@ -233,7 +232,7 @@ func fill(provided config.Pairs, names []string, unknown string) config.Pairs {
 	return filled
 }
 
-// memberNames lists the members a group declares, in the order it declared them.
+// memberNames lists the members a group declares.
 func memberNames(members []config.Member) []string {
 	names := make([]string, 0, len(members))
 	for _, member := range members {
@@ -244,23 +243,14 @@ func memberNames(members []config.Member) []string {
 
 // asJSON renders name-to-text the way a hand-edited file spells it, keeping a null a null.
 func asJSON(pairs config.Pairs) []byte {
-	object := jsonx.Object{}
+	object := map[string]any{}
 	for _, pair := range pairs {
-		object = object.Set(pair.Name, written(pair))
+		// gen never writes a null of its own, only the one a member was already answered with.
+		if pair.Null {
+			object[pair.Name] = nil
+			continue
+		}
+		object[pair.Name] = pair.Value
 	}
-	return jsonx.Write(object)
-}
-
-// written is what one pair is written back as, which gen never turns into a null of its own.
-func written(pair config.Pair) jsonx.RawValue {
-	if pair.Null {
-		return jsonx.Null
-	}
-	return jsonx.Text(pair.Value)
-}
-
-// isFile says whether a path names a file rather than a directory or nothing at all.
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return asFile(object)
 }

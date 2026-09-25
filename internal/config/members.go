@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/fail"
-	"github.com/lk16/box/internal/jsonx"
 )
 
 // Member is one repository a group works on besides the one box runs in, and where it sits here.
@@ -34,9 +33,9 @@ type MemberSettings struct {
 var memberKeys = []string{MemberBranch, MemberOrigin}
 
 // declaredText reads one field a member is declared with, rejecting one that is missing or empty.
-func declaredText(name string, declaration jsonx.Object, key string) (string, error) {
+func declaredText(name string, declaration map[string]json.RawMessage, key string) (string, error) {
 	value := ""
-	if raw, given := declaration.Get(key); given {
+	if raw, given := declaration[key]; given {
 		text, err := asText(ConfigFile, Repos+" "+name+" "+key, raw)
 		if err != nil {
 			return "", err
@@ -54,9 +53,9 @@ func ToMember(name string, raw json.RawMessage, paths Pairs) (Member, error) {
 	if name == "" {
 		return Member{}, fail.Errorf("%s names a member with no name", Repos)
 	}
-	declaration, ok := jsonx.AsObject(raw)
+	declaration, ok := asObject(raw)
 	if !ok {
-		return Member{}, fail.Errorf("%s gives %s %s, where %s belongs", Repos, name, jsonx.TypeName(raw), MemberShape)
+		return Member{}, fail.Errorf("%s gives %s %s, where %s belongs", Repos, name, typeName(raw), MemberShape)
 	}
 	if err := rejectUnknownMemberKeys(name, declaration); err != nil {
 		return Member{}, err
@@ -77,9 +76,9 @@ func ToMember(name string, raw json.RawMessage, paths Pairs) (Member, error) {
 }
 
 // rejectUnknownMemberKeys refuses a declaration holding a field box would silently ignore.
-func rejectUnknownMemberKeys(name string, declaration jsonx.Object) error {
+func rejectUnknownMemberKeys(name string, declaration map[string]json.RawMessage) error {
 	var unknown []string
-	for _, key := range declaration.Keys() {
+	for key := range declaration {
 		if !slices.Contains(memberKeys, key) {
 			unknown = append(unknown, key)
 		}
@@ -91,18 +90,18 @@ func rejectUnknownMemberKeys(name string, declaration jsonx.Object) error {
 	return fail.Errorf("%s gives %s unknown keys: %s", Repos, name, strings.Join(unknown, ", "))
 }
 
-// ToMembers normalises the repos value into this group's members, in the order they were declared.
+// ToMembers normalises the repos value into this group's members, sorted by name.
 func ToMembers(raw json.RawMessage, paths Pairs) ([]Member, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	object, ok := jsonx.AsObject(raw)
+	object, ok := asObject(raw)
 	if !ok {
 		return nil, fail.Errorf("%s must be a JSON object of name to %s", Repos, MemberShape)
 	}
 	members := make([]Member, 0, len(object))
-	for _, declaration := range object {
-		member, err := ToMember(declaration.Key, declaration.Value, paths)
+	for _, name := range sortedKeys(object) {
+		member, err := ToMember(name, object[name], paths)
 		if err != nil {
 			return nil, err
 		}
@@ -167,19 +166,19 @@ func DescribeMembers(members []Member) string {
 }
 
 // asPlacements reads a repos file's values, where a null stands for a member this machine has none of.
-func asPlacements(path string, object jsonx.Object) (Pairs, error) {
+func asPlacements(path string, object map[string]json.RawMessage) (Pairs, error) {
 	placements := make(Pairs, 0, len(object))
-	for _, member := range object {
+	for _, name := range sortedKeys(object) {
 		// A null is the one answer that is no path: this machine does not have this member at all.
-		if jsonx.IsNull(member.Value) {
-			placements = append(placements, Pair{Name: member.Key, Null: true})
+		if decode(object[name]) == nil {
+			placements = append(placements, Pair{Name: name, Null: true})
 			continue
 		}
-		text, err := asText(path, member.Key, member.Value)
+		text, err := asText(path, name, object[name])
 		if err != nil {
 			return nil, err
 		}
-		placements = append(placements, Pair{Name: member.Key, Value: text})
+		placements = append(placements, Pair{Name: name, Value: text})
 	}
 	return placements, nil
 }
@@ -262,7 +261,7 @@ func ReadMemberSettings(workingDirectory string, member Member) (MemberSettings,
 	directory := MemberPath(workingDirectory, member)
 	path := filepath.Join(directory, ConfigFile)
 	// A member with no box setup of its own is a repository to clone and nothing more.
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
+	if !IsFile(path) {
 		return MemberSettings{Member: member}, nil
 	}
 	values, err := ReadConfigFile(path)
@@ -290,7 +289,7 @@ func ReadMemberSettings(workingDirectory string, member Member) (MemberSettings,
 
 // memberMounts answers a member's own declaration from its own mounts file, naming it in every message.
 func memberMounts(directory string, member Member, values Values) ([]string, error) {
-	required, err := AsDescriptions(values.Container(RequiredMounts))
+	required, err := AsDescriptions(values.Raw[RequiredMounts])
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +300,7 @@ func memberMounts(directory string, member Member, values Values) ([]string, err
 	return OrderMounts(Scoped(member.Name, required), Scoped(member.Name, provided))
 }
 
-// ReadMembers reads every member's own settings, in the order the group declared them.
+// ReadMembers reads every member's own settings, in the order the members come.
 func ReadMembers(workingDirectory string, members []Member) ([]MemberSettings, error) {
 	all := make([]MemberSettings, 0, len(members))
 	for _, member := range members {

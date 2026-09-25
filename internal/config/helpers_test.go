@@ -8,12 +8,15 @@ import (
 	"testing"
 
 	"github.com/lk16/box/internal/config"
-	"github.com/lk16/box/internal/jsonx"
 )
 
 // raw renders a Go value as the JSON a config file would hold.
 func raw(value any) json.RawMessage {
-	return jsonx.Text(value)
+	written, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return written
 }
 
 // pairs builds name-to-text in the order given, the way a file's keys arrive.

@@ -1,9 +1,16 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
+
+// IsFile says whether a path names a file rather than a directory or nothing at all.
+func IsFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
 
 // Under joins a path to a directory, except that an absolute path names itself and wins outright.
 func Under(directory, path string) string {

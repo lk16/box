@@ -67,7 +67,7 @@ repository would bring their work back over each other.
 
 box then fetches every member at once and packs each one's commits into a bundle. The fetches share
 no terminal, so none of them can ask for a passphrase and none of them prints over another: each is
-reported under its own name once they are all in, in the order `repos` names them. A fetch that
+reported under its own name once they are all in, sorted by member name. A fetch that
 failed is asked again on its own with the terminal, which is where `ssh` gets to ask. See
 [fetching](fetching.md). Each member then becomes a clone inside the sandbox at the same path
 it has on your machine, starting on the branch you named, with every `origin/*` branch present and

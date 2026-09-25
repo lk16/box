@@ -32,7 +32,7 @@ func TestReadConfigFileKeepsSecretHostsAnObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secrets, err := config.ToSecrets(read.Container(config.SecretHosts))
+	secrets, err := config.ToSecrets(read.Raw[config.SecretHosts])
 	if err != nil || !slices.Equal(secrets, []config.Secret{gitlab}) {
 		t.Fatalf("read %v, %v", secrets, err)
 	}

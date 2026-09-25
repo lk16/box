@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/lk16/box/internal/boxtest"
 	"github.com/lk16/box/internal/config"
-	"github.com/lk16/box/internal/jsonx"
 	"github.com/lk16/box/internal/project"
 	"github.com/lk16/box/internal/setup"
 	"github.com/lk16/box/internal/system"
@@ -104,7 +104,7 @@ func TestGenWritesAConfigBoxCanReadBack(t *testing.T) {
 
 func TestTheStarterConfigHoldsNothingOnlyAGroupNeeds(t *testing.T) {
 	for _, key := range config.GroupSettings {
-		if _, held := setup.StarterConfig().Get(key); held {
+		if _, held := setup.StarterConfig()[key]; held {
 			t.Errorf("the starter holds %s", key)
 		}
 	}
@@ -112,27 +112,37 @@ func TestTheStarterConfigHoldsNothingOnlyAGroupNeeds(t *testing.T) {
 
 func TestTheGroupStarterIsTheStarterPlusWhatOnlyAGroupNeeds(t *testing.T) {
 	group := setup.GroupConfig()
-	for _, pair := range setup.StarterConfig() {
-		if held, ok := group.Get(pair.Key); !ok || string(held) != string(pair.Value) {
-			t.Errorf("the group starter gives %s %s", pair.Key, held)
+	for key, value := range setup.StarterConfig() {
+		if held, ok := group[key]; !ok || encoded(t, held) != encoded(t, value) {
+			t.Errorf("the group starter gives %s %v", key, held)
 		}
 	}
 	want := map[string]string{config.Repos: "{}", config.SecretHosts: "{}", config.MCP: "[]"}
 	for key, value := range want {
-		if held, _ := group.Get(key); string(held) != value {
+		if held := encoded(t, group[key]); held != value {
 			t.Errorf("the group starter gives %s %s, want %s", key, held, value)
 		}
 	}
 }
 
+// encoded is the JSON a value is written as, which is what a test compares.
+func encoded(t *testing.T, value any) string {
+	t.Helper()
+	written, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(written)
+}
+
 func TestGenWritesAGroupConfigBoxCanReadBack(t *testing.T) {
 	directory := t.TempDir()
-	boxtest.WriteFile(t, filepath.Join(directory, config.ConfigFile), string(jsonx.Write(setup.GroupConfig())))
+	boxtest.WriteFile(t, filepath.Join(directory, config.ConfigFile), encoded(t, setup.GroupConfig()))
 	read, err := config.ReadConfigFile(filepath.Join(directory, config.ConfigFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if read.Container(config.Repos) == nil {
+	if read.Raw[config.Repos] == nil {
 		t.Fatal("the group config lost its repos key")
 	}
 }
@@ -516,23 +526,22 @@ func TestTheStarterConfigIsEveryDefaultButTheKitGenWrites(t *testing.T) {
 		}
 	}
 	starter := setup.StarterConfig()
-	if !slices.Equal(starter.Keys(), want) {
-		t.Fatalf("the starter holds %v, want %v", starter.Keys(), want)
+	if held := slices.Sorted(maps.Keys(starter)); !slices.Equal(held, slices.Sorted(slices.Values(want))) {
+		t.Fatalf("the starter holds %v, want %v", held, want)
 	}
 	for _, key := range want {
-		held, _ := starter.Get(key)
 		// The kit is the one value gen fills in, since gen also writes the kit it points at.
 		if key == "kit" {
-			if string(held) != `"`+config.KitDir+`"` {
-				t.Fatalf("the starter gives kit %s", held)
+			if starter[key] != config.KitDir {
+				t.Fatalf("the starter gives kit %v", starter[key])
 			}
 			continue
 		}
-		if wanted := string(jsonx.Text(config.Defaults[key])); key != config.RequiredMounts && string(held) != wanted {
-			t.Errorf("the starter gives %s %s, want %s", key, held, wanted)
+		if key != config.RequiredMounts && starter[key] != config.Defaults[key] {
+			t.Errorf("the starter gives %s %v, want %q", key, starter[key], config.Defaults[key])
 		}
 	}
-	if held, _ := starter.Get(config.RequiredMounts); string(held) != "{}" {
+	if held := encoded(t, starter[config.RequiredMounts]); held != "{}" {
 		t.Errorf("the starter gives %s %s", config.RequiredMounts, held)
 	}
 }

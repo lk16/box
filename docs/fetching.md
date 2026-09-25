@@ -15,7 +15,7 @@ a password — would be worse: the prompts say nothing about which member they b
 whatever is typed reaches whichever process happens to read it first.
 
 So a parallel fetch owns no terminal. Its output is captured, and nothing is printed until every
-fetch is done; each member is then reported in the order `repos` names it, its own output under its
+fetch is done; each member is then reported in order of its name, its own output under its
 own name. The order does not depend on which host answered first, so two runs of the same group
 read the same way.
 

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -11,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/fail"
-	"github.com/lk16/box/internal/jsonx"
 )
 
 // Pair is one name and the text a file gives it, or the null it answers with instead.
@@ -22,7 +23,7 @@ type Pair struct {
 	Null bool
 }
 
-// Pairs are name to text, in the order the file that holds them wrote them.
+// Pairs are name to text, sorted by name.
 type Pairs []Pair
 
 // Get returns the text stored under a name, or nothing when there is none.
@@ -50,7 +51,7 @@ func (p Pairs) Null(name string) bool {
 	return false
 }
 
-// Names lists the names in the order the file wrote them.
+// Names lists the names in the order the pairs hold them.
 func (p Pairs) Names() []string {
 	names := make([]string, 0, len(p))
 	for _, pair := range p {
@@ -76,11 +77,6 @@ func (v Values) Setting(key string) string {
 		return text
 	}
 	return Defaults[key]
-}
-
-// Container reads one container key, or nothing when this source named none.
-func (v Values) Container(key string) json.RawMessage {
-	return v.Raw[key]
 }
 
 // Merge layers one source's settings over another's; the later source wins.
@@ -176,34 +172,75 @@ func LoadJSON(path string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, nil
 	}
-	raw, err := jsonx.Parse(data)
-	if err != nil {
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fail.Errorf("%s is not valid JSON: %s", path, err)
 	}
 	return raw, nil
 }
 
+// asObject reads a value as a JSON object, and says whether it was one.
+func asObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var object map[string]json.RawMessage
+	// A null unmarshals into a nil map without complaint, and it is no object.
+	err := json.Unmarshal(raw, &object)
+	return object, err == nil && object != nil
+}
+
+// sortedKeys lists an object's keys in order, so everything read from one comes out the same way.
+func sortedKeys(object map[string]json.RawMessage) []string {
+	return slices.Sorted(maps.Keys(object))
+}
+
+// decode reads one JSON value, keeping each number spelled the way the file wrote it.
+func decode(raw json.RawMessage) any {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil
+	}
+	return value
+}
+
+// typeName names a value's type the way the file that holds it spells it.
+func typeName(raw json.RawMessage) string {
+	switch decode(raw).(type) {
+	case map[string]any:
+		return "an object"
+	case []any:
+		return "a list"
+	case string:
+		return "text"
+	case bool:
+		return "a boolean"
+	case json.Number:
+		return "a number"
+	}
+	return "null"
+}
+
 // asText takes a JSON scalar as the string box passes on, rejecting what has no spelling as one.
 func asText(path, name string, raw json.RawMessage) (string, error) {
-	if text, ok := jsonx.AsString(raw); ok {
-		return text, nil
-	}
+	switch value := decode(raw).(type) {
+	case string:
+		return value, nil
 	// A number spells itself; null, true and a container have no spelling box could pass on.
-	if number, ok := jsonx.AsNumber(raw); ok {
-		return number, nil
+	case json.Number:
+		return value.String(), nil
 	}
-	return "", fail.Errorf("%s gives %s %s, which is not text or a number", path, name, jsonx.TypeName(raw))
+	return "", fail.Errorf("%s gives %s %s, which is not text or a number", path, name, typeName(raw))
 }
 
 // asPairs takes every value in a JSON object as the string box passes on.
-func asPairs(path string, object jsonx.Object) (Pairs, error) {
+func asPairs(path string, object map[string]json.RawMessage) (Pairs, error) {
 	pairs := make(Pairs, 0, len(object))
-	for _, member := range object {
-		text, err := asText(path, member.Key, member.Value)
+	for _, name := range sortedKeys(object) {
+		text, err := asText(path, name, object[name])
 		if err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, Pair{Name: member.Key, Value: text})
+		pairs = append(pairs, Pair{Name: name, Value: text})
 	}
 	return pairs, nil
 }
@@ -215,31 +252,31 @@ func ReadConfigFile(path string) (Values, error) {
 	if raw == nil || err != nil {
 		return values, err
 	}
-	object, ok := jsonx.AsObject(raw)
+	object, ok := asObject(raw)
 	if !ok {
 		return values, fail.Errorf("%s must contain a JSON object", path)
 	}
 	if err := rejectUnknownKeys(path, object); err != nil {
 		return values, err
 	}
-	for _, member := range object {
-		if slices.Contains(ContainerKeys, member.Key) {
-			values.Raw[member.Key] = member.Value
+	for _, key := range sortedKeys(object) {
+		if slices.Contains(ContainerKeys, key) {
+			values.Raw[key] = object[key]
 			continue
 		}
-		text, err := asText(path, member.Key, member.Value)
+		text, err := asText(path, key, object[key])
 		if err != nil {
 			return values, err
 		}
-		values.Text[member.Key] = text
+		values.Text[key] = text
 	}
 	return values, nil
 }
 
 // rejectUnknownKeys refuses a config holding a key box has no setting for, so typos surface at once.
-func rejectUnknownKeys(path string, object jsonx.Object) error {
+func rejectUnknownKeys(path string, object map[string]json.RawMessage) error {
 	var unknown []string
-	for _, key := range object.Keys() {
+	for key := range object {
 		if !slices.Contains(SettingKeys, key) && !slices.Contains(ContainerKeys, key) {
 			unknown = append(unknown, key)
 		}
@@ -252,12 +289,12 @@ func rejectUnknownKeys(path string, object jsonx.Object) error {
 }
 
 // readNamedPaths reads one of this machine's own files as the JSON object of name to path it holds.
-func readNamedPaths(path string) (jsonx.Object, error) {
+func readNamedPaths(path string) (map[string]json.RawMessage, error) {
 	raw, err := LoadJSON(path)
 	if raw == nil || err != nil {
 		return nil, err
 	}
-	object, ok := jsonx.AsObject(raw)
+	object, ok := asObject(raw)
 	if !ok {
 		return nil, fail.Errorf("%s must contain a JSON object of name to path", path)
 	}
@@ -278,7 +315,7 @@ func AsDescriptions(raw json.RawMessage) (Pairs, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	object, ok := jsonx.AsObject(raw)
+	object, ok := asObject(raw)
 	if !ok {
 		return nil, fail.Errorf("%s must be a JSON object of name to description", RequiredMounts)
 	}

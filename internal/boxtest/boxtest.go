@@ -20,10 +20,8 @@ type Runner struct {
 	// order guards the records, since a group's fetches reach one fake from several goroutines.
 	order sync.Mutex
 	// Answer says what a command leaves behind; a nil one means every command worked silently.
-	Answer func(arguments []string) system.Result
-	// Unstartable says which commands could not be started at all, which only Feed can report.
-	Unstartable func(arguments []string) error
-	Commands    [][]string
+	Answer   func(arguments []string) system.Result
+	Commands [][]string
 	// Attached is the commands the fake was asked to run on the terminal, and nothing else.
 	Attached [][]string
 	Stdin    []string
@@ -52,20 +50,12 @@ func (r *Runner) Attach(arguments []string, _ []string) system.Result {
 	return r.record(arguments)
 }
 
-// Feed records a command and the text it was fed, reporting one that could not be started.
-func (r *Runner) Feed(arguments []string, stdin string) (system.Result, error) {
+// Feed records a command and the text it was fed.
+func (r *Runner) Feed(arguments []string, stdin string) system.Result {
 	r.order.Lock()
 	r.Stdin = append(r.Stdin, stdin)
 	r.order.Unlock()
-	if r.Unstartable != nil {
-		if err := r.Unstartable(arguments); err != nil {
-			r.order.Lock()
-			r.Commands = append(r.Commands, arguments)
-			r.order.Unlock()
-			return system.Result{}, err
-		}
-	}
-	return r.record(arguments), nil
+	return r.record(arguments)
 }
 
 // record keeps a command and works out what this fake answers it with.

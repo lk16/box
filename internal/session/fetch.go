@@ -7,12 +7,13 @@ import (
 
 	"github.com/lk16/box/internal/config"
 	"github.com/lk16/box/internal/fail"
+	"github.com/lk16/box/internal/project"
 	"github.com/lk16/box/internal/system"
 )
 
 // FetchCommand brings one member's origin refs up to date, writing origin/* and nothing else.
 func FetchCommand(path string) []string {
-	return git(path, "fetch", "origin")
+	return project.Git(path, "fetch", "origin")
 }
 
 // FetchEnvironment is box's own environment with everything a fetch could ask a terminal turned off.

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/fail"
-	"github.com/lk16/box/internal/jsonx"
 )
 
 // Secret is one environment variable the sandbox gets, and the one host its value may be sent to.
@@ -54,7 +53,7 @@ func ToSecrets(raw json.RawMessage) ([]Secret, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	object, ok := jsonx.AsObject(raw)
+	object, ok := asObject(raw)
 	if !ok {
 		return nil, fail.Errorf("%s must be a JSON object of name to host", SecretHosts)
 	}

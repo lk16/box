@@ -45,16 +45,11 @@ func (Commands) Attach(arguments []string, environment []string) Result {
 }
 
 // Feed runs a command with text on its stdin, so a secret never lands on a command line.
-func (Commands) Feed(arguments []string, stdin string) (Result, error) {
+func (Commands) Feed(arguments []string, stdin string) Result {
 	command := exec.Command(arguments[0], arguments[1:]...)
 	command.Stdin = strings.NewReader(stdin)
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	err := command.Run()
-	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
-		return Result{}, err
-	}
-	return Result{Code: codeOf(err)}, nil
+	return Result{Code: codeOf(command.Run())}
 }
 
 // collect runs a command with its output kept rather than shown.

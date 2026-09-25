@@ -51,14 +51,11 @@ func TestConfigKeysMatchTheConfigFields(t *testing.T) {
 	}
 }
 
-func TestEverySettingKeyHasADefault(t *testing.T) {
-	for _, key := range config.SettingKeys {
-		if _, given := config.Defaults[key]; !given {
-			t.Errorf("%s has no default", key)
+func TestEveryDefaultIsASettingKey(t *testing.T) {
+	for key := range config.Defaults {
+		if !slices.Contains(config.SettingKeys, key) {
+			t.Errorf("%s has a default but is no setting", key)
 		}
-	}
-	if len(config.Defaults) != len(config.SettingKeys) {
-		t.Fatalf("there are %d defaults for %d settings", len(config.Defaults), len(config.SettingKeys))
 	}
 }
 

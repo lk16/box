@@ -25,8 +25,8 @@ type Runner interface {
 	Timed(arguments []string, wait time.Duration) Result
 	// Attach runs a command with box's own terminal and the given environment.
 	Attach(arguments []string, environment []string) Result
-	// Feed runs a command with text on its stdin, reporting one it could not start.
-	Feed(arguments []string, stdin string) (Result, error)
+	// Feed runs a command with text on its stdin.
+	Feed(arguments []string, stdin string) Result
 }
 
 // Console is where box prints, and whether its error stream can carry colour.

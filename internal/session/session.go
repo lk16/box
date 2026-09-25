@@ -35,7 +35,7 @@ func (s Session) TakenNames(checkouts []project.Checkout) map[string]bool {
 		names[name] = true
 	}
 	for _, checkout := range checkouts {
-		command := git(checkout.Path, "for-each-ref", "--format=%(refname)", config.SandboxRefs)
+		command := project.Git(checkout.Path, "for-each-ref", "--format=%(refname)", config.SandboxRefs)
 		for name := range ParseRefNames(system.Capture(s.Deps.Run, command)) {
 			names[name] = true
 		}

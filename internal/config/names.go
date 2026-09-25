@@ -79,22 +79,19 @@ const (
 	MemberShape  = "an object of " + MemberBranch + " and " + MemberOrigin
 )
 
-// SettingKeys hold the text of a setting, in the order box gen writes them.
+// SettingKeys hold the text of a setting, in the order the Config fields are.
 var SettingKeys = []string{
 	"name", "memory", "cpus", "root_size", "docker_size", "model", "prompt_file", "kit", "template",
 }
 
-// ContainerKeys hold an object or a list rather than text, in the order box gen writes them.
+// ContainerKeys hold an object or a list rather than text.
 var ContainerKeys = []string{MCP, RequiredMounts, SecretHosts, Repos}
 
 // GroupSettings are what a group of repositories adds, which box gen writes only when asked for one.
 var GroupSettings = []string{Repos, SecretHosts, MCP}
 
-// Defaults are the fallbacks behind every text setting.
-var Defaults = map[string]string{
-	"name": "", "memory": "4g", "cpus": "4", "root_size": "10g", "docker_size": "10g",
-	"model": "", "prompt_file": "", "kit": "", "template": "",
-}
+// Defaults are the fallbacks behind the text settings; one missing here defaults to nothing.
+var Defaults = map[string]string{"memory": "4g", "cpus": "4", "root_size": "10g", "docker_size": "10g"}
 
 // SandboxRefs is where sbx's git daemon lands a sandbox's work: refs/sandboxes/<sandbox>/<branch>.
 const SandboxRefs = "refs/sandboxes"

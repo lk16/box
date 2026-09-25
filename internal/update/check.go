@@ -85,7 +85,7 @@ func (u Update) SelfUpdate() (int, error) {
 		return 1, fail.Errorf("go is not on PATH, and box installs itself with go install")
 	}
 	if u.Deps.Run.Attach(InstallCommand(), nil).Code != 0 {
-		return 1, fail.Errorf("%s failed, so box is still %s", join(InstallCommand()), u.Version)
+		return 1, fail.Errorf("%s failed, so box is still %s", strings.Join(InstallCommand(), " "), u.Version)
 	}
 	u.Deps.Console.Print("updated box to %s", latest)
 	return 0, nil
@@ -105,9 +105,4 @@ func (u Update) latest(url string) (string, error) {
 		return "", fail.Errorf("could not read %s: %s", url, err)
 	}
 	return latest, nil
-}
-
-// join renders a command the way a message quotes it back to the reader.
-func join(command []string) string {
-	return strings.Join(command, " ")
 }

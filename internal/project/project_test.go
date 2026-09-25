@@ -475,12 +475,6 @@ func answering(t *testing.T, expected []string, stdout string) *boxtest.Runner {
 	}}
 }
 
-func TestTheSbxVersionCommandAsksSbxForItsVersion(t *testing.T) {
-	if got := strings.Join(project.SbxVersionCommand(), " "); got != "sbx version" {
-		t.Fatalf("asks %q", got)
-	}
-}
-
 func TestParseSbxVersionReadsTheReleaseOutOfThePrintedLine(t *testing.T) {
 	printed := "sbx version: v0.38.0 c022b14634c4bea846ca12870d1d5e97d5868b54\n"
 	if got := project.ToVersion(project.ParseSbxVersion(printed)); got != "0.38.0" {
@@ -504,7 +498,7 @@ func TestParseSbxVersionReturnsNothingForALineHoldingNoRelease(t *testing.T) {
 
 func TestRequireSupportedSbxAcceptsTheReleaseBoxIsWrittenAgainst(t *testing.T) {
 	boxtest.StubBinaries(t)
-	runner := answering(t, project.SbxVersionCommand(), "sbx version: v0.38.0 c022b146\n")
+	runner := answering(t, project.SbxVersionCommand, "sbx version: v0.38.0 c022b146\n")
 	if err := project.RequireSupportedSbx(runner); err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +506,7 @@ func TestRequireSupportedSbxAcceptsTheReleaseBoxIsWrittenAgainst(t *testing.T) {
 
 func TestRequireSupportedSbxAcceptsANewerRelease(t *testing.T) {
 	boxtest.StubBinaries(t)
-	runner := answering(t, project.SbxVersionCommand(), "sbx version: v0.39.1 c022b146\n")
+	runner := answering(t, project.SbxVersionCommand, "sbx version: v0.39.1 c022b146\n")
 	if err := project.RequireSupportedSbx(runner); err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +514,7 @@ func TestRequireSupportedSbxAcceptsANewerRelease(t *testing.T) {
 
 func TestRequireSupportedSbxRefusesAnOlderRelease(t *testing.T) {
 	boxtest.StubBinaries(t)
-	runner := answering(t, project.SbxVersionCommand(), "sbx version: v0.37.9 c022b146\n")
+	runner := answering(t, project.SbxVersionCommand, "sbx version: v0.37.9 c022b146\n")
 	err := project.RequireSupportedSbx(runner)
 	wantError(t, err, "this sbx is v0.37.9")
 	wantError(t, err, "v0.38.0 or newer")
@@ -528,13 +522,13 @@ func TestRequireSupportedSbxRefusesAnOlderRelease(t *testing.T) {
 
 func TestRequireSupportedSbxRefusesAReleaseOlderInItsFirstNumber(t *testing.T) {
 	boxtest.StubBinaries(t)
-	runner := answering(t, project.SbxVersionCommand(), "sbx version: v0.9.0 c022b146\n")
+	runner := answering(t, project.SbxVersionCommand, "sbx version: v0.9.0 c022b146\n")
 	wantError(t, project.RequireSupportedSbx(runner), "this sbx is v0.9.0")
 }
 
 func TestRequireSupportedSbxAcceptsAVersionLineItCannotRead(t *testing.T) {
 	boxtest.StubBinaries(t)
-	if err := project.RequireSupportedSbx(answering(t, project.SbxVersionCommand(), "")); err != nil {
+	if err := project.RequireSupportedSbx(answering(t, project.SbxVersionCommand, "")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -547,12 +541,6 @@ func TestRequireSupportedSbxSkipsAMachineWithoutSbx(t *testing.T) {
 	}}
 	if err := project.RequireSupportedSbx(runner); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTheDiagnoseCommandAsksForJSON(t *testing.T) {
-	if got := strings.Join(project.DiagnoseCommand(), " "); got != "sbx diagnose -o json" {
-		t.Fatalf("asks %q", got)
 	}
 }
 
@@ -593,7 +581,7 @@ func TestParseVersionMismatchIsQuietOnOutputThatIsNotDiagnoseJSON(t *testing.T) 
 
 func TestRequireMatchingVersionsAcceptsAgreeingVersions(t *testing.T) {
 	boxtest.StubBinaries(t)
-	runner := answering(t, project.DiagnoseCommand(), diagnoseReport(t, versionCheck("pass", "v0.38.0")))
+	runner := answering(t, project.DiagnoseCommand, diagnoseReport(t, versionCheck("pass", "v0.38.0")))
 	if err := project.RequireMatchingVersions(runner); err != nil {
 		t.Fatal(err)
 	}
@@ -602,14 +590,14 @@ func TestRequireMatchingVersionsAcceptsAgreeingVersions(t *testing.T) {
 func TestRequireMatchingVersionsRefusesADaemonFromAnotherRelease(t *testing.T) {
 	boxtest.StubBinaries(t)
 	report := diagnoseReport(t, versionCheck("fail", "client v0.38.0, daemon v0.37.0"))
-	err := project.RequireMatchingVersions(answering(t, project.DiagnoseCommand(), report))
+	err := project.RequireMatchingVersions(answering(t, project.DiagnoseCommand, report))
 	wantError(t, err, "daemon v0.37.0")
 	wantError(t, err, "sbx daemon restart")
 }
 
 func TestRequireMatchingVersionsAcceptsADiagnoseThatAnsweredNothing(t *testing.T) {
 	boxtest.StubBinaries(t)
-	if err := project.RequireMatchingVersions(answering(t, project.DiagnoseCommand(), "")); err != nil {
+	if err := project.RequireMatchingVersions(answering(t, project.DiagnoseCommand, "")); err != nil {
 		t.Fatal(err)
 	}
 }

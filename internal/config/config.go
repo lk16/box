@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/fail"
-	"github.com/lk16/box/internal/jsonx"
 )
 
 // Config is the effective settings for one box run.
@@ -30,9 +29,9 @@ type Config struct {
 
 // toMCPServer takes one MCP server name, rejecting what sbx could not be handed as that one name.
 func toMCPServer(raw json.RawMessage) (string, error) {
-	name, ok := jsonx.AsString(raw)
+	name, ok := decode(raw).(string)
 	if !ok {
-		return "", fail.Errorf("%s holds %s, which is not a server name", MCP, jsonx.TypeName(raw))
+		return "", fail.Errorf("%s holds %s, which is not a server name", MCP, typeName(raw))
 	}
 	if name == "" {
 		return "", fail.Errorf("%s holds an empty server name", MCP)
@@ -49,8 +48,9 @@ func ToMCPServers(raw json.RawMessage) ([]string, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	values, ok := jsonx.AsArray(raw)
-	if !ok {
+	var values []json.RawMessage
+	// A null unmarshals into a nil list without complaint, and it is no list.
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
 		return nil, fail.Errorf("%s must be a JSON list of server names", MCP)
 	}
 	names := make([]string, 0, len(values))
@@ -70,7 +70,7 @@ func Build(values Values, mounts []string, members []MemberSettings, workingDire
 	if name == "" {
 		name = DefaultBaseName(workingDirectory)
 	}
-	servers, err := ToMCPServers(values.Container(MCP))
+	servers, err := ToMCPServers(values.Raw[MCP])
 	if err != nil {
 		return Config{}, err
 	}
@@ -78,7 +78,7 @@ func Build(values Values, mounts []string, members []MemberSettings, workingDire
 	if err != nil {
 		return Config{}, err
 	}
-	secrets, err := ToSecrets(values.Container(SecretHosts))
+	secrets, err := ToSecrets(values.Raw[SecretHosts])
 	if err != nil {
 		return Config{}, err
 	}
@@ -112,8 +112,12 @@ func (c Config) MissingRepos() []Member {
 
 // Kits lists the kits a sandbox runs under: the group's, then each member's, and each one once.
 func (c Config) Kits() []string {
+	kits := []string{c.Kit}
+	for _, settings := range c.Members {
+		kits = append(kits, settings.Kit)
+	}
 	var wanted []string
-	for _, kit := range append([]string{c.Kit}, memberKits(c.Members)...) {
+	for _, kit := range kits {
 		if kit == "" || slices.Contains(wanted, kit) {
 			continue
 		}
@@ -122,16 +126,7 @@ func (c Config) Kits() []string {
 	return wanted
 }
 
-// memberKits lists what each member asks to run under, in the order the group declared them.
-func memberKits(members []MemberSettings) []string {
-	kits := make([]string, 0, len(members))
-	for _, settings := range members {
-		kits = append(kits, settings.Kit)
-	}
-	return kits
-}
-
-// MemberMounts collects what the members ask to have mounted, in the order the group declared them.
+// MemberMounts collects what the members ask to have mounted, in the order the members come.
 func MemberMounts(members []MemberSettings) []string {
 	var mounts []string
 	for _, settings := range members {

@@ -35,8 +35,7 @@ default. The `:rw` goes on the path in `.box/mounts.json`, never in the declarat
 file cannot widen access to your disk. A leading `~` expands as it does in the shell. `--mount`
 adds an unnamed workspace for one run. `box config` shows the resulting `sbx` specs.
 
-Mounts reach `sbx` in declaration order, so the arguments do not depend on how one machine ordered
-its file. The same path asked for twice is passed once, and a path asked for read-only in one place
+Mounts reach `sbx` sorted by name, so the arguments do not depend on how anyone ordered a file. The same path asked for twice is passed once, and a path asked for read-only in one place
 and `:rw` in another is an error naming both.
 
 ## Filling them in with an agent

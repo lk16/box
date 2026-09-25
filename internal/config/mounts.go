@@ -59,7 +59,7 @@ func RequireNamedMounts(required, provided Pairs) error {
 		MountsFile, DescribeMounts(required, unfilled), MountPlaceholder)
 }
 
-// OrderMounts returns the declared mounts' paths in declaration order, so the sbx args never shuffle.
+// OrderMounts returns the declared mounts' paths in the order they are declared, so the sbx args never shuffle.
 func OrderMounts(required, provided Pairs) ([]string, error) {
 	if err := RequireNamedMounts(required, provided); err != nil {
 		return nil, err
