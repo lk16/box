@@ -38,11 +38,7 @@ func StoreCommand(sandboxName string, secret config.Secret) []string {
 
 // StoreSecret hands one secret's value to sbx over stdin so it never lands in the shell history.
 func (s Session) StoreSecret(sandboxName string, stored config.SecretValue) error {
-	result, err := s.Deps.Run.Feed(StoreCommand(sandboxName, stored.Secret), stored.Value)
-	if err != nil {
-		return fail.Errorf("could not run sbx: %s", err)
-	}
-	if result.Code != 0 {
+	if s.Deps.Run.Feed(StoreCommand(sandboxName, stored.Secret), stored.Value).Code != 0 {
 		return fail.Errorf("sbx would not store %s for %s", stored.Secret.Name, sandboxName)
 	}
 	return nil

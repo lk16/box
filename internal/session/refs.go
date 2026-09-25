@@ -28,7 +28,7 @@ func ParseSandboxRefs(refsOutput string) []SandboxRef {
 
 // SandboxRefs reads the refs this sandbox's work was fetched into.
 func (s Session) SandboxRefs(checkout project.Checkout, sandboxName string) []SandboxRef {
-	command := git(checkout.Path, "for-each-ref", "--format=%(refname) %(objectname)",
+	command := project.Git(checkout.Path, "for-each-ref", "--format=%(refname) %(objectname)",
 		config.SandboxRefs+"/"+sandboxName)
 	return ParseSandboxRefs(s.capture(command))
 }
@@ -40,18 +40,18 @@ func NewCommits(checkout project.Checkout, commit string) []string {
 
 // CountNewCommits counts the sandbox's commits this repository lacks, or nothing when git could not say.
 func (s Session) CountNewCommits(checkout project.Checkout, commit string) string {
-	command := append(git(checkout.Path, "rev-list", "--count"), NewCommits(checkout, commit)...)
+	command := append(project.Git(checkout.Path, "rev-list", "--count"), NewCommits(checkout, commit)...)
 	return strings.TrimSpace(s.capture(command))
 }
 
 // NewCommitSubjects reads the subjects of the sandbox's commits, which a branch gets named after.
 func (s Session) NewCommitSubjects(checkout project.Checkout, commit string) string {
-	return s.capture(append(git(checkout.Path, "log", "--format=%s"), NewCommits(checkout, commit)...))
+	return s.capture(append(project.Git(checkout.Path, "log", "--format=%s"), NewCommits(checkout, commit)...))
 }
 
 // LocalBranchNames collects the branch names this repository already has.
 func (s Session) LocalBranchNames(checkout project.Checkout) map[string]bool {
-	command := git(checkout.Path, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	command := project.Git(checkout.Path, "for-each-ref", "--format=%(refname:short)", "refs/heads")
 	names := map[string]bool{}
 	for _, name := range strings.Fields(s.capture(command)) {
 		names[name] = true
@@ -74,12 +74,12 @@ func PickBranchName(branch string, used map[string]bool) string {
 
 // CreateBranch points a new branch at the sandbox's commit, saying whether git accepted it.
 func (s Session) CreateBranch(checkout project.Checkout, branch, commit string) bool {
-	return s.succeeds(git(checkout.Path, "branch", branch, commit))
+	return s.succeeds(project.Git(checkout.Path, "branch", branch, commit))
 }
 
 // DeleteRef drops a ref, which is safe to leave behind when it fails.
 func (s Session) DeleteRef(checkout project.Checkout, refName string) {
-	s.capture(git(checkout.Path, "update-ref", "-d", refName))
+	s.capture(project.Git(checkout.Path, "update-ref", "-d", refName))
 }
 
 // Plural renders a count and what it counts, so a single commit does not read as "1 commits".

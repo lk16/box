@@ -33,7 +33,7 @@ func newFixture(answer func([]string) system.Result) *fixture {
 		console:  console,
 		download: download,
 		cli: cli.CLI{
-			Version: update.Devel,
+			Version: "",
 			Deps: system.Deps{
 				Run:      runner,
 				Console:  console.Handle(false),

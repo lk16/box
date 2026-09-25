@@ -59,13 +59,11 @@ func TestAMemberIsDeclaredByNameAndPlacedByThisMachine(t *testing.T) {
 	}
 }
 
-func TestMembersKeepTheOrderTheyWereDeclaredIn(t *testing.T) {
-	declaration := map[string]string{"branch": "main", "git_origin": "https://example.com/b.git"}
+func TestMembersAreSortedByName(t *testing.T) {
 	object := json.RawMessage(`{"b": {"branch": "main", "git_origin": "https://example.com/b.git"},
 		"a": {"branch": "main", "git_origin": "https://example.com/a.git"}}`)
-	_ = declaration
 	members, err := config.ToMembers(object, nil)
-	if err != nil || members[0].Name != "b" || members[1].Name != "a" {
+	if err != nil || members[0].Name != "a" || members[1].Name != "b" {
 		t.Fatalf("read %v, %v", members, err)
 	}
 }

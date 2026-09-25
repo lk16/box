@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/lk16/box/internal/config"
 	"github.com/lk16/box/internal/fail"
@@ -18,7 +19,7 @@ type Bundle struct {
 
 // hasBase says whether the branch a member's clone starts from is one origin has.
 func (s Session) hasBase(path, base string) bool {
-	return s.succeeds(git(path, "rev-parse", "--verify", "refs/remotes/origin/"+base))
+	return s.succeeds(project.Git(path, "rev-parse", "--verify", "refs/remotes/origin/"+base))
 }
 
 // bundleMember packs the history one member's clone is made from into the directory.
@@ -27,7 +28,7 @@ func (s Session) bundleMember(member config.Member, path string, number int, dir
 		return Bundle{}, fail.Errorf("%s at %s has no branch %s on origin", member.Name, path, member.Branch)
 	}
 	bundleFile := filepath.Join(directory, fmt.Sprintf("%d-%s.bundle", number, filepath.Base(path)))
-	if !s.succeeds(git(path, "bundle", "create", bundleFile, "--remotes=origin")) {
+	if !s.succeeds(project.Git(path, "bundle", "create", bundleFile, "--remotes=origin")) {
 		return Bundle{}, fail.Errorf("git could not bundle %s at %s", member.Name, path)
 	}
 	return Bundle{Member: member, Path: path, BundleFile: bundleFile}, nil
@@ -35,7 +36,10 @@ func (s Session) bundleMember(member config.Member, path string, number int, dir
 
 // BundleMembers fetches every member at once, then packs what each clone is made from.
 func (s Session) BundleMembers(settings config.Config, proj project.Project, directory string) ([]Bundle, error) {
-	paths := MemberPaths(settings, proj)
+	var paths []string
+	for _, checkout := range project.MemberCheckouts(settings, proj) {
+		paths = append(paths, checkout.Path)
+	}
 	if err := s.fetchMembers(paths); err != nil {
 		return nil, err
 	}
@@ -48,15 +52,6 @@ func (s Session) BundleMembers(settings config.Config, proj project.Project, dir
 		bundles = append(bundles, bundle)
 	}
 	return bundles, nil
-}
-
-// MemberPaths is where each member sits on this machine, in the order repos names them.
-func MemberPaths(settings config.Config, proj project.Project) []string {
-	paths := make([]string, 0, len(settings.Repos))
-	for _, checkout := range project.MemberCheckouts(settings, proj) {
-		paths = append(paths, checkout.Path)
-	}
-	return paths
 }
 
 // CloneCommands assemble what turns a copied bundle into a clone on the member's own host path.
@@ -80,9 +75,9 @@ func CloneCommands(bundle Bundle, sandboxName string) [][]string {
 	}
 }
 
-// with appends arguments to a prefix without ever writing into the prefix's own storage.
+// with appends arguments to a prefix in a new slice, so no two commands share the prefix's storage.
 func with(prefix []string, arguments ...string) []string {
-	return append(append([]string{}, prefix...), arguments...)
+	return slices.Concat(prefix, arguments)
 }
 
 // CloneMember puts one member's clone in the sandbox, saying whether every step of it worked.
@@ -99,7 +94,7 @@ func (s Session) CloneMember(bundle Bundle, sandboxName string) bool {
 func (s Session) FetchMemberWork(checkout project.Checkout, sandboxName, directory string) bool {
 	name := sandboxName + "-" + filepath.Base(checkout.Path) + ".bundle"
 	inside := config.SandboxTemp + "/" + name
-	bundle := git(checkout.Path, "bundle", "create", inside, "--branches")
+	bundle := project.Git(checkout.Path, "bundle", "create", inside, "--branches")
 	if !s.succeeds(append([]string{"sbx", "exec", sandboxName}, bundle...)) {
 		return false
 	}
@@ -108,7 +103,7 @@ func (s Session) FetchMemberWork(checkout project.Checkout, sandboxName, directo
 		return false
 	}
 	refspec := fmt.Sprintf("+refs/heads/*:%s/%s/*", config.SandboxRefs, sandboxName)
-	return s.succeeds(git(checkout.Path, "fetch", here, refspec))
+	return s.succeeds(project.Git(checkout.Path, "fetch", here, refspec))
 }
 
 // fetchCommittedWork brings every clone's commits back, or names the repository whose work stayed.

@@ -103,9 +103,9 @@ disagree about a timeout once.
   and where it sits is not. The two must match exactly, rather than a missing path being skipped,
   since a mount that is quietly absent becomes a failure inside the sandbox with nothing pointing
   back here, and a name nobody declared is a typo.
-- Mounts reach `sbx` in declaration order, so the arguments do not depend on how one machine
-  ordered its file. That is why box reads JSON objects with their key order kept rather than into
-  a map.
+- box reads every JSON object in sorted key order, so mounts reach `sbx` sorted by name and the
+  arguments do not depend on how anyone ordered a file. Order carries no meaning: each mount is
+  its own subtree in the sandbox.
 - `:rw` belongs on the path in `.box/mounts.json` and never in the declaration. Whoever owns the
   machine decides what the agent may write to; a description may ask for write access, but
   nothing enforces it. Read-only is the default everywhere, so write access to the host is always
@@ -234,7 +234,7 @@ members `repos` names.
   nothing else, so the user's own checkout, index and branches are left exactly as they were.
 - The fetches run at once, since each one waits on a network rather than on this machine. None of
   them owns the terminal, so none can ask anything and none prints over another: what each one
-  said is kept and reported in the order `repos` names the members, once they are all in. A fetch
+  said is kept and reported by member name in sorted order, once they are all in. A fetch
   that failed is asked again on its own with the terminal, which is where ssh still gets to ask
   for a passphrase. See [fetching.md](fetching.md).
 - Each member names the branch its clone starts from, because `origin/HEAD` is written when a
@@ -280,8 +280,8 @@ members `repos` names.
 - Everything else in a member's config is ignored, its own `repos`, `secret_hosts` and `mcp`
   included, so a group never nests and reading one is never recursive. A `template` is the one
   exception and an error: a sandbox runs one image, so the group's has to cover every member.
-- Mounts reach sbx in one order: the group's own, then each member's in the order `repos` names
-  them, then the `--mount` flags, which are this run's rather than anyone's settings. The same
+- Mounts reach sbx in one order: the group's own, then each member's, sorted by member name,
+  then the `--mount` flags, which are this run's rather than anyone's settings. The same
   spec twice is passed once, since two groups sharing a member would otherwise ask for one path
   twice, and one path asked for read-only in one place and writable in another is an error: only
   one of the two can hold, and picking either silently would surprise whoever asked for the other.

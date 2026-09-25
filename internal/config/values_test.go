@@ -87,7 +87,7 @@ func TestReadConfigFileKeepsRequiredMountsAnObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	described, err := config.AsDescriptions(read.Container(config.RequiredMounts))
+	described, err := config.AsDescriptions(read.Raw[config.RequiredMounts])
 	if err != nil || described.Get("go") != "the Go toolchain" {
 		t.Fatalf("read %v, %v", described, err)
 	}

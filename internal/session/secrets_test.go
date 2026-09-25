@@ -1,12 +1,10 @@
 package session_test
 
 import (
-	"errors"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/lk16/box/internal/boxtest"
 	"github.com/lk16/box/internal/config"
 	"github.com/lk16/box/internal/session"
 	"github.com/lk16/box/internal/system"
@@ -55,15 +53,6 @@ func TestStoreSecretNamesTheSandboxTheDeclaredHostAndTheVariable(t *testing.T) {
 	}
 	if !slices.Equal(run.runner.Stdin, []string{"glpat-abc"}) {
 		t.Fatalf("stdin was %v", run.runner.Stdin)
-	}
-}
-
-func TestStoreSecretReportsAMissingSbx(t *testing.T) {
-	runner := &boxtest.Runner{Unstartable: func([]string) error { return errors.New("no sbx") }}
-	run := session.Session{Deps: system.Deps{Run: runner, Console: (&boxtest.Console{}).Handle(false)}}
-	err := run.StoreSecret("demo-1", config.SecretValue{Secret: config.OAuthSecret, Value: "x"})
-	if err == nil || !strings.Contains(err.Error(), "could not run sbx") {
-		t.Fatalf("the refusal was %v", err)
 	}
 }
 

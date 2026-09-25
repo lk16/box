@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"slices"
@@ -47,16 +48,6 @@ var settingFlags = []string{
 	"name", "memory", "cpus", "root-size", "docker-size", "model", "prompt-file", "kit", "template",
 }
 
-// UsageError is a command line box could not read at all, which exits the way a shell expects.
-type UsageError struct {
-	Message string
-}
-
-// Error names what was wrong with the command line.
-func (e *UsageError) Error() string {
-	return e.Message
-}
-
 // Arguments are one command line: the word box was asked to run, and the settings given with it.
 type Arguments struct {
 	Command string
@@ -66,25 +57,6 @@ type Arguments struct {
 	Given []string
 	// Help says the command line asked for the usage rather than for a command.
 	Help bool
-}
-
-// mountList collects a repeatable flag, which is the one flag that does not name a setting.
-type mountList struct {
-	paths *[]string
-}
-
-// String renders what the flag has collected, which only the flag package's own help asks for.
-func (m mountList) String() string {
-	if m.paths == nil {
-		return ""
-	}
-	return strings.Join(*m.paths, " ")
-}
-
-// Set adds one more path to the list.
-func (m mountList) Set(path string) error {
-	*m.paths = append(*m.paths, path)
-	return nil
 }
 
 // Parse reads a command line, taking flags on either side of the command word.
@@ -97,10 +69,10 @@ func Parse(argv []string) (Arguments, error) {
 		return Arguments{Help: true}, nil
 	}
 	if command == "" {
-		return Arguments{}, &UsageError{Message: "a command is required"}
+		return Arguments{}, errors.New("a command is required")
 	}
 	if !slices.Contains(config.Commands, command) {
-		return Arguments{}, &UsageError{Message: "box has no command named " + command}
+		return Arguments{}, errors.New("box has no command named " + command)
 	}
 	return read(command, flags)
 }
@@ -113,13 +85,17 @@ func read(command string, flags []string) (Arguments, error) {
 	for _, name := range settingFlags {
 		held[name] = set.String(name, "", "")
 	}
+	// The one repeatable flag, which collects paths rather than naming a setting.
 	var mounts []string
-	set.Var(mountList{paths: &mounts}, config.MountFlag, "")
+	set.Func(config.MountFlag, "", func(path string) error {
+		mounts = append(mounts, path)
+		return nil
+	})
 	if err := set.Parse(flags); err != nil {
-		return Arguments{}, &UsageError{Message: err.Error()}
+		return Arguments{}, err
 	}
 	if rest := set.Args(); len(rest) > 0 {
-		return Arguments{}, &UsageError{Message: "box takes one command, but also got " + rest[0]}
+		return Arguments{}, errors.New("box takes one command, but also got " + rest[0])
 	}
 	return collect(command, set, held, mounts), nil
 }
@@ -158,7 +134,7 @@ func split(argv []string) (string, []string, error) {
 			continue
 		}
 		if command != "" {
-			return "", nil, &UsageError{Message: "box takes one command, but got " + command + " and " + argument}
+			return "", nil, errors.New("box takes one command, but got " + command + " and " + argument)
 		}
 		command = argument
 	}

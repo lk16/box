@@ -24,7 +24,7 @@ type Checkout struct {
 
 // RepositoryRoot finds the root of the repository box runs in, which is what sbx clones.
 func RepositoryRoot(runner system.Runner, workingDirectory string) string {
-	root := strings.TrimSpace(system.Capture(runner, git(workingDirectory, "rev-parse", "--show-toplevel")))
+	root := strings.TrimSpace(system.Capture(runner, Git(workingDirectory, "rev-parse", "--show-toplevel")))
 	if root == "" {
 		return workingDirectory
 	}
@@ -115,8 +115,8 @@ func MemberPrompts(settings config.Config, project Project) ([]string, error) {
 	return prompts, nil
 }
 
-// git assembles a git invocation in one directory, so no call depends on box's own working directory.
-func git(directory string, arguments ...string) []string {
+// Git assembles a git invocation in one directory, so no call depends on box's own working directory.
+func Git(directory string, arguments ...string) []string {
 	return append([]string{"git", "-C", directory}, arguments...)
 }
 

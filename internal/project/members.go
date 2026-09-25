@@ -12,7 +12,7 @@ import (
 
 // MemberOrigin reads a member's origin URL, so its clone names the same project the host copy does.
 func MemberOrigin(runner system.Runner, path string) string {
-	return strings.TrimSpace(system.Capture(runner, git(path, "remote", "get-url", "origin")))
+	return strings.TrimSpace(system.Capture(runner, Git(path, "remote", "get-url", "origin")))
 }
 
 // requireOrigin refuses a path holding some other repository than the member is declared as.

@@ -139,7 +139,7 @@ func TestStoreCheckTimeCreatesTheCacheDirectory(t *testing.T) {
 }
 
 func TestAGoBuildIsNoInstall(t *testing.T) {
-	if update.IsInstalled(update.Devel) || update.IsInstalled("") {
+	if update.IsInstalled("") {
 		t.Fatal("a checkout was taken for an install")
 	}
 	if !update.IsInstalled("v0.1.0") {
@@ -276,7 +276,7 @@ func TestWarnWhenOutdatedSurvivesACacheItCannotWrite(t *testing.T) {
 func TestWarnWhenOutdatedSaysNothingAboutACheckedOutBox(t *testing.T) {
 	t.Setenv(config.CacheHomeEnv, t.TempDir())
 	boxtest.Unset(t, config.UpdateURLEnv)
-	run := newFixture(update.Devel, &boxtest.Downloader{Body: released("v0.2.0")}, false)
+	run := newFixture("", &boxtest.Downloader{Body: released("v0.2.0")}, false)
 	run.update.WarnWhenOutdated()
 	if run.console.Warned() != "" || len(run.download.URLs) != 0 {
 		t.Fatalf("warned %q after %d requests", run.console.Warned(), len(run.download.URLs))
@@ -332,7 +332,7 @@ func TestSelfUpdateRejectsAnEmptyAnswer(t *testing.T) {
 }
 
 func TestSelfUpdateRefusesACheckout(t *testing.T) {
-	run := installed(t, update.Devel, "v0.2.0")
+	run := installed(t, "", "v0.2.0")
 	_, err := run.update.SelfUpdate()
 	if err == nil || !strings.Contains(err.Error(), "checkout rather than an install") {
 		t.Fatalf("the refusal was %v", err)

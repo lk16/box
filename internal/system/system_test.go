@@ -99,9 +99,8 @@ func TestTimedReturnsTheAnswerOfACommandThatFinishedInTime(t *testing.T) {
 
 func TestFeedPutsTheTextOnTheCommandsStdin(t *testing.T) {
 	seen := filepath.Join(t.TempDir(), "seen")
-	result, err := (system.Commands{}).Feed(script(t, "cat > "+seen+"\n"), "sk-ant-secret")
-	if err != nil || result.Code != 0 {
-		t.Fatalf("feeding answered %v %d", err, result.Code)
+	if result := (system.Commands{}).Feed(script(t, "cat > "+seen+"\n"), "sk-ant-secret"); result.Code != 0 {
+		t.Fatalf("feeding answered %d", result.Code)
 	}
 	contents, _ := os.ReadFile(seen)
 	if string(contents) != "sk-ant-secret" {
@@ -110,15 +109,14 @@ func TestFeedPutsTheTextOnTheCommandsStdin(t *testing.T) {
 }
 
 func TestFeedReportsACommandThatCouldNotStart(t *testing.T) {
-	if _, err := (system.Commands{}).Feed([]string{missingBinary}, "x"); err == nil {
-		t.Fatal("a missing command was reported as started")
+	if result := (system.Commands{}).Feed([]string{missingBinary}, "x"); result.Code != system.NotRun {
+		t.Fatalf("a missing command answered %d", result.Code)
 	}
 }
 
 func TestFeedReportsACommandThatRefused(t *testing.T) {
-	result, err := (system.Commands{}).Feed(script(t, "exit 1\n"), "x")
-	if err != nil || result.Code != 1 {
-		t.Fatalf("answered %v %d", err, result.Code)
+	if result := (system.Commands{}).Feed(script(t, "exit 1\n"), "x"); result.Code != 1 {
+		t.Fatalf("answered %d", result.Code)
 	}
 }
 

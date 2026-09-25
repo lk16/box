@@ -119,7 +119,7 @@ func LoadConfig(arguments Arguments, workingDirectory string) (config.Config, er
 
 // readMembers reads every member a group declares, placed where this machine says each one sits.
 func readMembers(workingDirectory string, values config.Values) ([]config.MemberSettings, error) {
-	declared, err := config.ReadRepos(workingDirectory, values.Container(config.Repos))
+	declared, err := config.ReadRepos(workingDirectory, values.Raw[config.Repos])
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func readMembers(workingDirectory string, values config.Values) ([]config.Member
 
 // ownMounts reads the mounts this directory's .box declares and this machine answers, in order.
 func ownMounts(workingDirectory string, values config.Values) ([]string, error) {
-	required, err := config.AsDescriptions(values.Container(config.RequiredMounts))
+	required, err := config.AsDescriptions(values.Raw[config.RequiredMounts])
 	if err != nil {
 		return nil, err
 	}

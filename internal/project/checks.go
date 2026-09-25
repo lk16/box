@@ -37,12 +37,12 @@ func LocalPathNames() []string {
 
 // IsGitRepository says whether git reads this directory as a working tree, which sbx --clone needs.
 func IsGitRepository(runner system.Runner, directory string) bool {
-	return system.Succeeds(runner, git(directory, "rev-parse", "--git-dir"))
+	return system.Succeeds(runner, Git(directory, "rev-parse", "--git-dir"))
 }
 
 // hasCommits says whether HEAD names a commit, which a repository nobody has committed to does not.
 func hasCommits(runner system.Runner, directory string) bool {
-	return system.Succeeds(runner, git(directory, "rev-parse", "--verify", "HEAD"))
+	return system.Succeeds(runner, Git(directory, "rev-parse", "--verify", "HEAD"))
 }
 
 // RequireGitRepository refuses to run where sbx create --clone would have nothing to clone.
@@ -58,7 +58,7 @@ func RequireGitRepository(runner system.Runner, directory string) error {
 
 // IsGitIgnored asks git whether a path is ignored; check-ignore exits 0 only when it is.
 func IsGitIgnored(runner system.Runner, directory, relativePath string) bool {
-	return system.Succeeds(runner, git(directory, "check-ignore", "-q", relativePath))
+	return system.Succeeds(runner, Git(directory, "check-ignore", "-q", relativePath))
 }
 
 // RequireIgnoredLocalPaths refuses to run while anything holding this machine's files could be committed.
@@ -96,9 +96,7 @@ func RequireBinaries() error {
 }
 
 // SbxVersionCommand asks sbx for its version, whose line names the release box is talking to.
-func SbxVersionCommand() []string {
-	return []string{"sbx", "version"}
-}
+var SbxVersionCommand = []string{"sbx", "version"}
 
 // releaseNumber is the release in what sbx version prints: "sbx version: v0.38.0 <commit>".
 var releaseNumber = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
@@ -132,7 +130,7 @@ func RequireSupportedSbx(runner system.Runner) error {
 	if !system.OnPath("sbx") {
 		return nil
 	}
-	found := ParseSbxVersion(system.Capture(runner, SbxVersionCommand()))
+	found := ParseSbxVersion(system.Capture(runner, SbxVersionCommand))
 	// A line box cannot read is no evidence of an old sbx, so it must not stop a working command.
 	if len(found) == 0 || slices.Compare(found, config.SbxMinimum) >= 0 {
 		return nil
@@ -141,9 +139,7 @@ func RequireSupportedSbx(runner system.Runner) error {
 }
 
 // DiagnoseCommand asks sbx for the JSON comparing the CLI with the daemon it talks to.
-func DiagnoseCommand() []string {
-	return []string{"sbx", "diagnose", "-o", "json"}
-}
+var DiagnoseCommand = []string{"sbx", "diagnose", "-o", "json"}
 
 // diagnoseReport is the part of sbx diagnose's JSON box reads.
 type diagnoseReport struct {
@@ -179,7 +175,7 @@ func RequireMatchingVersions(runner system.Runner) error {
 		return nil
 	}
 	// A daemon that is not running is no mismatch: sbx starts its own version when it needs one.
-	mismatch := ParseVersionMismatch(runner.Capture(DiagnoseCommand(), nil).Stdout)
+	mismatch := ParseVersionMismatch(runner.Capture(DiagnoseCommand, nil).Stdout)
 	if mismatch == "" {
 		return nil
 	}
@@ -188,16 +184,10 @@ func RequireMatchingVersions(runner system.Runner) error {
 
 // RequireConfigFile sends a project with no box setup at all to the command that writes one.
 func RequireConfigFile(workingDirectory string) error {
-	if info, err := os.Stat(filepath.Join(workingDirectory, config.ConfigFile)); err == nil && !info.IsDir() {
+	if config.IsFile(filepath.Join(workingDirectory, config.ConfigFile)) {
 		return nil
 	}
 	return fail.Errorf("%s", config.NoConfigHelp)
-}
-
-// isFile says whether a path names a file, which is what sbx reads as a zip artifact.
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 // RequireSettings rejects settings whose default would be a silent risk rather than a convenience.
@@ -205,12 +195,12 @@ func RequireSettings(settings config.Config) error {
 	if settings.Kit == "" {
 		return fail.Errorf("%s", config.KitHelp)
 	}
-	// A kit that is not on disk is a reference sbx resolves itself, so only a local file is wrong.
-	if isFile(config.ResolvePath(settings.Kit)) {
+	// A kit that is not on disk is a reference sbx resolves itself, and sbx reads a file as a zip artifact.
+	if config.IsFile(config.ResolvePath(settings.Kit)) {
 		return fail.Errorf("%s", config.KitFileHelp)
 	}
 	for _, member := range settings.Members {
-		if isFile(config.ResolvePath(member.Kit)) {
+		if config.IsFile(config.ResolvePath(member.Kit)) {
 			return fail.Errorf("%s: %s", member.Member.Name, config.KitFileHelp)
 		}
 	}

@@ -2,6 +2,7 @@ package system
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -49,18 +50,7 @@ func (w Web) Get(url string) ([]byte, error) {
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, &httpError{url: url, status: response.Status}
+		return nil, fmt.Errorf("%s answered %s", url, response.Status)
 	}
 	return io.ReadAll(response.Body)
-}
-
-// httpError is an answer that came back but was not the one asked for.
-type httpError struct {
-	url    string
-	status string
-}
-
-// Error names the URL and what it answered with.
-func (e *httpError) Error() string {
-	return e.url + " answered " + e.status
 }

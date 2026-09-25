@@ -85,8 +85,3 @@ func Environment(settings config.Config) []string {
 func StatusCommand(path, sandboxName string) []string {
 	return []string{"sbx", "exec", sandboxName, "git", "-C", path, "status", "--porcelain"}
 }
-
-// git assembles a git invocation in one directory, so no call depends on box's working directory.
-func git(directory string, arguments ...string) []string {
-	return append([]string{"git", "-C", directory}, arguments...)
-}

@@ -41,7 +41,7 @@ const (
 // Update is the check that says whether a newer box is published, and the command that takes it.
 type Update struct {
 	Deps system.Deps
-	// Version is the release this box was installed as, or Devel when go build made it.
+	// Version is the release this box was installed as, or nothing when go build made it.
 	Version string
 }
 
@@ -67,7 +67,7 @@ func CachePath() string {
 
 // IsInstalled says whether this box came from go install, which is the only copy worth nagging.
 func IsInstalled(version string) bool {
-	return version != "" && version != Devel
+	return version != ""
 }
 
 // Release is what a box was installed as: what go install stamped, or nothing for a checkout.
@@ -100,7 +100,7 @@ func ParseLatest(body []byte) (string, error) {
 
 // checkTime is what the cache holds: when the last check ran.
 type checkTime struct {
-	CheckedAt float64 `json:"checked_at"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 // CheckedRecently says whether the last check is fresh enough that this run has nothing to add.
@@ -110,10 +110,10 @@ func CheckedRecently(path string, now time.Time) bool {
 		return false
 	}
 	var stored checkTime
-	if err := json.Unmarshal(contents, &stored); err != nil || stored.CheckedAt == 0 {
+	if err := json.Unmarshal(contents, &stored); err != nil || stored.CheckedAt.IsZero() {
 		return false
 	}
-	return now.Sub(time.UnixMilli(int64(stored.CheckedAt*1000))) <= Interval
+	return now.Sub(stored.CheckedAt) <= Interval
 }
 
 // StoreCheckTime remembers when the check ran, so the rest of the hour is quiet.
@@ -121,7 +121,7 @@ func StoreCheckTime(path string, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	stored, err := json.Marshal(checkTime{CheckedAt: float64(now.UnixMilli()) / 1000})
+	stored, err := json.Marshal(checkTime{CheckedAt: now})
 	if err != nil {
 		return err
 	}
