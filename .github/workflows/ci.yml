@@ -13,12 +13,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      # box has no dependencies, so there is no go.sum and nothing to cache.
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
       - name: Format
         run: test -z "$(gofmt -l .)"
@@ -30,7 +31,7 @@ jobs:
         run: go mod tidy && git diff --exit-code go.mod
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
 
       - name: Tests
         run: go test ./...
@@ -44,13 +45,14 @@ jobs:
       contents: write
     concurrency: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Release
         env:
