@@ -58,9 +58,17 @@ func (u Update) WarnWhenOutdated() {
 	if err != nil {
 		return
 	}
-	if message := Message(u.Deps.Console, u.Version, latest); message != "" {
+	if message := u.notice(latest); message != "" {
 		u.Deps.Console.Warn("%s", message)
 	}
+}
+
+// notice is the update message that fits how this copy was installed.
+func (u Update) notice(latest string) string {
+	if u.Downloaded && latest != u.Version {
+		return InRed(u.Deps.Console, "An update to box is available. Download it from:\n  "+DownloadURL())
+	}
+	return Message(u.Deps.Console, u.Version, latest)
 }
 
 // SelfUpdate replaces this box with the published release, which go install does the whole of.
@@ -80,6 +88,11 @@ func (u Update) SelfUpdate() (int, error) {
 	if latest == u.Version {
 		u.Deps.Console.Print("kept    box %s, which is already the published release", u.Version)
 		return 0, nil
+	}
+	// go install would add a second box on PATH rather than replace this one, so the user does it.
+	if u.Downloaded {
+		return 1, fail.Errorf("this box came from the release page, so replace it by hand with %s from:\n  %s",
+			latest, DownloadURL())
 	}
 	if !system.OnPath("go") {
 		return 1, fail.Errorf("go is not on PATH, and box installs itself with go install")

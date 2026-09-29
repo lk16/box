@@ -26,8 +26,9 @@ gets its committed work back at the end.
 `box run` does that. Every command starts with a word, so nothing happens by accident when a flag
 is mistyped. The others all exit without creating a sandbox: `box config` prints the settings in
 effect, `box gen` writes a starter `.box/` directory, `box mount-prompt` prints the prompt that has
-an agent on this host fill in the mounts `.box/mounts.json` still leaves as placeholders, and
-`box self-update` installs the published release over the running one.
+an agent on this host fill in the mounts `.box/mounts.json` still leaves as placeholders,
+`box self-update` installs the published release over the running one, and `box version` names the
+release that is running.
 
 ## Constraints
 
@@ -43,7 +44,8 @@ disagree about a timeout once.
   nothing else, and there is no dependency that can go unmaintained under a tool people install to
   run an agent with their own credentials. Where the standard library genuinely has no answer, box
   writes the few lines itself and says why in `docs/` — see [terminals.md](terminals.md).
-- Installation is one `go install` line. That is what decides how updating works: a binary cannot
+- Installation is one `go install` line, with a ready-built binary on the release page as the
+  second way for machines without Go. That is what decides how updating works: a binary cannot
   compare its own bytes with a published copy, so the check compares releases instead. See
   [updates.md](updates.md).
 - One installed copy serves every project, so everything resolves relative to the current working

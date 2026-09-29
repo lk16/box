@@ -27,7 +27,24 @@ You also need `sbx` 0.38.0 or newer, `git` and the `claude` CLI on `PATH`, on Li
 checks all of that before it does anything.
 
 To update, run `box self-update`. Every box command checks whether a newer release is published,
-at most once an hour, and says so on stderr when there is one.
+at most once an hour, and says so on stderr when there is one. `box version` says which release
+you have.
+
+### Without Go
+
+Every [release](https://github.com/lk16/box/releases) carries a ready-built binary for
+`linux-amd64`, `linux-arm64`, `darwin-amd64` (Intel Mac) and `darwin-arm64` (Apple silicon), with
+a `SHA256SUMS` file. Download the one for your machine, then:
+
+```sh
+chmod +x box-darwin-arm64
+xattr -d com.apple.quarantine box-darwin-arm64   # macOS only: the binary is not signed
+mv box-darwin-arm64 /usr/local/bin/box
+```
+
+A downloaded box is updated the same way, by hand: `box self-update` prints the link to the new
+binary rather than installing a second copy with `go install`. Pick one way of installing box, so
+only one `box` is ever on `PATH`.
 
 ## Get started
 
@@ -70,8 +87,9 @@ whenever a run refuses and you want the full picture.
 | `box gen` | writes a starter `.box/` directory, a starter kit and the `.gitignore` lines box needs |
 | `box mount-prompt` | prints a prompt that has an agent fill in this machine's [mount paths](docs/mounts.md) |
 | `box self-update` | replaces this copy of box with the published release |
+| `box version` | prints the release this copy of box is, and its platform |
 
-`gen`, `mount-prompt` and `self-update` read no settings, so they reject every flag.
+`gen`, `mount-prompt`, `self-update` and `version` read no settings, so they reject every flag.
 
 ## Documentation
 

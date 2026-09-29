@@ -17,7 +17,7 @@ import (
 const Usage = `usage: box [-h] [--name NAME] [--memory SIZE] [--cpus N] [--root-size SIZE]
            [--docker-size SIZE] [--model MODEL] [--prompt-file PATH] [--kit REF]
            [--template REF] [--mount PATH]
-           {run,config,gen,mount-prompt,self-update}
+           {run,config,gen,mount-prompt,self-update,version}
 
 Run Claude Code inside a disposable Docker sandbox.
 
@@ -27,6 +27,7 @@ commands:
   gen           writes a starter .box directory, a starter kit and the .gitignore lines box needs
   mount-prompt  prints a prompt that has an agent fill in this machine's mount paths
   self-update   replaces this copy of box with the published one
+  version       prints the release this copy of box is
 
 options:
   -h, --help          show this help message and exit
@@ -41,7 +42,7 @@ options:
   --template REF      sbx template the sandbox image comes from
   --mount PATH        read-only workspace, :rw to write
 
-gen, mount-prompt and self-update read no settings, so they reject every flag.`
+gen, mount-prompt, self-update and version read no settings, so they reject every flag.`
 
 // settingFlags are the flags naming a setting, spelled the way the config key is with hyphens.
 var settingFlags = []string{

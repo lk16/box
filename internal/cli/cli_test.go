@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -33,7 +34,6 @@ func newFixture(answer func([]string) system.Result) *fixture {
 		console:  console,
 		download: download,
 		cli: cli.CLI{
-			Version: "",
 			Deps: system.Deps{
 				Run:      runner,
 				Console:  console.Handle(false),
@@ -296,4 +296,20 @@ func firstMatching(commands [][]string, word string) []string {
 		}
 	}
 	return nil
+}
+
+func TestMainPrintsTheVersionWithoutAskingSbx(t *testing.T) {
+	boxtest.Unset(t, config.UpdateURLEnv)
+	t.Setenv(config.CacheHomeEnv, t.TempDir())
+	run := newFixture(nil)
+	run.cli.Version = "v0.1.0"
+	if code := run.cli.Main([]string{"version"}, t.TempDir()); code != 0 {
+		t.Fatalf("exited %d: %s", code, run.console.Warned())
+	}
+	if !strings.HasPrefix(run.console.Printed(), "box version v0.1.0 "+runtime.GOOS+"/"+runtime.GOARCH) {
+		t.Fatalf("printed:\n%s", run.console.Printed())
+	}
+	if len(run.runner.Commands) != 0 {
+		t.Fatalf("ran %v", run.runner.Commands)
+	}
 }

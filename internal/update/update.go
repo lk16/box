@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/lk16/box/internal/config"
@@ -18,13 +20,17 @@ const (
 	ModulePath  = "github.com/lk16/box"
 	InstallPath = ModulePath + "/cmd/box"
 	DefaultURL  = "https://proxy.golang.org/" + ModulePath + "/@latest"
+	ReleasesURL = "https://" + ModulePath + "/releases"
 )
 
 // Devel is what go build stamps a binary with, which is a checkout rather than an install.
 const Devel = "(devel)"
 
-// vcsRevision is the build setting only a binary built from a checkout carries.
-const vcsRevision = "vcs.revision"
+// The build settings only a binary built from a checkout carries.
+const (
+	vcsRevision = "vcs.revision"
+	vcsModified = "vcs.modified"
+)
 
 // How often the check runs, and how long it waits, so a command is never held up by it.
 const (
@@ -41,8 +47,58 @@ const (
 // Update is the check that says whether a newer box is published, and the command that takes it.
 type Update struct {
 	Deps system.Deps
+	Install
+}
+
+// Install is how this box came to be on the machine, which decides how it is updated.
+type Install struct {
 	// Version is the release this box was installed as, or nothing when go build made it.
 	Version string
+	// Downloaded says the release page supplied this binary, so go install must not replace it.
+	Downloaded bool
+	// Revision is the commit a checkout was built from, marked -dirty when it had uncommitted changes.
+	Revision string
+}
+
+// String is what box version names this copy as, the way go version names a devel toolchain.
+func (i Install) String() string {
+	if i.Version != "" {
+		return i.Version
+	}
+	return strings.TrimSpace("devel " + i.Revision)
+}
+
+// Identify says how this box was installed: by the release build that stamped it, or by go itself.
+func Identify(info *debug.BuildInfo, stamped string) Install {
+	if stamped != "" {
+		return Install{Version: stamped, Downloaded: true}
+	}
+	return Install{Version: Release(info), Revision: revision(info)}
+}
+
+// revision is the short commit a checkout build came from, or nothing for any other build.
+func revision(info *debug.BuildInfo) string {
+	if info == nil {
+		return ""
+	}
+	commit, dirty := "", ""
+	for _, setting := range info.Settings {
+		switch {
+		case setting.Key == vcsRevision:
+			commit = setting.Value[:min(7, len(setting.Value))]
+		case setting.Key == vcsModified && setting.Value == "true":
+			dirty = "-dirty"
+		}
+	}
+	if commit == "" {
+		return ""
+	}
+	return commit + dirty
+}
+
+// DownloadURL is where the release page serves the newest binary built for this platform.
+func DownloadURL() string {
+	return ReleasesURL + "/latest/download/box-" + runtime.GOOS + "-" + runtime.GOARCH
 }
 
 // URL is where the newest release is read from, which a fork or a vendored copy can point elsewhere.

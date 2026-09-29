@@ -26,10 +26,10 @@ const MissingHere = "not on this machine"
 const MountPlaceholder = "/placeholder/for/real/path"
 
 // SetupCommands read no settings, so a flag means nothing to them.
-var SetupCommands = []string{"gen", "mount-prompt", "self-update"}
+var SetupCommands = []string{"gen", "mount-prompt", "self-update", "version"}
 
 // Commands are every word box answers to, in the order its help lists them.
-var Commands = []string{"run", "config", "gen", "mount-prompt", "self-update"}
+var Commands = []string{"run", "config", "gen", "mount-prompt", "self-update", "version"}
 
 // The token and the values behind secret_hosts come from the environment and from nowhere else.
 const (
