@@ -25,3 +25,4 @@ The refusals you are most likely to meet, and what to do about each:
 | `has uncommitted changes -- not removing it` | the sandbox was kept on purpose: recover with the `sbx exec` and `sbx cp` lines box printed, then `sbx rm --force <name>` |
 | `this is a checkout rather than an install` | `box self-update` only replaces a `go install` copy; update a checkout with git |
 | `go is not on PATH` | box installs itself with `go install`, so updating needs Go |
+| `this box came from the release page` | download the binary at the link it printed and put it where the old one is |

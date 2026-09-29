@@ -40,7 +40,7 @@ func newFixture(version string, download *boxtest.Downloader, terminal bool) *fi
 		console:  console,
 		download: download,
 		update: update.Update{
-			Version: version,
+			Install: update.Install{Version: version},
 			Deps: system.Deps{
 				Run:      runner,
 				Console:  console.Handle(terminal),
@@ -410,5 +410,55 @@ func TestADevelBuildIsNoRelease(t *testing.T) {
 func TestABinaryWithNoBuildInfoIsNoRelease(t *testing.T) {
 	if got := update.Release(nil); got != "" {
 		t.Fatalf("read %q", got)
+	}
+}
+
+// downloaded is a box the release page supplied, checking against a proxy that answers one release.
+func downloaded(t *testing.T, version, latest string) *fixture {
+	t.Helper()
+	run := installed(t, version, latest)
+	run.update.Downloaded = true
+	return run
+}
+
+func TestAStampedVersionMarksABinaryFromTheReleasePage(t *testing.T) {
+	checkout := buildInfo(update.Devel, "vcs.revision", "ead7317999b4")
+	got := update.Identify(checkout, "v0.3.0")
+	if got != (update.Install{Version: "v0.3.0", Downloaded: true}) {
+		t.Fatalf("identified %+v", got)
+	}
+}
+
+func TestACheckoutIsNamedAfterItsCommit(t *testing.T) {
+	info := buildInfo(update.Devel, "vcs.revision", "ead7317999b4", "vcs.modified", "true")
+	if got := update.Identify(info, "").String(); got != "devel ead7317-dirty" {
+		t.Fatalf("named %q", got)
+	}
+}
+
+func TestAGoInstallIsNamedAfterItsRelease(t *testing.T) {
+	got := update.Identify(buildInfo("v0.2.0"), "")
+	if got.String() != "v0.2.0" || got.Downloaded {
+		t.Fatalf("identified %+v", got)
+	}
+}
+
+func TestADownloadedBoxIsPointedAtTheReleasePage(t *testing.T) {
+	run := downloaded(t, "v0.1.0", "v0.2.0")
+	run.update.WarnWhenOutdated()
+	warned := run.console.Warned()
+	if !strings.Contains(warned, update.DownloadURL()) || strings.Contains(warned, "self-update") {
+		t.Fatalf("warned:\n%s", warned)
+	}
+}
+
+func TestSelfUpdateLeavesADownloadedBoxToTheUser(t *testing.T) {
+	run := downloaded(t, "v0.1.0", "v0.2.0")
+	_, err := run.update.SelfUpdate()
+	if err == nil || !strings.Contains(err.Error(), update.DownloadURL()) {
+		t.Fatalf("the refusal was %v", err)
+	}
+	if len(run.runner.Commands) != 0 {
+		t.Fatalf("ran %v", run.runner.Commands)
 	}
 }

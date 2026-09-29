@@ -34,13 +34,16 @@ func run() int {
 		Download: system.Web{Timeout: update.Timeout},
 		Now:      time.Now,
 	}
-	return cli.CLI{Deps: deps, Version: release()}.Main(os.Args[1:], workingDirectory)
+	return cli.CLI{Deps: deps, Install: install()}.Main(os.Args[1:], workingDirectory)
 }
 
-// release is what this box was installed as, which is nothing at all when it came from a checkout.
-func release() string {
+// version is the release the release workflow stamps with -ldflags -X, and empty in any other build.
+var version string
+
+// install is how this box came to be on the machine. See docs/updates.md.
+func install() update.Install {
 	info, _ := debug.ReadBuildInfo()
-	return update.Release(info)
+	return update.Identify(info, version)
 }
 
 // watchInterrupts turns a Ctrl-C into an exit code rather than a half-finished run.

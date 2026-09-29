@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 
 	"github.com/lk16/box/internal/config"
@@ -16,10 +17,10 @@ import (
 // UsageExit is what a command line box could not read at all exits with, the way a shell expects.
 const UsageExit = 2
 
-// CLI is one box invocation: the outside world it reaches, and the release it was installed as.
+// CLI is one box invocation: the outside world it reaches, and how it was installed.
 type CLI struct {
-	Deps    system.Deps
-	Version string
+	Deps system.Deps
+	update.Install
 }
 
 // Main parses the command line and turns a rejected setup into one message.
@@ -33,7 +34,7 @@ func (c CLI) Main(argv []string, workingDirectory string) int {
 		c.Deps.Console.Print("%s", Usage)
 		return 0
 	}
-	update.Update{Deps: c.Deps, Version: c.Version}.WarnWhenOutdated()
+	update.Update{Deps: c.Deps, Install: c.Install}.WarnWhenOutdated()
 	code, err := c.dispatch(arguments, workingDirectory)
 	if err != nil {
 		c.Deps.Console.Warn("box: %s", err)
@@ -44,6 +45,10 @@ func (c CLI) Main(argv []string, workingDirectory string) int {
 
 // dispatch runs a setup command, or loads config and hands off to a sandbox session.
 func (c CLI) dispatch(arguments Arguments, workingDirectory string) (int, error) {
+	// Naming the release needs no sbx, and is what someone asks for when sbx is the problem.
+	if arguments.Command == "version" {
+		return c.printVersion(arguments)
+	}
 	// An sbx too old to run comes first: it need not have the diagnose output the next check reads.
 	if err := project.RequireSupportedSbx(c.Deps.Run); err != nil {
 		return 1, err
@@ -81,10 +86,19 @@ func (c CLI) setupCommand(command, workingDirectory string) (int, error) {
 	case "gen":
 		return writer.Generate(workingDirectory)
 	case "self-update":
-		return update.Update{Deps: c.Deps, Version: c.Version}.SelfUpdate()
+		return update.Update{Deps: c.Deps, Install: c.Install}.SelfUpdate()
 	default:
 		return writer.MountPrompt(workingDirectory)
 	}
+}
+
+// printVersion names this copy of box and its platform, the way go version does.
+func (c CLI) printVersion(arguments Arguments) (int, error) {
+	if err := RequireNoFlags(arguments); err != nil {
+		return 1, err
+	}
+	c.Deps.Console.Print("box version %s %s/%s", c.Install, runtime.GOOS, runtime.GOARCH)
+	return 0, nil
 }
 
 // showConfig prints the settings in effect, then runs every check a run would make before starting.
