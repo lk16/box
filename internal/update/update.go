@@ -3,10 +3,12 @@ package update
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -152,6 +154,18 @@ func ParseLatest(body []byte) (string, error) {
 		return "", fail.Errorf("the answer names no release")
 	}
 	return answer.Version, nil
+}
+
+// Newer says whether latest is a later vX.Y.Z than current, since the proxy's @latest lags a release.
+func Newer(latest, current string) bool {
+	var have, want [3]int
+	if _, err := fmt.Sscanf(current, "v%d.%d.%d", &have[0], &have[1], &have[2]); err != nil {
+		return false
+	}
+	if _, err := fmt.Sscanf(latest, "v%d.%d.%d", &want[0], &want[1], &want[2]); err != nil {
+		return false
+	}
+	return slices.Compare(want[:], have[:]) > 0
 }
 
 // checkTime is what the cache holds: when the last check ran.

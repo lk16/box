@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -460,5 +461,32 @@ func TestSelfUpdateLeavesADownloadedBoxToTheUser(t *testing.T) {
 	}
 	if len(run.runner.Commands) != 0 {
 		t.Fatalf("ran %v", run.runner.Commands)
+	}
+}
+
+func TestNewerComparesReleasesByNumberNotText(t *testing.T) {
+	for _, pair := range [][3]string{
+		{"v0.10.0", "v0.9.0", "true"},
+		{"v0.2.0", "v0.1.0", "true"},
+		{"v1.0.0", "v0.9.9", "true"},
+		{"v0.1.0", "v0.1.0", "false"},
+		{"v0.1.0", "v0.2.0", "false"},
+		{"v0.2.0", "not a release", "false"},
+		{"", "v0.1.0", "false"},
+	} {
+		if got := update.Newer(pair[0], pair[1]); strconv.FormatBool(got) != pair[2] {
+			t.Errorf("Newer(%q, %q) = %v", pair[0], pair[1], got)
+		}
+	}
+}
+
+func TestALaggingProxyIsNoUpdate(t *testing.T) {
+	run := installed(t, "v0.2.0", "v0.1.0")
+	run.update.WarnWhenOutdated()
+	if run.console.Warned() != "" {
+		t.Fatalf("warned:\n%s", run.console.Warned())
+	}
+	if code, err := run.update.SelfUpdate(); err != nil || code != 0 || len(run.runner.Commands) != 0 {
+		t.Fatalf("exited %d, %v after running %v", code, err, run.runner.Commands)
 	}
 }
