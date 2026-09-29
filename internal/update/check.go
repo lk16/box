@@ -23,7 +23,7 @@ func InRed(console system.Console, text string) string {
 
 // Message says an update is available, and how to take it, when this copy is not the newest one.
 func Message(console system.Console, current, latest string) string {
-	if latest == current {
+	if !Newer(latest, current) {
 		return ""
 	}
 	if !system.OnPath("go") {
@@ -65,7 +65,7 @@ func (u Update) WarnWhenOutdated() {
 
 // notice is the update message that fits how this copy was installed.
 func (u Update) notice(latest string) string {
-	if u.Downloaded && latest != u.Version {
+	if u.Downloaded && Newer(latest, u.Version) {
 		return InRed(u.Deps.Console, "An update to box is available. Download it from:\n  "+DownloadURL())
 	}
 	return Message(u.Deps.Console, u.Version, latest)
@@ -85,7 +85,7 @@ func (u Update) SelfUpdate() (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if latest == u.Version {
+	if !Newer(latest, u.Version) {
 		u.Deps.Console.Print("kept    box %s, which is already the published release", u.Version)
 		return 0, nil
 	}

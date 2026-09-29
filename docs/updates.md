@@ -18,7 +18,9 @@ with at install time, against the newest version the module proxy knows.
   the version string alone is not enough — `go install ./cmd/box` in a clone stamps a
   pseudo-version that looks exactly like a release.
 - The newest version comes from `https://proxy.golang.org/<module>/@latest`, whose JSON answer
-  holds a `Version` field. `BOX_UPDATE_URL` points the check at something else — a fork, a private
+  holds a `Version` field. The proxy caches that answer for a while after a release, so box only
+  speaks up when it names a strictly newer `vX.Y.Z`; a box installed during that lag is never told
+  to "update" to the release before it. `BOX_UPDATE_URL` points the check at something else — a fork, a private
   proxy — and an empty value switches it off, costing no round trip at all.
 
 Everything else about the check is unchanged: a timestamp under `XDG_CACHE_HOME` keeps the hour
