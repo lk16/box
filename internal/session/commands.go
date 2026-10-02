@@ -23,7 +23,7 @@ func CreateCommand(settings config.Config, proj project.Project, sandboxName str
 	command = append(command, settings.Mounts...)
 	command = append(command, "--clone", "--name", sandboxName)
 	// Nothing in a sandbox may write to the host unasked, and sbx shares one skills directory read-write.
-	command = append(command, "--no-share-skills")
+	command = append(command, "--skills=off")
 	command = append(command, "--memory", settings.Memory, "--cpus", settings.CPUs)
 	// Two kits are one allowlist, so a member's hosts add to the group's rather than replacing them.
 	for _, kit := range settings.Kits() {
