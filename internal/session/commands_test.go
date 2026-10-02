@@ -14,7 +14,7 @@ func TestCreateCommandIncludesMountsAndKit(t *testing.T) {
 	command := session.CreateCommand(fullConfig(), projectAt("/work/demo"), "demo-1")
 	want := []string{
 		"sbx", "create", "claude", ".", "/cache:ro", "--clone", "--name", "demo-1",
-		"--no-share-skills", "--memory", "8g", "--cpus", "2", "--kit", "registry/kit",
+		"--skills=off", "--memory", "8g", "--cpus", "2", "--kit", "registry/kit",
 		"--template", "frlg-sandbox:1", "--static-mcp", "postgres,kubernetes",
 	}
 	if !slices.Equal(command, want) {
@@ -34,7 +34,7 @@ func TestCreateCommandOmitsAnEmptyKitAnUnsetTemplateAndAnUnsetMCP(t *testing.T) 
 func TestCreateCommandKeepsTheSkillsDirectoryOutOfTheSandbox(t *testing.T) {
 	for _, settings := range []config.Config{fullConfig(), bareConfig(t)} {
 		command := session.CreateCommand(settings, projectAt("/work/demo"), "demo-1")
-		if !slices.Contains(command, "--no-share-skills") {
+		if !slices.Contains(command, "--skills=off") {
 			t.Errorf("assembled %v", command)
 		}
 	}
