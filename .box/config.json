@@ -8,7 +8,8 @@
   "prompt_file": "docs/sandbox.md",
   "kit": ".sbx/kit",
   "required_mounts": {
-    "go_toolchain": "the Go install, what `go env GOROOT` prints -- it must be a Linux build for this machine's architecture, so on macOS put one in ~/.box/deps/ and point here instead",
-    "go_mod_cache": "the Go module cache, what `go env GOMODCACHE` prints -- read-only; box itself needs nothing from it, but the toolchain wants somewhere to look"
+    "go_toolchain": "a Linux Go install for this machine's architecture, at the version in go.mod -- a macOS GOROOT will not run in the sandbox",
+    "go_mod_cache": "the Go module cache, what `go env GOMODCACHE` prints",
+    "local_bin": "~/.local/bin, tools the build needs on PATH"
   }
 }
