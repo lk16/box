@@ -103,12 +103,21 @@ func (c CLI) printVersion(arguments Arguments) (int, error) {
 
 // showConfig prints the settings in effect, then runs every check a run would make before starting.
 func (c CLI) showConfig(settings config.Config, proj project.Project, tokenFile string) (int, error) {
-	c.Deps.Console.Print("%s", config.Format(settings, tokenFile, os.Getenv(config.SecretsEnv)))
+	c.Deps.Console.Print("%s", config.Format(settings, environment(tokenFile)))
 	// The settings are printed first, so a rejected project is read next to what it resolved to.
 	if err := project.Require(c.Deps.Run, settings, proj, tokenFile); err != nil {
 		return 1, err
 	}
 	return 0, nil
+}
+
+// environment is what this machine tells box, next to the settings the project's files hold.
+func environment(tokenFile string) config.Environment {
+	return config.Environment{
+		TokenFile:   tokenFile,
+		SecretsFile: os.Getenv(config.SecretsEnv),
+		WithoutMCP:  os.Getenv(config.WithoutMCPEnv),
+	}
 }
 
 // LoadConfig combines the JSON files and the command line into the effective config.
