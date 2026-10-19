@@ -31,6 +31,7 @@ what a run would end up with, showing `(unset)` where nothing was given.
 | — | `mcp` | `[]` | MCP servers the sandbox may use, as a list of names (see [Read-only tools](mcp.md)). |
 | — | `repos` | `{}` | Other repositories this session works on (see [Groups](groups.md)). |
 | `--mount PATH` | — | none | Extra workspace, repeatable. Read-only; append `:rw` for read-write. |
+| `--without-mcp NAME` | — | none | Configured MCP server to leave out of this run, repeatable (see [Read-only tools](mcp.md)). |
 
 Anything unknown in `.box/config.json` is an error, so typos surface immediately. Every setting is
 text, though `"cpus": 4` works as well as `"cpus": "4"`. A `null`, a `true` or a list is an error
@@ -70,6 +71,12 @@ you ran box in.
 setting with no flag and no config key, so that a shared project file can never point at someone
 else's credentials. box refuses to start without it, or if the file it points at is missing or
 empty.
+
+`BOX_SECRETS_FILE` points at the values behind `secret_hosts`, for the same reason: see
+[Secrets](secrets.md). `BOX_WITHOUT_MCP` is a comma-separated list of MCP servers to leave out of
+every run on this machine, which `--without-mcp` adds to for one run: see
+[Read-only tools](mcp.md). Both belong in a shell profile or an `.envrc`, since what one machine
+holds is nothing a project can say.
 
 ## The system prompt
 
