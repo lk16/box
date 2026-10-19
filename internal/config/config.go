@@ -10,16 +10,18 @@ import (
 
 // Config is the effective settings for one box run.
 type Config struct {
-	Name        string
-	Memory      string
-	CPUs        string
-	RootSize    string
-	DockerSize  string
-	Model       string
-	PromptFile  string
-	Kit         string
-	Template    string
-	MCP         []string
+	Name       string
+	Memory     string
+	CPUs       string
+	RootSize   string
+	DockerSize string
+	Model      string
+	PromptFile string
+	Kit        string
+	Template   string
+	MCP        []string
+	// OmittedMCP are the configured servers left out of this run, each with what asked for that.
+	OmittedMCP  []Omitted
 	Mounts      []string
 	SecretHosts []Secret
 	Repos       []Member

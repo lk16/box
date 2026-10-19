@@ -86,3 +86,9 @@ func KeepMCP(configured []string, without WithoutMCP) ([]string, []Omitted) {
 	}
 	return kept, omitted
 }
+
+// WithoutServers is the config this run really uses, the servers the user asked to do without gone.
+func (c Config) WithoutServers(without WithoutMCP) Config {
+	c.MCP, c.OmittedMCP = KeepMCP(c.MCP, without)
+	return c
+}

@@ -106,6 +106,19 @@ func TestMountIsRepeatable(t *testing.T) {
 	}
 }
 
+func TestWithoutMCPIsRepeatable(t *testing.T) {
+	arguments := parse(t, "run", "--without-mcp", "postgres", "--without-mcp", "kubernetes")
+	if !slices.Equal(arguments.WithoutMCP, []string{"postgres", "kubernetes"}) {
+		t.Fatalf("read %v", arguments.WithoutMCP)
+	}
+}
+
+func TestAnEmptyWithoutMCPIsRejected(t *testing.T) {
+	if err := refuse(t, "run", "--without-mcp", ""); !strings.Contains(err.Error(), "a server name is required") {
+		t.Fatalf("said %q", err)
+	}
+}
+
 func TestSecretHostsAndReposAreNotFlags(t *testing.T) {
 	arguments := parse(t, "run")
 	for _, key := range []string{config.SecretHosts, config.Repos, config.MCP, config.RequiredMounts} {

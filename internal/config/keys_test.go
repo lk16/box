@@ -42,8 +42,8 @@ func TestConfigKeysMatchTheConfigFields(t *testing.T) {
 			want = append(want, key)
 		}
 	}
-	// mounts and members are what the two files this machine owns resolve to.
-	want = append(want, "mounts", "members")
+	// mounts and members are what this machine's two files resolve to; omitted_mcp is this run's own.
+	want = append(want, "mounts", "members", "omitted_mcp")
 	sort.Strings(fields)
 	sort.Strings(want)
 	if !slices.Equal(fields, want) {
