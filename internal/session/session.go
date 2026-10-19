@@ -111,6 +111,7 @@ func (s Session) Run(settings config.Config, launch Launch) int {
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	s.warnMissingMembers(settings)
+	s.warnOmittedMCP(settings)
 	bundles, err := s.BundleMembers(settings, launch.Project, directory)
 	if err != nil {
 		s.Deps.Console.Warn("box: %s", err)
@@ -124,6 +125,15 @@ func (s Session) warnMissingMembers(settings config.Config) {
 	for _, member := range settings.MissingRepos() {
 		s.Deps.Console.Warn("box: %s is not on this machine, so this sandbox runs without it", member.Name)
 	}
+}
+
+// warnOmittedMCP names the servers this run leaves out, so their tools are missing for a known reason.
+func (s Session) warnOmittedMCP(settings config.Config) {
+	if len(settings.OmittedMCP) == 0 {
+		return
+	}
+	s.Deps.Console.Warn("box: this sandbox runs without the mcp servers %s",
+		config.FormatOmitted(settings.OmittedMCP))
 }
 
 // start creates the sandbox, clones the members into it, runs Claude, and cleans up afterwards.

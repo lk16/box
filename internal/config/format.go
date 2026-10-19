@@ -29,6 +29,16 @@ func formatSecret(secret Secret) string {
 	return secret.Name + "->" + secret.Host
 }
 
+// FormatOmitted names every server left out of one run, each with what asked for it to go.
+func FormatOmitted(omitted []Omitted) string {
+	return strings.Join(each(omitted, formatOmitted), " ")
+}
+
+// formatOmitted names one server left out of a run, and whether the flag or the variable asked.
+func formatOmitted(omitted Omitted) string {
+	return omitted.Name + " (" + omitted.Source + ")"
+}
+
 // formatMember names one member, the branch its clone starts from, and where it sits on this machine.
 func formatMember(member Member) string {
 	return fmt.Sprintf("%s@%s->%s", member.Name, member.Branch, member.Path)
