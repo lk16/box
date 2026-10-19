@@ -137,6 +137,24 @@ func TestRunSaysWhichMemberThisMachineDoesNotHave(t *testing.T) {
 	wantWarning(t, run.console, "billing-api is not on this machine")
 }
 
+func TestRunSaysWhichMCPServersItLeavesOut(t *testing.T) {
+	settings := fullConfig()
+	settings.MCP = []string{"postgres"}
+	settings.OmittedMCP = []config.Omitted{{Name: "kubernetes", Source: "--" + config.WithoutMCPFlag}}
+	run, code := runSession(t, settings, launchAt("/work/demo"), sandboxRun(false, 0))
+	if code != 0 {
+		t.Fatalf("exited %d", code)
+	}
+	wantWarning(t, run.console, "kubernetes (--without-mcp)")
+}
+
+func TestRunSaysNothingAboutMCPWhenEveryConfiguredServerIsPassedOn(t *testing.T) {
+	run, _ := runSession(t, fullConfig(), launchAt("/work/demo"), sandboxRun(false, 0))
+	if strings.Contains(run.console.Warned(), "mcp") {
+		t.Fatalf("stderr was %q", run.console.Warned())
+	}
+}
+
 func TestRunTakesTheSandboxBackWhenAMemberCannotBeCloned(t *testing.T) {
 	boxtest.Isolate(t)
 	directory := t.TempDir()

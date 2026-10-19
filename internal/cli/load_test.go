@@ -66,12 +66,61 @@ func TestLoadConfigResolvesTheTemplateFromEitherSide(t *testing.T) {
 
 func TestLoadConfigTakesTheMCPServersFromTheConfigFile(t *testing.T) {
 	directory := t.TempDir()
+	boxtest.Unset(t, config.WithoutMCPEnv)
 	if got := loadFrom(t, directory, "run").MCP; len(got) != 0 {
 		t.Fatalf("the default mcp is %v", got)
 	}
 	writeBox(t, directory, config.ConfigFile, `{"mcp": ["postgres", "kubernetes"]}`)
 	if got := loadFrom(t, directory, "run").MCP; !slices.Equal(got, []string{"postgres", "kubernetes"}) {
 		t.Fatalf("resolved to %v", got)
+	}
+}
+
+func TestLoadConfigLeavesOutTheMCPServersTheFlagNames(t *testing.T) {
+	directory := t.TempDir()
+	boxtest.Unset(t, config.WithoutMCPEnv)
+	writeBox(t, directory, config.ConfigFile, `{"mcp": ["postgres", "kubernetes", "sentry"]}`)
+	settings := loadFrom(t, directory, "run", "--without-mcp", "kubernetes")
+	if !slices.Equal(settings.MCP, []string{"postgres", "sentry"}) {
+		t.Fatalf("resolved to %v", settings.MCP)
+	}
+	if !slices.Equal(settings.OmittedMCP, []config.Omitted{{Name: "kubernetes", Source: "--without-mcp"}}) {
+		t.Fatalf("left out %v", settings.OmittedMCP)
+	}
+}
+
+func TestLoadConfigLeavesOutTheMCPServersTheEnvironmentNames(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv(config.WithoutMCPEnv, "kubernetes, sentry,")
+	writeBox(t, directory, config.ConfigFile, `{"mcp": ["postgres", "kubernetes", "sentry"]}`)
+	settings := loadFrom(t, directory, "run")
+	if !slices.Equal(settings.MCP, []string{"postgres"}) {
+		t.Fatalf("resolved to %v", settings.MCP)
+	}
+	if !slices.Equal(settings.OmittedMCP, []config.Omitted{
+		{Name: "kubernetes", Source: config.WithoutMCPEnv}, {Name: "sentry", Source: config.WithoutMCPEnv},
+	}) {
+		t.Fatalf("left out %v", settings.OmittedMCP)
+	}
+}
+
+func TestLoadConfigAddsTheTwoWaysOfLeavingAServerOutUp(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv(config.WithoutMCPEnv, "kubernetes")
+	writeBox(t, directory, config.ConfigFile, `{"mcp": ["postgres", "kubernetes", "sentry"]}`)
+	settings := loadFrom(t, directory, "run", "--without-mcp", "sentry")
+	if !slices.Equal(settings.MCP, []string{"postgres"}) {
+		t.Fatalf("resolved to %v", settings.MCP)
+	}
+}
+
+func TestLoadConfigTakesAServerNobodyConfiguredAsNothingToDo(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv(config.WithoutMCPEnv, "redis")
+	writeBox(t, directory, config.ConfigFile, `{"mcp": ["postgres"]}`)
+	settings := loadFrom(t, directory, "run", "--without-mcp", "warehouse")
+	if !slices.Equal(settings.MCP, []string{"postgres"}) || len(settings.OmittedMCP) != 0 {
+		t.Fatalf("resolved to %v, left out %v", settings.MCP, settings.OmittedMCP)
 	}
 }
 

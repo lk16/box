@@ -89,8 +89,15 @@ disagree about a timeout once.
   `--static-mcp` and nothing more, the way it names a template. Registering one starts a process on
   this host holding the user's own access to a database or a cluster, which is the machine owner's
   call rather than a project's, and box neither registers, checks nor starts one: an unknown name is
-  a failed create, which box already reports. The names are a JSON list, and one holding a comma is
-  refused, since sbx takes them all as one comma-separated argument and would split it in two.
+  a failed create, which box already reports. That list is committed while the access behind a
+  server is one user's, so a user may leave names out of a run, with `--without-mcp` or with
+  `BOX_WITHOUT_MCP` for every run on this machine. box still never asks sbx what is registered: it
+  passes on the configured names minus the ones it was told to drop, and a name nobody dropped is
+  still a failed create, which is what catches a typo and a setup nobody did. Dropping a name the
+  project never configured is no error, since one variable serves every project here, and the typo
+  in it is caught by the server it meant to drop staying in. The names are a JSON list, and one
+  holding a comma is refused, since sbx takes them all as one comma-separated argument and would
+  split it in two.
 - Settings come from the working directory's `.box/`, but `sbx create --clone` is given the
   repository root, since it refuses a path that is not a repository of its own. So a folder below
   the root is a place to keep settings, and the sandbox still gets the whole repository. The

@@ -103,12 +103,21 @@ func (c CLI) printVersion(arguments Arguments) (int, error) {
 
 // showConfig prints the settings in effect, then runs every check a run would make before starting.
 func (c CLI) showConfig(settings config.Config, proj project.Project, tokenFile string) (int, error) {
-	c.Deps.Console.Print("%s", config.Format(settings, tokenFile, os.Getenv(config.SecretsEnv)))
+	c.Deps.Console.Print("%s", config.Format(settings, environment(tokenFile)))
 	// The settings are printed first, so a rejected project is read next to what it resolved to.
 	if err := project.Require(c.Deps.Run, settings, proj, tokenFile); err != nil {
 		return 1, err
 	}
 	return 0, nil
+}
+
+// environment is what this machine tells box, next to the settings the project's files hold.
+func environment(tokenFile string) config.Environment {
+	return config.Environment{
+		TokenFile:   tokenFile,
+		SecretsFile: os.Getenv(config.SecretsEnv),
+		WithoutMCP:  os.Getenv(config.WithoutMCPEnv),
+	}
 }
 
 // LoadConfig combines the JSON files and the command line into the effective config.
@@ -128,7 +137,20 @@ func LoadConfig(arguments Arguments, workingDirectory string) (config.Config, er
 	}
 	// The flags come last, since they are this one run's rather than anyone's settings.
 	mounts := append(append(own, config.MemberMounts(members)...), arguments.Mounts...)
-	return config.Build(values, mounts, members, workingDirectory)
+	settings, err := config.Build(values, mounts, members, workingDirectory)
+	if err != nil {
+		return config.Config{}, err
+	}
+	return settings.WithoutServers(withoutMCP(arguments)), nil
+}
+
+// withoutMCP collects what this run leaves out of the configured mcp list, from both ways of asking.
+func withoutMCP(arguments Arguments) config.WithoutMCP {
+	return config.WithoutMCP{
+		Flag: arguments.WithoutMCP,
+		// One variable serves every project here, so it often names servers this one never configured.
+		Environment: config.ParseWithoutMCP(os.Getenv(config.WithoutMCPEnv)),
+	}
 }
 
 // readMembers reads every member a group declares, placed where this machine says each one sits.

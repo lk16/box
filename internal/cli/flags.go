@@ -16,7 +16,7 @@ import (
 // Usage is what box prints when the command line names no command it knows.
 const Usage = `usage: box [-h] [--name NAME] [--memory SIZE] [--cpus N] [--root-size SIZE]
            [--docker-size SIZE] [--model MODEL] [--prompt-file PATH] [--kit REF]
-           [--template REF] [--mount PATH]
+           [--template REF] [--mount PATH] [--without-mcp NAME]
            {run,config,gen,mount-prompt,self-update,version}
 
 Run Claude Code inside a disposable Docker sandbox.
@@ -41,6 +41,7 @@ options:
   --kit REF           sbx kit reference
   --template REF      sbx template the sandbox image comes from
   --mount PATH        read-only workspace, :rw to write
+  --without-mcp NAME  configured MCP server to leave out of this run
 
 gen, mount-prompt, self-update and version read no settings, so they reject every flag.`
 
@@ -49,11 +50,16 @@ var settingFlags = []string{
 	"name", "memory", "cpus", "root-size", "docker-size", "model", "prompt-file", "kit", "template",
 }
 
+// repeatableFlags may be given again rather than naming one setting, so each one collects a list.
+var repeatableFlags = []string{config.MountFlag, config.WithoutMCPFlag}
+
 // Arguments are one command line: the word box was asked to run, and the settings given with it.
 type Arguments struct {
 	Command string
 	Values  config.Values
 	Mounts  []string
+	// WithoutMCP names the configured mcp servers this run leaves out, which no config key holds.
+	WithoutMCP []string
 	// Given names every flag the user typed, as they typed it, so a message can quote them back.
 	Given []string
 	// Help says the command line asked for the usage rather than for a command.
@@ -86,10 +92,18 @@ func read(command string, flags []string) (Arguments, error) {
 	for _, name := range settingFlags {
 		held[name] = set.String(name, "", "")
 	}
-	// The one repeatable flag, which collects paths rather than naming a setting.
-	var mounts []string
+	// The repeatable flags collect this one run's own values rather than naming a setting.
+	arguments := Arguments{Command: command, Values: config.NewValues()}
 	set.Func(config.MountFlag, "", func(path string) error {
-		mounts = append(mounts, path)
+		arguments.Mounts = append(arguments.Mounts, path)
+		return nil
+	})
+	set.Func(config.WithoutMCPFlag, "", func(name string) error {
+		// Nothing downstream reads a name box drops, so an empty one is caught where it was typed.
+		if name == "" {
+			return errors.New("a server name is required")
+		}
+		arguments.WithoutMCP = append(arguments.WithoutMCP, name)
 		return nil
 	})
 	if err := set.Parse(flags); err != nil {
@@ -98,12 +112,11 @@ func read(command string, flags []string) (Arguments, error) {
 	if rest := set.Args(); len(rest) > 0 {
 		return Arguments{}, errors.New("box takes one command, but also got " + rest[0])
 	}
-	return collect(command, set, held, mounts), nil
+	return collect(set, held, arguments), nil
 }
 
 // collect keeps only the flags the user really typed, so an unset one falls back to the file.
-func collect(command string, set *flag.FlagSet, held map[string]*string, mounts []string) Arguments {
-	arguments := Arguments{Command: command, Values: config.NewValues(), Mounts: mounts}
+func collect(set *flag.FlagSet, held map[string]*string, arguments Arguments) Arguments {
 	set.Visit(func(given *flag.Flag) {
 		arguments.Given = append(arguments.Given, "--"+given.Name)
 		if value, names := held[given.Name]; names {
@@ -148,7 +161,7 @@ func takesValue(argument string) bool {
 		return false
 	}
 	name := strings.TrimLeft(argument, "-")
-	return slices.Contains(settingFlags, name) || name == config.MountFlag
+	return slices.Contains(settingFlags, name) || slices.Contains(repeatableFlags, name)
 }
 
 // RequireNoFlags rejects flags passed to a command that reads the config rather than settings.

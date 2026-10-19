@@ -93,6 +93,21 @@ func TestShowConfigShowsTheSecretsFilePathTheEnvironmentNames(t *testing.T) {
 	}
 }
 
+func TestShowConfigShowsTheServersTheEnvironmentLeavesOut(t *testing.T) {
+	directory := t.TempDir()
+	runnableProject(t, directory)
+	boxtest.WriteFile(t, filepath.Join(directory, config.ConfigFile),
+		`{"kit": "registry/kit", "model": "claude-opus-5", "mcp": ["postgres", "kubernetes"]}`)
+	t.Setenv(config.WithoutMCPEnv, "kubernetes")
+	run := newFixture(withRealGit)
+	run.cli.Main([]string{"config"}, directory)
+	for _, part := range []string{config.WithoutMCPEnv, "kubernetes (" + config.WithoutMCPEnv + ")"} {
+		if !strings.Contains(run.console.Printed(), part) {
+			t.Fatalf("%q is missing from:\n%s", part, run.console.Printed())
+		}
+	}
+}
+
 func TestTheTokenPathComesFromTheEnvironmentAndFromNowhereElse(t *testing.T) {
 	directory := t.TempDir()
 	runnableProject(t, directory)

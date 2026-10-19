@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"slices"
 	"strings"
@@ -11,57 +10,22 @@ import (
 
 // Config is the effective settings for one box run.
 type Config struct {
-	Name        string
-	Memory      string
-	CPUs        string
-	RootSize    string
-	DockerSize  string
-	Model       string
-	PromptFile  string
-	Kit         string
-	Template    string
-	MCP         []string
+	Name       string
+	Memory     string
+	CPUs       string
+	RootSize   string
+	DockerSize string
+	Model      string
+	PromptFile string
+	Kit        string
+	Template   string
+	MCP        []string
+	// OmittedMCP are the configured servers left out of this run, each with what asked for that.
+	OmittedMCP  []Omitted
 	Mounts      []string
 	SecretHosts []Secret
 	Repos       []Member
 	Members     []MemberSettings
-}
-
-// toMCPServer takes one MCP server name, rejecting what sbx could not be handed as that one name.
-func toMCPServer(raw json.RawMessage) (string, error) {
-	name, ok := decode(raw).(string)
-	if !ok {
-		return "", fail.Errorf("%s holds %s, which is not a server name", MCP, typeName(raw))
-	}
-	if name == "" {
-		return "", fail.Errorf("%s holds an empty server name", MCP)
-	}
-	// sbx takes every name in one comma-separated argument, so a comma would split this one in two.
-	if strings.Contains(name, ",") {
-		return "", fail.Errorf("%s name %s holds a comma, which sbx would read as two servers", MCP, name)
-	}
-	return name, nil
-}
-
-// ToMCPServers normalises the mcp value into the registered servers the sandbox may use, in order.
-func ToMCPServers(raw json.RawMessage) ([]string, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	var values []json.RawMessage
-	// A null unmarshals into a nil list without complaint, and it is no list.
-	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
-		return nil, fail.Errorf("%s must be a JSON list of server names", MCP)
-	}
-	names := make([]string, 0, len(values))
-	for _, value := range values {
-		name, err := toMCPServer(value)
-		if err != nil {
-			return nil, err
-		}
-		names = append(names, name)
-	}
-	return names, nil
 }
 
 // Build turns merged config values into a Config, filling in the derived sandbox name.

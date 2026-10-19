@@ -8,33 +8,6 @@ import (
 	"github.com/lk16/box/internal/config"
 )
 
-func TestToMCPServersRefusesTheNamesAsOneCommaSeparatedText(t *testing.T) {
-	_, err := config.ToMCPServers(raw("postgres,kubernetes"))
-	wantError(t, err, "mcp must be a JSON list of server names")
-}
-
-func TestToMCPServersRefusesANameThatIsNotText(t *testing.T) {
-	_, err := config.ToMCPServers(raw([]int{5}))
-	wantError(t, err, "mcp holds a number, which is not a server name")
-}
-
-func TestToMCPServersRefusesAnEmptyName(t *testing.T) {
-	_, err := config.ToMCPServers(raw([]string{""}))
-	wantError(t, err, "mcp holds an empty server name")
-}
-
-func TestToMCPServersRefusesANameSbxWouldSplitInTwo(t *testing.T) {
-	_, err := config.ToMCPServers(raw([]string{"postgres,kubernetes"}))
-	wantError(t, err, "postgres,kubernetes holds a comma")
-}
-
-func TestToMCPServersKeepsTheOrderListed(t *testing.T) {
-	servers, err := config.ToMCPServers(raw([]string{"postgres", "kubernetes"}))
-	if err != nil || !slices.Equal(servers, []string{"postgres", "kubernetes"}) {
-		t.Fatalf("read %v, %v", servers, err)
-	}
-}
-
 func TestBuildSystemPromptIsTheBasePromptWithoutAProjectPrompt(t *testing.T) {
 	if got := config.BuildSystemPrompt([]string{config.BasePrompt}); got != config.BasePrompt {
 		t.Fatal("the base prompt was changed by being the only part")

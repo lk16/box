@@ -18,8 +18,13 @@ func fullConfig() config.Config {
 	}
 }
 
+// secretPaths is what the environment tells a run about where this machine keeps its secrets.
+func secretPaths() config.Environment {
+	return config.Environment{TokenFile: "/secrets/token", SecretsFile: "/secrets/box.env"}
+}
+
 func TestFormatShowsTheTokenPathWithTheSettings(t *testing.T) {
-	rendered := config.Format(fullConfig(), "/secrets/token", "/secrets/box.env")
+	rendered := config.Format(fullConfig(), secretPaths())
 	for _, part := range []string{config.TokenFileEnv, "/secrets/token", "8g"} {
 		if !strings.Contains(rendered, part) {
 			t.Errorf("%q is missing from the rendering", part)
@@ -28,43 +33,74 @@ func TestFormatShowsTheTokenPathWithTheSettings(t *testing.T) {
 }
 
 func TestFormatPrintsTheTemplate(t *testing.T) {
-	rendered := config.Format(fullConfig(), "/secrets/token", "/secrets/box.env")
+	rendered := config.Format(fullConfig(), secretPaths())
 	if !regexp.MustCompile(`(?m)^\s+template\s+frlg-sandbox:1$`).MatchString(rendered) {
 		t.Fatalf("the template is missing from:\n%s", rendered)
 	}
 }
 
 func TestFormatNamesAnUnsetTemplate(t *testing.T) {
-	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), "", "")
+	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), config.Environment{})
 	if !regexp.MustCompile(`(?m)^\s+template\s+` + regexp.QuoteMeta(config.Unset) + `$`).MatchString(rendered) {
 		t.Fatalf("an unset template is not named in:\n%s", rendered)
 	}
 }
 
 func TestFormatPrintsTheMCPServers(t *testing.T) {
-	rendered := config.Format(fullConfig(), "/secrets/token", "/secrets/box.env")
+	rendered := config.Format(fullConfig(), secretPaths())
 	if !regexp.MustCompile(`(?m)^\s+mcp\s+postgres kubernetes$`).MatchString(rendered) {
 		t.Fatalf("the mcp servers are missing from:\n%s", rendered)
+	}
+}
+
+func TestFormatNamesTheServersLeftOutAndWhatAskedForThat(t *testing.T) {
+	built := fullConfig()
+	built.MCP = []string{"postgres"}
+	built.OmittedMCP = []config.Omitted{
+		{Name: "kubernetes", Source: "--" + config.WithoutMCPFlag},
+		{Name: "sentry", Source: config.WithoutMCPEnv},
+	}
+	rendered := config.Format(built, secretPaths())
+	if !regexp.MustCompile(`(?m)^\s+mcp\s+postgres$`).MatchString(rendered) {
+		t.Fatalf("the servers passed on are missing from:\n%s", rendered)
+	}
+	want := `(?m)^\s+mcp_left_out\s+kubernetes \(--without-mcp\) sentry \(BOX_WITHOUT_MCP\)$`
+	if !regexp.MustCompile(want).MatchString(rendered) {
+		t.Fatalf("what was left out is missing from:\n%s", rendered)
+	}
+}
+
+func TestFormatNamesAnMCPListNothingWasLeftOutOf(t *testing.T) {
+	rendered := config.Format(fullConfig(), secretPaths())
+	if !regexp.MustCompile(`(?m)^\s+mcp_left_out\s+` + regexp.QuoteMeta(config.Unset) + `$`).MatchString(rendered) {
+		t.Fatalf("a run leaving nothing out is not named in:\n%s", rendered)
+	}
+}
+
+func TestFormatShowsWhatTheEnvironmentAsksToLeaveOut(t *testing.T) {
+	rendered := config.Format(fullConfig(), config.Environment{WithoutMCP: "kubernetes,sentry"})
+	if !regexp.MustCompile(`(?m)^\s+` + config.WithoutMCPEnv + `\s+kubernetes,sentry$`).MatchString(rendered) {
+		t.Fatalf("%s is missing from:\n%s", config.WithoutMCPEnv, rendered)
 	}
 }
 
 func TestFormatJoinsMounts(t *testing.T) {
 	built := fullConfig()
 	built.Mounts = []string{"/a:ro", "/b"}
-	if !strings.Contains(config.Format(built, "", ""), "/a:ro /b") {
+	if !strings.Contains(config.Format(built, config.Environment{}), "/a:ro /b") {
 		t.Fatal("the mounts were not joined into one line")
 	}
 }
 
 func TestFormatNamesASettingNothingWasGivenFor(t *testing.T) {
-	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), "", "")
+	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), config.Environment{})
 	if !strings.Contains(rendered, config.Unset) {
 		t.Fatal("nothing was named as unset")
 	}
 }
 
 func TestFormatLeavesNoLineEndingInWhitespace(t *testing.T) {
-	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), "", "")
+	rendered := config.Format(configFrom(t, config.NewValues(), t.TempDir()), config.Environment{})
 	for _, line := range strings.Split(rendered, "\n") {
 		if line != strings.TrimRight(line, " \t") {
 			t.Fatalf("a line ends in whitespace: %q", line)
@@ -73,7 +109,7 @@ func TestFormatLeavesNoLineEndingInWhitespace(t *testing.T) {
 }
 
 func TestFormatAlignsEveryValueInOneColumn(t *testing.T) {
-	rendered := config.Format(fullConfig(), "/secrets/token", "/secrets/box.env")
+	rendered := config.Format(fullConfig(), secretPaths())
 	columns := map[int]bool{}
 	for _, line := range strings.Split(rendered, "\n")[1:] {
 		columns[strings.Index(line, strings.Fields(line)[1])] = true
@@ -86,7 +122,7 @@ func TestFormatAlignsEveryValueInOneColumn(t *testing.T) {
 func TestFormatNamesEachDeclaredSecretAndWhereItMayGo(t *testing.T) {
 	given := config.NewValues()
 	given.Raw[config.SecretHosts] = raw(map[string]string{"GITLAB_TOKEN": "gitlab.com"})
-	rendered := config.Format(configFrom(t, given, t.TempDir()), "/secrets/token", "/secrets/box.env")
+	rendered := config.Format(configFrom(t, given, t.TempDir()), secretPaths())
 	if !strings.Contains(rendered, "GITLAB_TOKEN->gitlab.com") {
 		t.Fatal("the declared secret is missing from the rendering")
 	}
@@ -98,28 +134,28 @@ func TestFormatNamesEachDeclaredSecretAndWhereItMayGo(t *testing.T) {
 func TestFormatNamesEachMemberItsBranchAndItsPath(t *testing.T) {
 	built := fullConfig()
 	built.Repos = []config.Member{member}
-	if !strings.Contains(config.Format(built, "", ""), "billing-api@develop->../billing-api") {
+	if !strings.Contains(config.Format(built, config.Environment{}), "billing-api@develop->../billing-api") {
 		t.Fatal("the member is missing from the rendering")
 	}
 }
 
 func TestFormatNamesWhatAMemberBringsOfItsOwn(t *testing.T) {
 	settings := config.MemberSettings{Member: member, Mounts: []string{"/usr/local/go"}}
-	if !strings.Contains(config.Format(configWithMember(t, settings), "", ""), "billing-api: /usr/local/go") {
+	if !strings.Contains(config.Format(configWithMember(t, settings), config.Environment{}), "billing-api: /usr/local/go") {
 		t.Fatal("what the member brings is missing from the rendering")
 	}
 }
 
 func TestFormatSaysWhenAMemberBringsNothing(t *testing.T) {
 	settings := config.MemberSettings{Member: member}
-	if !strings.Contains(config.Format(configWithMember(t, settings), "", ""), "billing-api: nothing") {
+	if !strings.Contains(config.Format(configWithMember(t, settings), config.Environment{}), "billing-api: nothing") {
 		t.Fatal("a member bringing nothing is not said so")
 	}
 }
 
 func TestFormatSaysAMemberIsNotOnThisMachine(t *testing.T) {
 	settings := config.MemberSettings{Member: missingMember()}
-	rendered := config.Format(configWithMember(t, settings), "", "")
+	rendered := config.Format(configWithMember(t, settings), config.Environment{})
 	if !strings.Contains(rendered, "billing-api: "+config.MissingHere) {
 		t.Fatalf("a member this machine does not have reads:\n%s", rendered)
 	}
@@ -128,13 +164,13 @@ func TestFormatSaysAMemberIsNotOnThisMachine(t *testing.T) {
 func TestFormatNamesAnEmptyListOfMounts(t *testing.T) {
 	built := fullConfig()
 	built.Mounts = nil
-	if !regexp.MustCompile(`(?m)^\s+mounts\s+` + regexp.QuoteMeta(config.Unset) + `$`).MatchString(config.Format(built, "", "")) {
+	if !regexp.MustCompile(`(?m)^\s+mounts\s+` + regexp.QuoteMeta(config.Unset) + `$`).MatchString(config.Format(built, config.Environment{})) {
 		t.Fatal("an empty mount list is not named as unset")
 	}
 }
 
 func TestEveryConfigKeyIsAFieldOfTheConfigAndTheOtherWayAround(t *testing.T) {
-	rendered := config.Format(fullConfig(), "", "")
+	rendered := config.Format(fullConfig(), config.Environment{})
 	// required_mounts is answered by the mounts file, so it resolves to mounts rather than staying.
 	for _, key := range append(slices.Clone(config.SettingKeys), config.MCP, config.SecretHosts, config.Repos) {
 		if !regexp.MustCompile(`(?m)^\s+` + key + `\s`).MatchString(rendered) {

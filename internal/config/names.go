@@ -64,6 +64,12 @@ const (
 // MountFlag is the one flag that is repeatable, so its config key is a declaration rather than a setting.
 const MountFlag = "mount"
 
+// A user leaves a configured mcp server out of one run with the flag, and out of every run here with the variable.
+const (
+	WithoutMCPFlag = "without-mcp"
+	WithoutMCPEnv  = "BOX_WITHOUT_MCP"
+)
+
 // The config keys holding an object or a list rather than the text of a setting.
 const (
 	RequiredMounts = "required_mounts"
