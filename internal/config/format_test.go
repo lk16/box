@@ -20,12 +20,12 @@ func fullConfig() config.Config {
 
 // secretPaths is what the environment tells a run about where this machine keeps its secrets.
 func secretPaths() config.Environment {
-	return config.Environment{TokenFile: "/secrets/token", SecretsFile: "/secrets/box.env"}
+	return config.Environment{SecretsFile: "/secrets/box.env"}
 }
 
-func TestFormatShowsTheTokenPathWithTheSettings(t *testing.T) {
+func TestFormatShowsTheSecretsPathWithTheSettings(t *testing.T) {
 	rendered := config.Format(fullConfig(), secretPaths())
-	for _, part := range []string{config.TokenFileEnv, "/secrets/token", "8g"} {
+	for _, part := range []string{config.SecretsEnv, "/secrets/box.env", "8g"} {
 		if !strings.Contains(rendered, part) {
 			t.Errorf("%q is missing from the rendering", part)
 		}

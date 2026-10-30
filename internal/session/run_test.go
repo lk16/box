@@ -63,8 +63,15 @@ func TestRunStoresTheSecretBeforeCreatingTheSandbox(t *testing.T) {
 	}
 }
 
+// declaringSecret builds the settings of a project declaring the secret launchAt holds a value for.
+func declaringSecret() config.Config {
+	settings := fullConfig()
+	settings.SecretHosts = []config.Secret{gitlab}
+	return settings
+}
+
 func TestRunCreatesRunsAndCleansUpInThatOrder(t *testing.T) {
-	run, code := runSession(t, fullConfig(), launchAt("/work/demo"), sandboxRun(false, 0))
+	run, code := runSession(t, declaringSecret(), launchAt("/work/demo"), sandboxRun(false, 0))
 	if code != 0 {
 		t.Fatalf("exited %d", code)
 	}
@@ -80,8 +87,9 @@ func TestRunCreatesRunsAndCleansUpInThatOrder(t *testing.T) {
 
 func TestRunStoresEverySecretTheSandboxGets(t *testing.T) {
 	launch := launchAt("/work/demo")
-	launch.Secrets = append(launch.Secrets, config.SecretValue{Secret: gitlab, Value: "glpat-abc"})
-	run, _ := runSession(t, fullConfig(), launch, sandboxRun(false, 0))
+	signoz := config.Secret{Name: "SIGNOZ_API_KEY", Host: "gitlab.com"}
+	launch.Secrets = append(launch.Secrets, config.SecretValue{Secret: signoz, Value: "xxxxxxxx"})
+	run, _ := runSession(t, declaringSecret(), launch, sandboxRun(false, 0))
 	want := []string{"drop-secret", "store-secret", "store-secret", "sbx create"}
 	if got := steps(run.runner); !slices.Equal(got[:4], want) {
 		t.Fatalf("the steps ran as %v", got)
@@ -100,7 +108,7 @@ func TestRunCleansUpAfterAnAgentThatFailed(t *testing.T) {
 }
 
 func TestRunReportsAFailedCreateAndStartsNothing(t *testing.T) {
-	run, code := runSession(t, fullConfig(), launchAt("/work/demo"), sandboxRun(true, 0))
+	run, code := runSession(t, declaringSecret(), launchAt("/work/demo"), sandboxRun(true, 0))
 	if code != 1 {
 		t.Fatalf("exited %d", code)
 	}

@@ -36,7 +36,8 @@ func TestReadSystemPromptReturnsEmptyWithoutFile(t *testing.T) {
 }
 
 func TestReadSystemPromptReadsTheFile(t *testing.T) {
-	path := tokenFile(t, "stay in the sandbox")
+	path := t.TempDir() + "/prompt.md"
+	writeText(t, path, "stay in the sandbox")
 	read, err := config.ReadSystemPrompt(path)
 	if err != nil || read != "stay in the sandbox" {
 		t.Fatalf("read %q, %v", read, err)

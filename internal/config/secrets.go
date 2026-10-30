@@ -21,9 +21,6 @@ type SecretValue struct {
 	Value  string
 }
 
-// OAuthSecret is box's own token: a secret like any other, and always the first a sandbox gets.
-var OAuthSecret = Secret{Name: SecretEnv, Host: SecretHost}
-
 // environmentName is what a shell accepts as a variable name, which is what sbx puts the placeholder in.
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -35,15 +32,15 @@ func ToSecret(name, host string) (Secret, error) {
 	if !environmentName.MatchString(name) {
 		return Secret{}, fail.Errorf("%s name %s is not a valid environment variable name", SecretHosts, name)
 	}
-	// Dropping this sandbox's secrets by host would take box's own token with them.
+	// The sbx proxy owns the Claude API host and replaces any custom secret sent to it, so neither could work.
 	if name == SecretEnv {
-		return Secret{}, fail.Errorf("%s cannot name %s, which carries box's own token", SecretHosts, SecretEnv)
+		return Secret{}, fail.Errorf("%s cannot name %s, since the sbx proxy replaces any custom secret for %s", SecretHosts, SecretEnv, SecretHost)
 	}
 	if host == "" {
 		return Secret{}, fail.Errorf("%s gives %s no host, so there is nowhere its value may go", SecretHosts, name)
 	}
 	if host == SecretHost {
-		return Secret{}, fail.Errorf("%s cannot name %s, which carries box's own token", SecretHosts, SecretHost)
+		return Secret{}, fail.Errorf("%s cannot name %s, since the sbx proxy replaces any custom secret for it", SecretHosts, SecretHost)
 	}
 	return Secret{Name: name, Host: host}, nil
 }
@@ -140,18 +137,4 @@ func ReadSecretValues(secrets []Secret, secretsFile string) ([]SecretValue, erro
 		stored = append(stored, SecretValue{Secret: secret, Value: value})
 	}
 	return stored, nil
-}
-
-// ReadToken reads the OAuth token, stripped of whatever whitespace the file was saved with.
-func ReadToken(path string) (string, error) {
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return "", fail.Errorf("token file %s does not exist", path)
-	}
-	// A stray newline or space reaches the agent as part of the token and fails far from here.
-	token := strings.TrimSpace(string(contents))
-	if token == "" {
-		return "", fail.Errorf("token file %s is empty", path)
-	}
-	return token, nil
 }

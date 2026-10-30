@@ -87,17 +87,13 @@ func RequireSecretOutside(variable, secretFile string, reachable []string) error
 }
 
 // RequireSecrets refuses secrets the sandbox could read itself, and declarations with no value here.
-func RequireSecrets(settings config.Config, project Project, tokenFile string) error {
-	reachable := ReachablePaths(settings, project)
-	if err := RequireSecretOutside(config.TokenFileEnv, tokenFile, reachable); err != nil {
-		return err
-	}
+func RequireSecrets(settings config.Config, project Project) error {
 	// An unset BOX_SECRETS_FILE is only missing when the project declares secrets to read from it.
 	if len(settings.SecretHosts) == 0 {
 		return nil
 	}
 	secretsFile := os.Getenv(config.SecretsEnv)
-	if err := RequireSecretOutside(config.SecretsEnv, secretsFile, reachable); err != nil {
+	if err := RequireSecretOutside(config.SecretsEnv, secretsFile, ReachablePaths(settings, project)); err != nil {
 		return err
 	}
 	_, err := config.ReadSecretValues(settings.SecretHosts, secretsFile)
@@ -105,7 +101,7 @@ func RequireSecrets(settings config.Config, project Project, tokenFile string) e
 }
 
 // Require runs every check on the settings and the project that does not create anything.
-func Require(runner system.Runner, settings config.Config, project Project, tokenFile string) error {
+func Require(runner system.Runner, settings config.Config, project Project) error {
 	// Nothing box does works without these, so they come before anything about this project.
 	if err := RequireBinaries(); err != nil {
 		return err
@@ -126,5 +122,5 @@ func Require(runner system.Runner, settings config.Config, project Project, toke
 	if err := RequireMembers(runner, settings, project); err != nil {
 		return err
 	}
-	return RequireSecrets(settings, project, tokenFile)
+	return RequireSecrets(settings, project)
 }

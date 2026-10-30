@@ -31,11 +31,10 @@ var SetupCommands = []string{"gen", "mount-prompt", "self-update", "version"}
 // Commands are every word box answers to, in the order its help lists them.
 var Commands = []string{"run", "config", "gen", "mount-prompt", "self-update", "version"}
 
-// The token and the values behind secret_hosts come from the environment and from nowhere else.
+// The values behind secret_hosts come from the environment and from nowhere else.
 const (
 	SecretHost    = "api.anthropic.com"
 	SecretEnv     = "CLAUDE_CODE_OAUTH_TOKEN"
-	TokenFileEnv  = "CLAUDE_OAUTH_TOKEN_FILE"
 	SecretsEnv    = "BOX_SECRETS_FILE"
 	NoColourEnv   = "NO_COLOR"
 	UpdateURLEnv  = "BOX_UPDATE_URL"

@@ -50,13 +50,18 @@ only one `box` is ever on `PATH`.
 
 Everything below runs from the root of the repository you want an agent to work on.
 
-**Once per machine** — point box at a Claude token:
+**Once per machine** — sign sbx in:
 
 ```sh
-claude setup-token                                            # prints a token
-mkdir -p ~/.secrets && $EDITOR ~/.secrets/claude-oauth.token  # save it there
-export CLAUDE_OAUTH_TOKEN_FILE=~/.secrets/claude-oauth.token  # direnv is a good home for this
+sbx login           # Docker sign-in, if sbx asks for it
+sbx run claude      # then /login inside, with the Claude account to use, and exit
+sbx secret ls       # anthropic should read "(oauth configured)"
 ```
+
+Every sandbox in one sbx instance uses that one login. To keep two accounts apart, such as work and
+personal, export a different `DOCKER_SANDBOXES_APP_NAME` for each, for example per folder with
+direnv. Each instance is its own world: run the steps above once in each, and load any template
+(`sbx template load`) and register any MCP server (`sbx mcp add`) a project uses in each as well.
 
 **Once per project** — write the setup and commit it:
 

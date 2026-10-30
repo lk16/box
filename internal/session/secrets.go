@@ -8,9 +8,9 @@ import (
 	"github.com/lk16/box/internal/system"
 )
 
-// DistinctHosts lists the hosts a sandbox has secrets for, box's own token host first and each once.
+// DistinctHosts lists the hosts a sandbox has secrets for, each once.
 func DistinctHosts(secrets []config.Secret) []string {
-	hosts := []string{config.SecretHost}
+	var hosts []string
 	for _, secret := range secrets {
 		if !slices.Contains(hosts, secret.Host) {
 			hosts = append(hosts, secret.Host)

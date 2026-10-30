@@ -73,7 +73,6 @@ func each[T any](items []T, render func(T) string) []string {
 
 // Environment is what one machine gives box, which no file a project shares may hold.
 type Environment struct {
-	TokenFile   string
 	SecretsFile string
 	WithoutMCP  string
 }
@@ -81,7 +80,6 @@ type Environment struct {
 // Format renders the settings in effect, the secret paths included, as aligned key/value lines.
 func Format(config Config, environment Environment) string {
 	lines := []line{
-		{TokenFileEnv, orUnset(environment.TokenFile)},
 		{SecretsEnv, orUnset(environment.SecretsFile)},
 		{WithoutMCPEnv, orUnset(environment.WithoutMCP)},
 		{"name", orUnset(config.Name)},

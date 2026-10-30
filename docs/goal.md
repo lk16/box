@@ -12,10 +12,10 @@ One run does this:
 3. Create the sandbox with `--clone`, so the agent commits into an in-container clone. The disk
    limits reach `sbx` as `DOCKER_SANDBOXES_ROOT_SIZE` and `DOCKER_SANDBOXES_DOCKER_SIZE` on its
    environment rather than as flags, so box overrides either one the user already exported.
-4. Store the Claude OAuth token as an `sbx` secret scoped to that sandbox name.
-5. Run the agent with the base prompt appended to its system prompt, followed by the project's own
-   `prompt_file` when one is configured, plus the model when one is set.
-6. On exit, fetch committed work back to the host, put it on a branch a headless Claude names,
+4. Run the agent with the base prompt appended to its system prompt, followed by the project's own
+   `prompt_file` when one is configured, plus the model when one is set. The Claude login is sbx's
+   own, from a `/login` inside `sbx run claude`, so box neither reads nor stores one.
+5. On exit, fetch committed work back to the host, put it on a branch a headless Claude names,
    and remove the sandbox — unless the sandbox still has uncommitted changes, in which case it is
    kept and recovery steps are printed.
 
@@ -142,11 +142,11 @@ disagree about a timeout once.
 
 ### Secrets
 
-- The OAuth token path comes from `CLAUDE_OAUTH_TOKEN_FILE` and from nowhere else, so a shared
-  project config can never point at someone else's credentials. `BOX_SECRETS_FILE` names the values
-  behind `secret_hosts` for the same reason: the config says which variable may reach which host,
-  which is the same everywhere, and the file holding the values is this machine's alone.
-- Neither of those files may sit inside the repository box runs in or inside any mount, symlinks
+- `BOX_SECRETS_FILE` names the values behind `secret_hosts` and comes from the environment and from
+  nowhere else, so a shared project config can never point at someone else's credentials: the config
+  says which variable may reach which host, which is the same everywhere, and the file holding the
+  values is this machine's alone.
+- That file may not sit inside the repository box runs in or inside any mount, symlinks
   resolved. The sandbox reads the whole repository at `/run/sandbox/source` and every mount at its
   own path, so a secret kept there is a secret the agent can read for itself, and no scoping by
   host would help.
@@ -155,17 +155,16 @@ disagree about a timeout once.
   refuses a quoted value rather than handing the quotes to sbx as part of it, and refuses a line
   docker would reject outright. A rejected line is named by its number and never by its content.
   Names the config does not declare are ignored, so one file can serve several projects.
-- A secret is scoped to the sandbox and dropped with it, the way the token is, and
-  `CLAUDE_CODE_OAUTH_TOKEN` and `api.anthropic.com` are refused as declarations: secrets are
-  dropped by host, so a project naming either would drop box's own token along with its own.
+- A secret is scoped to the sandbox and dropped with it, and `CLAUDE_CODE_OAUTH_TOKEN` and
+  `api.anthropic.com` are refused as declarations: sbx's proxy owns that host and replaces any
+  custom secret sent to it, so a project declaring either would get a secret that never arrives.
 - A value reaches sbx on stdin and lives in the sandbox as a placeholder sbx swaps in at its own
   proxy, so the real value never enters the sandbox and never appears on a command line.
 - The sandbox scope reaches `sbx secret` as `--sandbox`, never as a positional argument. sbx 0.38
   deprecates the positional form, and dropping a secret throws its output away, so the day sbx
   removes it a token would outlive its sandbox without a word, scoped to a name box hands out again.
 - Store the secret *before* `sbx create`. `sbx` injects the placeholder env var into the sandbox at
-  creation time, so a secret stored afterwards leaves `CLAUDE_CODE_OAUTH_TOKEN` unset and the agent
-  starts logged out.
+  creation time, so a secret stored afterwards leaves its variable unset in the sandbox.
 
 ### The prompt
 

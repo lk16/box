@@ -63,8 +63,6 @@ func runnableProject(t *testing.T, directory string) string {
 	boxtest.WriteFile(t, filepath.Join(directory, config.GitignoreFile), config.MountsFile+"\n")
 	boxtest.WriteFile(t, filepath.Join(directory, config.ConfigFile),
 		`{"kit": "registry/kit", "model": "claude-opus-5"}`)
-	boxtest.WriteFile(t, filepath.Join(directory+"-secrets", "token"), "sk-ant-secret\n")
-	t.Setenv(config.TokenFileEnv, filepath.Join(directory+"-secrets", "token"))
 	return directory
 }
 

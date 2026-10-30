@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/lk16/box/internal/config"
-	"github.com/lk16/box/internal/fail"
 	"github.com/lk16/box/internal/project"
 	"github.com/lk16/box/internal/system"
 )
@@ -54,15 +53,8 @@ func PickName(baseName string, used map[string]bool) string {
 }
 
 // PrepareLaunch resolves everything that can still fail before the sandbox exists.
-func (s Session) PrepareLaunch(settings config.Config, proj project.Project, tokenFile string) (Launch, error) {
-	if err := project.Require(s.Deps.Run, settings, proj, tokenFile); err != nil {
-		return Launch{}, err
-	}
-	if tokenFile == "" {
-		return Launch{}, fail.Errorf("%s", config.TokenFileHelp)
-	}
-	token, err := config.ReadToken(config.ResolvePath(tokenFile))
-	if err != nil {
+func (s Session) PrepareLaunch(settings config.Config, proj project.Project) (Launch, error) {
+	if err := project.Require(s.Deps.Run, settings, proj); err != nil {
 		return Launch{}, err
 	}
 	declared, err := config.ReadSecretValues(settings.SecretHosts, os.Getenv(config.SecretsEnv))
@@ -76,7 +68,7 @@ func (s Session) PrepareLaunch(settings config.Config, proj project.Project, tok
 	return Launch{
 		Project:     proj,
 		SandboxName: PickName(settings.Name, s.TakenNames(project.Checkouts(settings, proj))),
-		Secrets:     append([]config.SecretValue{{Secret: config.OAuthSecret, Value: token}}, declared...),
+		Secrets:     declared,
 		AgentArgs:   AgentArgs(settings, prompt),
 	}, nil
 }
