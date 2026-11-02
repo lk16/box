@@ -79,7 +79,7 @@ func launchAt(directory string) session.Launch {
 	return session.Launch{
 		Project:     projectAt(directory),
 		SandboxName: "demo-1",
-		Secrets:     []config.SecretValue{{Secret: config.OAuthSecret, Value: "sk-ant-secret"}},
+		Secrets:     []config.SecretValue{{Secret: gitlab, Value: "glpat-abc"}},
 		AgentArgs:   []string{"--model", "claude-opus-5"},
 	}
 }

@@ -402,7 +402,7 @@ func TestASecretsFileInTheRepositoryIsRejected(t *testing.T) {
 }
 
 func TestASecretsFileInAMountIsRejected(t *testing.T) {
-	err := project.RequireSecretOutside(config.TokenFileEnv, "/cache/token", []string{"/work/demo", "/cache"})
+	err := project.RequireSecretOutside(config.SecretsEnv, "/cache/box.env", []string{"/work/demo", "/cache"})
 	wantError(t, err, "can read everything there")
 }
 

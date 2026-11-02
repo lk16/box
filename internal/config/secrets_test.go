@@ -62,14 +62,14 @@ func TestASecretWithoutAHostIsRejected(t *testing.T) {
 	wantError(t, err, "no host")
 }
 
-func TestASecretThatWouldTakeBoxOwnTokenVariableIsRejected(t *testing.T) {
+func TestASecretNamingTheVariableTheProxyOwnsIsRejected(t *testing.T) {
 	_, err := config.ToSecrets(raw(map[string]string{config.SecretEnv: "gitlab.com"}))
-	wantError(t, err, "box's own token")
+	wantError(t, err, "sbx proxy replaces")
 }
 
-func TestASecretOnBoxOwnTokenHostIsRejected(t *testing.T) {
+func TestASecretOnTheHostTheProxyOwnsIsRejected(t *testing.T) {
 	_, err := config.ToSecrets(raw(map[string]string{"GITLAB_TOKEN": config.SecretHost}))
-	wantError(t, err, "box's own token")
+	wantError(t, err, "sbx proxy replaces")
 }
 
 func TestSecretHostsMustBeAnObject(t *testing.T) {
@@ -168,57 +168,6 @@ func TestReadSecretValuesRejectsADeclaredNameWithNoValue(t *testing.T) {
 	path := writeSecretsFile(t, t.TempDir(), "GITLAB_TOKEN=\n")
 	_, err := config.ReadSecretValues([]config.Secret{gitlab}, path)
 	wantError(t, err, "no value for GITLAB_TOKEN")
-}
-
-func TestReadTokenStripsNewlines(t *testing.T) {
-	if got := readToken(t, "abc123\n"); got != "abc123" {
-		t.Fatalf("read %q", got)
-	}
-}
-
-func TestReadTokenStripsAWindowsLineEnding(t *testing.T) {
-	if got := readToken(t, "abc123\r\n"); got != "abc123" {
-		t.Fatalf("read %q", got)
-	}
-}
-
-func TestReadTokenStripsSurroundingSpaces(t *testing.T) {
-	if got := readToken(t, "  abc123  "); got != "abc123" {
-		t.Fatalf("read %q", got)
-	}
-}
-
-func TestReadTokenRejectsAnEmptyFile(t *testing.T) {
-	_, err := config.ReadToken(tokenFile(t, ""))
-	wantError(t, err, "is empty")
-}
-
-func TestReadTokenRejectsAWhitespaceOnlyFile(t *testing.T) {
-	_, err := config.ReadToken(tokenFile(t, "\n  \n"))
-	wantError(t, err, "is empty")
-}
-
-func TestReadTokenRejectsAMissingFile(t *testing.T) {
-	_, err := config.ReadToken(filepath.Join(t.TempDir(), "absent"))
-	wantError(t, err, "does not exist")
-}
-
-// tokenFile writes a token file holding exactly the given text.
-func tokenFile(t *testing.T, contents string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "token")
-	writeText(t, path, contents)
-	return path
-}
-
-// readToken reads a token file holding the given text, failing the test when box refuses it.
-func readToken(t *testing.T, contents string) string {
-	t.Helper()
-	token, err := config.ReadToken(tokenFile(t, contents))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return token
 }
 
 func TestParseSecretsFileReadsAFileSavedOnWindows(t *testing.T) {

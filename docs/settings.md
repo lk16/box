@@ -67,16 +67,13 @@ sandbox gets. So a folder below the repository root can hold a `.box/` of its ow
 named after that folder, the agent still starts at the root, and the prompt tells it which folder
 you ran box in.
 
-`CLAUDE_OAUTH_TOKEN_FILE` points at a file holding a token from `claude setup-token`. It is the one
-setting with no flag and no config key, so that a shared project file can never point at someone
-else's credentials. box refuses to start without it, or if the file it points at is missing or
-empty.
-
-`BOX_SECRETS_FILE` points at the values behind `secret_hosts`, for the same reason: see
+`BOX_SECRETS_FILE` points at the values behind `secret_hosts`. It has no flag and no config key, so
+that a shared project file can never point at someone else's credentials: see
 [Secrets](secrets.md). `BOX_WITHOUT_MCP` is a comma-separated list of MCP servers to leave out of
 every run on this machine, which `--without-mcp` adds to for one run: see
 [Read-only tools](mcp.md). Both belong in a shell profile or an `.envrc`, since what one machine
-holds is nothing a project can say.
+holds is nothing a project can say. `DOCKER_SANDBOXES_APP_NAME` picks the sbx instance, and so the
+Claude login, a run uses: see the [README](../README.md#get-started).
 
 ## The system prompt
 

@@ -99,13 +99,13 @@ func TestACommittableMountsFileInAMemberIsRejected(t *testing.T) {
 func TestRequireRefusesAMachineWithoutTheCommandsBoxNeeds(t *testing.T) {
 	boxtest.EmptyPath(t)
 	directory := t.TempDir()
-	wantError(t, project.Require(real, config.Config{}, projectAt(directory), "/secrets/token"), "not on PATH")
+	wantError(t, project.Require(real, config.Config{}, projectAt(directory)), "not on PATH")
 }
 
 func TestRequireSendsAProjectWithNoConfigToGen(t *testing.T) {
 	boxtest.StubBinaries(t)
 	directory := t.TempDir()
-	wantError(t, project.Require(real, config.Config{}, projectAt(directory), "/secrets/token"), "Run box gen")
+	wantError(t, project.Require(real, config.Config{}, projectAt(directory)), "Run box gen")
 }
 
 // secretsFor builds the settings of a project declaring one secret, and nothing else.
@@ -119,14 +119,14 @@ func secretsFor(t *testing.T, declared bool) config.Config {
 
 func TestSecretsAreNotLookedForWhenTheProjectDeclaresNone(t *testing.T) {
 	boxtest.Unset(t, config.SecretsEnv)
-	if err := project.RequireSecrets(secretsFor(t, false), projectAt(t.TempDir()), ""); err != nil {
+	if err := project.RequireSecrets(secretsFor(t, false), projectAt(t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestADeclaredSecretWithNoValuesFileIsRejected(t *testing.T) {
 	boxtest.Unset(t, config.SecretsEnv)
-	err := project.RequireSecrets(secretsFor(t, true), projectAt(t.TempDir()), "")
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(t.TempDir()))
 	wantError(t, err, config.SecretsEnv)
 }
 
@@ -135,7 +135,7 @@ func TestAValuesFileInsideTheRepositoryIsRejected(t *testing.T) {
 	inside := filepath.Join(directory, "box.env")
 	boxtest.WriteFile(t, inside, "GITLAB_TOKEN=glpat-abc\n")
 	t.Setenv(config.SecretsEnv, inside)
-	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), "")
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory))
 	wantError(t, err, "can read everything there")
 }
 
@@ -144,7 +144,7 @@ func TestAValuesFileOutsideEverythingTheSandboxReadsIsAccepted(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "box.env")
 	boxtest.WriteFile(t, outside, "GITLAB_TOKEN=glpat-abc\n")
 	t.Setenv(config.SecretsEnv, outside)
-	if err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), ""); err != nil {
+	if err := project.RequireSecrets(secretsFor(t, true), projectAt(directory)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -154,16 +154,8 @@ func TestAValuesFileMissingADeclaredNameIsRejected(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "box.env")
 	boxtest.WriteFile(t, outside, "OTHER=1\n")
 	t.Setenv(config.SecretsEnv, outside)
-	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory), "")
+	err := project.RequireSecrets(secretsFor(t, true), projectAt(directory))
 	wantError(t, err, "no value for GITLAB_TOKEN")
-}
-
-func TestATokenFileInsideTheRepositoryIsRejectedEvenWithNoDeclaredSecrets(t *testing.T) {
-	directory := t.TempDir()
-	inside := filepath.Join(directory, "token")
-	boxtest.WriteFile(t, inside, "sk-ant-secret\n")
-	err := project.RequireSecrets(secretsFor(t, false), projectAt(directory), inside)
-	wantError(t, err, "can read everything there")
 }
 
 func TestTheLocalPathsBoxRefusesToCommitAreTheMountsAndTheReposFiles(t *testing.T) {

@@ -18,7 +18,7 @@ func TestShowConfigPrintsTheSettingsAndReturnsZero(t *testing.T) {
 		t.Fatalf("exited %d: %s", code, run.console.Warned())
 	}
 	printed := run.console.Printed()
-	if !strings.Contains(printed, "claude-opus-5") || !strings.Contains(printed, config.TokenFileEnv) {
+	if !strings.Contains(printed, "claude-opus-5") || !strings.Contains(printed, config.SecretsEnv) {
 		t.Fatalf("printed:\n%s", printed)
 	}
 }
@@ -104,23 +104,6 @@ func TestShowConfigShowsTheServersTheEnvironmentLeavesOut(t *testing.T) {
 	for _, part := range []string{config.WithoutMCPEnv, "kubernetes (" + config.WithoutMCPEnv + ")"} {
 		if !strings.Contains(run.console.Printed(), part) {
 			t.Fatalf("%q is missing from:\n%s", part, run.console.Printed())
-		}
-	}
-}
-
-func TestTheTokenPathComesFromTheEnvironmentAndFromNowhereElse(t *testing.T) {
-	directory := t.TempDir()
-	runnableProject(t, directory)
-	t.Setenv(config.TokenFileEnv, "/secrets/named-here")
-	run := newFixture(withRealGit)
-	run.cli.Main([]string{"config"}, directory)
-	if !strings.Contains(run.console.Printed(), "/secrets/named-here") {
-		t.Fatalf("printed:\n%s", run.console.Printed())
-	}
-	// It is the one setting with no flag and no config key, so a shared file cannot name it.
-	for _, key := range append(slices.Clone(config.SettingKeys), config.ContainerKeys...) {
-		if key == "token_file" {
-			t.Fatal("the token path is a config key")
 		}
 	}
 }

@@ -28,8 +28,8 @@ GITLAB_TOKEN=glpat-xxxxxxxxxxxx
 SIGNOZ_API_KEY=xxxxxxxx
 ```
 
-Like `CLAUDE_OAUTH_TOKEN_FILE`, it comes from the environment and from nowhere else, and box reads
-it only when the config declares `secret_hosts`. The format is docker's `--env-file`, so the same
+It comes from the environment and from nowhere else, and box reads it only when the config declares
+`secret_hosts`. The format is docker's `--env-file`, so the same
 file works with `docker run --env-file`: blank lines and `#` lines are skipped, and the value is
 everything after the first `=`, quotes included. box refuses a line docker would keep quotes from,
 a line that is not `NAME=value`, and a declared name the file has no value for, naming the line
@@ -38,13 +38,12 @@ several projects.
 
 **Keep that file outside every repository and every mount.** The sandbox can read the whole
 repository — sbx mounts it at `/run/sandbox/source`, ignored files and all — and every mount you
-give it, so box refuses to start when either secrets file, symlinks resolved, sits inside one. The
-same goes for `CLAUDE_OAUTH_TOKEN_FILE`.
+give it, so box refuses to start when that file, symlinks resolved, sits inside one.
 
-Secrets are scoped to the sandbox and dropped when it is removed, exactly like the OAuth token. A
-sandbox box keeps because it holds uncommitted work keeps its secrets too. `CLAUDE_CODE_OAUTH_TOKEN`
-and `api.anthropic.com` cannot be declared: dropping secrets by host would take box's own token with
-them.
+Secrets are scoped to the sandbox and dropped when it is removed. A sandbox box keeps because it
+holds uncommitted work keeps its secrets too. `CLAUDE_CODE_OAUTH_TOKEN` and `api.anthropic.com`
+cannot be declared: sbx's proxy owns that host and replaces any custom secret sent to it. The Claude
+login is sbx's own, as the [README](../README.md#get-started) describes.
 
 A value reaches sbx on stdin, never on a command line, so it does not land in the shell history or
 in the process list.

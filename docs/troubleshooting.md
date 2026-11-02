@@ -7,7 +7,8 @@ The refusals you are most likely to meet, and what to do about each:
 | `this project has no .box/config.json` | run `box gen` |
 | `kit is not set` | point `kit` at a kit directory in `.box/config.json` |
 | `model is not set` | fill in a model in `.box/config.json` |
-| `CLAUDE_OAUTH_TOKEN_FILE is not set` | export it, pointing at a file holding a `claude setup-token` token |
+| `Not logged in · Please run /login` in the session | redo `/login` in `sbx run claude` in the same sbx instance, meaning the same `DOCKER_SANDBOXES_APP_NAME`, then check `sbx secret ls` |
+| a 401 at the start of the session | the same: redo `/login` in `sbx run claude` in the same `DOCKER_SANDBOXES_APP_NAME`, then check `sbx secret ls` |
 | `BOX_SECRETS_FILE is not set` | export it, pointing at a file of `NAME=value` lines for the declared [secrets](secrets.md) |
 | `which is inside` | move the secrets file out of the repository or the mount it names; the sandbox can read both |
 | `has no value for` | add that name to the file `BOX_SECRETS_FILE` points at |

@@ -44,11 +44,6 @@ sbx, then try again.`
 The daemon keeps running across an sbx upgrade, so the old one keeps answering until it is
 restarted. Run sbx daemon restart, then try again.`
 
-	TokenFileHelp = TokenFileEnv + ` is not set. Set it up once:
-  1. Run: claude setup-token
-  2. Save the printed token to a file, e.g. ~/.secrets/claude-oauth.token
-  3. Export ` + TokenFileEnv + ` to point at that file, e.g. via direnv.`
-
 	SecretsFileHelp = `%s declares ` + SecretHosts + `, but ` + SecretsEnv + ` is not set.
 Set it up once:
   1. Write a file holding one NAME=value line per secret, e.g. ~/.secrets/box.env
